@@ -577,6 +577,16 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
     },
   ],
   grocery: [
+    {
+      /* مدير أقسام: يضبط البطاقات والأسعار والجرد ويطبع ملصقات الأقسام — بلا صلاحيات مالية */
+      id: 'grocery_section_manager', nameAr: 'مسؤول أقسام البقالة', isSystem: true,
+      permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.return.create', 'ops.activity.use', 'inv.view', 'inv.item.manage', 'inv.count', 'inv.transfer', 'party.customer.manage'],
+    },
+    {
+      /* مسؤول الميزان: يبرمج PLU ويطبع الملصقات ويجرد — ولا يبيع ولا يرى التكلفة */
+      id: 'grocery_scale_clerk', nameAr: 'مسؤول الميزان والملصقات', isSystem: true,
+      permissions: ['inv.view', 'inv.item.manage', 'inv.count'],
+    },
   ],
   jewelry: [
     {

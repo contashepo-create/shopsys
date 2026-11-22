@@ -16,13 +16,17 @@ import { appStorage, registerExternalSnapshotApplier } from './persistentStorage
 import type { Item, Category } from '../core/items.ts'
 import { draftFromCategory, nextSku } from '../core/items.ts'
 import { buildPartyNote, normalizePartyNoteText, type PartyNote, type PartyNoteKind } from '../core/partyNotes.ts'
-import { priceFloorViolations, PriceFloorError, itemBlockers } from '../core/items.ts'
+import { priceFloorViolations, PriceFloorError, itemBlockers, normalizeBarcode, normalizeBarcodes, categoryAncestors } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, reconcileStockValue, withdrawStockValue, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { addMinor, roundNonNegativeRatio } from '../core/money.ts'
 import { assertPayrollReplacementHistory, checkedPayrollProjectCosts, type PayrollProjectCostRow } from '../core/payrollProjectCosts.ts'
 import { isPayrollProjectSnapshotReadable } from '../core/payrollProjectAllocation.ts'
+import { roundCashAmount } from '../core/cashRounding.ts'
+
+/** طرق الدفع المعلنة في `PaymentMethod` — مرجع التحقق الوحيد عند الترحيل. */
+const PAYMENT_METHODS: ReadonlySet<string> = new Set(['cash', 'credit', 'card', 'terminal'])
 import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, normalizeMovementQty, normalizeSaleMovementLine, exceedsCreditLimit, CreditLimitError, SALE_PARTY_RECEIVABLE, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { cumulativeSaleReturnTotals, buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, returnCreditRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
@@ -37,12 +41,12 @@ import {
 import { validateConsumption, buildConsumptionEntry, consumptionTotalMinor, INTERNAL_USE_ACCOUNT } from '../core/consumption.ts'
 import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, type WalletServiceInput, type WalletServiceType, type WalletProvider, type WalletServiceTotals } from '../core/walletServices.ts'
 import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, buildPurchaseReturnLinesPerLine, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, purchaseExpenseTaxParts, type PurchaseReturnLine, type PurchaseReturnLineSpec, type ExpensePaymentCredit } from '../core/purchases.ts'
-import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
+import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult, type ShortageReason } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder, type ProductionExpense } from '../core/recipes.ts'
 import { validateProcessing, validateProcessingOutputExpiry, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, computeTradeInNet, validateTradeIn, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
 import { validatePriceList, validateCategoryRule, resolvePrice, type PriceList, type PriceListEntry, type PriceListCategoryRule } from '../core/priceLists.ts'
-import { validatePromotion, promotionCartLines, promotionActiveOn, type Promotion, type PromotionInput } from '../core/promotions.ts'
+import { validatePromotion, promotionCartLines, promotionActiveOn, lossLeaderApprovedItems, promotionBelowCost, type Promotion, type PromotionInput } from '../core/promotions.ts'
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, insuredPartialAmounts, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, validatePurchaseVariantBreakdown, applyPurchaseVariantBreakdown, type VariantStock, type VariantBreakdownLine } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
@@ -107,7 +111,7 @@ import { buildTerminalRefund } from '../core/paymentTerminalRefund.ts'
 import { buildInternalExpenseLines, type InternalExpense } from '../core/advancedInvoice.ts'
 import { assertTerminalOperation, validateTerminalAccess } from '../core/paymentTerminalAccess.ts'
 import { calculateTerminalSettlement, netSettlementTransactions, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
-import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
+import { planFefo, applyFefo, isValidExpiryDate, purchaseExpiryGuard, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
 import { validateOpening, buildOpeningDeltaEntry, buildCapitalDeclarationEntry, openingKey, OPENING_KIND_LABELS, OPENING_COVERED_SYSTEM_KEYS, type OpeningItemDetail, type OpeningKind } from '../core/openingBalances.ts'
 import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMENT_LABELS, type SettlementInput } from '../core/settlement.ts'
@@ -1019,7 +1023,8 @@ export interface StockTransfer {
   branchId?: number | null
   fromWarehouseId: number
   toWarehouseId: number
-  lines: { itemId: number; nameAr: string; qty: number }[]
+  /** تخصيص الدفعات المنقولة (FEFO أو يدوي) — دليل نقل الصلاحية بين المخازن */
+  lines: { itemId: number; nameAr: string; qty: number; batchAllocations?: { batchId: number; qty: number }[] }[]
   totalQty: number
   notes: string
 }
@@ -1421,6 +1426,10 @@ export interface Stocktake {
   countedItems: number // عدد الأصناف المشمولة بالجرد
   journalEntryId: number | null // null لو الجرد مطابق تماماً (لا قيد)
   notes: string
+  /** سبب العجز (F3): مبرَّر ⇒ 5111 هالك، غير مبرَّر ⇒ 5120 فقد. غيابه = قديم/فقد. */
+  shortageReason?: ShortageReason
+  /** مخزن الفرع الذي عُدّ فعلياً؛ null/undefined = جرد على مستوى الشركة (سجل قديم). */
+  warehouseId?: number | null
 }
 
 /** سند قبض/صرف/تحويل — كل سند مربوط بقيده */
@@ -1576,6 +1585,10 @@ export interface SaleInvoice {
   customerId: number | null // null = عميل نقدي
   payment: PaymentMethod
   paidMinor?: number // المدفوع نقداً (الدفع المجزأ) — undefined للفواتير القديمة = حسب payment
+  /** F8: النقد المستلم فعلاً بعد تقريب الفئات (الفاتورة نفسها محصلة كاملةً). */
+  cashReceivedMinor?: number
+  /** F8: فرق التقريب المقيَّد في 5112 (موجب = ربح، سالب = خسارة). */
+  cashRoundingMinor?: number
   treasury?: TreasuryAccount // الخزينة/البنك الذي استلم النقدية
   paymentAllocations?: { accountCode: string; amountMinor: number; note?: string; employeeId?: number }[]
   lines: CartLine[]
@@ -1856,6 +1869,12 @@ interface DataState {
   decideDocApproval: (id: number, decision: { status: Exclude<DocApprovalStatus, 'pending'>; by: number | null; byName: string; reason?: string }) => DocApprovalRequest
   markDocApprovalPosted: (id: number, documentId: number) => void
   deleteDocApproval: (id: number) => void
+  /**
+   * حارس داخلي: إجراء له مسار نشط ⇒ لا بد من طلب معتمد غير مستهلك (يُستهلك عند التنفيذ).
+   * amountMinor اختياري: إن حُدد حد مالي للمسار (thresholdMinor) ومرَّت قيمة أقل منه،
+   * يمر المستند حراً دون اعتماد.
+   */
+  assertApproved: (action: ApprovalAction, refId: number, subject: string, amountMinor?: number) => void
   purchaseOrders: PurchaseOrder[]
   addPurchaseOrder: (input: { supplierId: number | null; supplierName: string; date: string; expectedDate: string; warehouseId: number | null; lines: PurchaseOrderLine[]; notes: string; linkedTicketId?: number | null }) => PurchaseOrder
   setPurchaseOrderStatus: (id: number, status: PurchaseOrderStatus) => void
@@ -2309,6 +2328,12 @@ interface DataState {
     taxInclusive: boolean
     treasury?: TreasuryAccount // الخزينة/البنك الذي استلم النقدية
     paidMinor?: number // الدفع المجزأ: المدفوع نقداً الآن والباقي آجل (طلب المالك)
+    /**
+     * F8: خطوة تقريب الفئات النقدية بالقرش (0 = معطّل). تُطبَّق على النقد المستلم
+     * في الفاتورة المحصلة كاملةً فقط؛ إجمالي الفاتورة الضريبية لا يتغيّر، والفرق
+     * يُقيَّد في 5112 فروق تسويات نقدية.
+     */
+    cashRoundingStepMinor?: number
     paymentAllocations?: { accountCode: string; amountMinor: number; note?: string; employeeId?: number }[]
     expiryOverrideBy?: string | null
     allowNegativeStock?: boolean
@@ -2427,7 +2452,11 @@ interface DataState {
    * ترحيل جلسة جرد: يقارن المعدود بالدفتري، يضبط المخزون على المعدود،
    * ويولّد قيد تسوية متوازناً (عجز = مصروف، زيادة = تخفيض مصروف)
    */
-  postStocktake: (counts: CountInput[], notes: string) => Stocktake
+  /**
+   * ترحيل جرد فعلي. `shortageReason` يحدد حساب العجز: مبرَّر (تلف/انتهاء صلاحية)
+   * ⇒ 5111 هالك، غير مبرَّر (فقد/سرقة/خطأ) ⇒ 5120 فقد وعجز — فلا يختلط السؤالان.
+   */
+  postStocktake: (counts: CountInput[], notes: string, shortageReason?: ShortageReason) => Stocktake
   /** إتلاف مخزون موثق بسبب: يخصم الكميات + يستهلك دفعات FEFO + قيد 5111/1103 */
   postWastage: (args: { reason: string; lines: { itemId: number; qty: number }[]; notes: string; date?: string }) => WastageDoc
   /** صرف داخلي (استهلاك مخزون للتشغيل): يخصم الرصيد + FEFO + قيد مصروف/1103 بالمتوسط المرجح */
@@ -2573,10 +2602,18 @@ interface DataState {
   /** عكس سند قبض/صرف مع تحديث أثره في كشف الطرف وتخصيصاته */
   reverseVoucher: (voucherId: number, reason: string) => Voucher
   /** فتح وردية كاشير برصيد درج افتتاحي — لا ورديتين مفتوحتين معاً */
-  openShift: (openedBy: string, openingCashMinor: number) => Shift
+  /**
+   * فتح وردية. الهوية تُربط بسجل: مستخدم النظام من الجلسة، والموظف الذي يطابق الاسم
+   * **تطابقاً وحيداً** فقط — الاسم النصي وحده لا يكفي لتحميل عجز أو سلفة على شخص (F6).
+   */
+  openShift: (openedBy: string, openingCashMinor: number, identity?: { userId?: number | null; employeeId?: number | null }) => Shift
   getShiftSummary: (shiftId: number) => ShiftSummary
-  /** إقفال الوردية بالنقدية المعدودة — يظهر العجز/الزيادة في الملخص */
-  closeShift: (countedCashMinor: number, closeApprovedBy?: string | null, closeApprovalNote?: string | null) => Shift
+  /**
+   * إقفال الوردية بالنقدية المعدودة — يظهر العجز/الزيادة في الملخص.
+   * `settle` يُسوّي الفرق **في نفس الإقفال** (قيد واحد ذري): من يغلق الدرج فعلياً
+   * هو من يعرف السبب، وطلب تسوية لاحقة كان يترك فرقاً معلقاً بين الإقفال والتسوية.
+   */
+  closeShift: (countedCashMinor: number, closeApprovedBy?: string | null, closeApprovalNote?: string | null, settle?: { mode: 'expense' | 'advance'; employeeId?: number | null } | null) => Shift
   /** تسوية عجز/زيادة وردية مقفلة (طلب المالك): مصروف/إيراد أو سلفة على الموظف تُخصم من رواتبه */
   settleShiftVariance: (args: { shiftId: number; mode: 'expense' | 'advance'; employeeId?: number | null }) => Shift
   /**
@@ -3161,14 +3198,6 @@ interface DataState {
   requestApproval: (action: ApprovalAction, subject: string, refId: number) => ApprovalRequest
   /** قرار على المستوى الحالي: موافقة تنقل للمستوى التالي، ورفضٌ يقفل الطلب */
   decideApproval: (requestId: number, decision: 'approved' | 'rejected', decidedBy: string, note?: string) => ApprovalRequest
-  /**
-   * حارس داخلي: إجراء له مسار نشط ⇒ لا بد من طلب معتمد غير مستهلك (يُستهلك عند التنفيذ).
-   * amountMinor اختياري: إن حُدد حد مالي للمسار (thresholdMinor) ومرَّت قيمة أقل منه،
-   * يمر المستند حراً دون اعتماد (سد فجوة تقرير النشاط #11 — دليل الشاشة وصف هذا السلوك
-   * من قبل دون أن يكون منفَّذاً فعلياً).
-   */
-  assertApproved: (action: ApprovalAction, refId: number, subject: string, amountMinor?: number) => void
-
   // ————— الوصفات والتصنيع (مطاعم) —————
   addRecipe: (input: RecipeInput) => Recipe
   updateRecipe: (id: number, input: RecipeInput) => void
@@ -3228,6 +3257,13 @@ interface DataState {
   setCustomerPriceList: (customerId: number, listId: number | null) => void
   /* ─── العروض الترويجية/الباقات ─── */
   addPromotion: (input: PromotionInput) => Promotion
+  /**
+   * F4 — اعتماد «بيع بخسارة» على مستوى العرض/الفترة (لا لكل فاتورة).
+   * يُسجَّل اسم المعتمِد وتاريخه على العرض، ويُستهلك عند انتهاء فترة سريانه.
+   */
+  approvePromotionBelowCost: (promotionId: number, approvedBy: string) => Promotion
+  /** إلغاء الاعتماد المسبق — يعود الصنف لطلب اعتماد المدير عند كل فاتورة */
+  revokePromotionBelowCost: (promotionId: number) => Promotion
   updatePromotion: (id: number, input: PromotionInput) => void
   togglePromotion: (id: number) => void
   removePromotion: (id: number) => void
@@ -3950,6 +3986,7 @@ type OperationalSetup = {
   requireOpenShiftForSales?: boolean
   allowNegativeTreasury?: boolean
   allowNegativeStock?: boolean
+  requirePurchaseExpiry?: boolean
 }
 
 type PersistedAppState = {
@@ -4633,7 +4670,13 @@ function assertSerialBatchMovementSupported(state: DataState, itemId: number): v
   if ((item?.trackSerial && item.trackExpiry) || state.serials.some(unit => unit.itemId === itemId && unit.expiryBatch != null)) throw new Error('هذه العملية لا توثق السيريال ودفعة صلاحيته — استخدم مساراً يدعم الوحدات المحددة أو راجع المخزون')
 }
 
-/** يخطط استهلاك الموافقة دون تعديل الحالة؛ يُنشر مع المستند في set واحد. */
+/**
+ * حارس الاعتماد المركزي: إجراء له مسار نشط ⇒ لا بد من طلب معتمد غير مستهلك (يُستهلك عند التنفيذ).
+ * amountMinor اختياري: إن حُدد حد مالي للمسار (thresholdMinor) ومرّت قيمة أقل منه، يمر المستند
+ * حراً دون اعتماد (سد فجوة تقرير النشاط #11 — دليل الشاشة وصف السلوك دون أن يكون منفَّذاً).
+ * يخطط الاستهلاك دون تعديل الحالة؛ يُنشر مع المستند في set واحد. يُستدعى مباشرةً في مسارات
+ * الترحيل الحساسة (تحويل عرض، مستخلص، شهادة أعمال، إذن صرف) — لا عبر عملية متجر منفصلة.
+ */
 function planApprovalConsumption(state: DataState, action: ApprovalAction, refId: number, subject: string, amountMinor?: number): ApprovalRequest[] {
   if (state.branches.length && !getEffectiveActiveBranch(state) && state.approvalFlows.some(f => f.action === action && f.active)) throw new Error('حدد الفرع قبل استخدام مسار الموافقات')
   const scoped = getBranchScopedDataState(state)
@@ -4660,7 +4703,7 @@ function planInventoryOutflow(state: DataState, requested: { itemId: number; qty
   if (day !== now.slice(0, 10)) throw new Error('حركة المخزون متاحة بتاريخ اليوم فقط — الرصيد والتكلفة التاريخيان غير مثبتين')
   const closed = dateInClosedYear(day, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
   if (closed) throw new Error(`تاريخ حركة المخزون داخل السنة المالية المقفلة «${closed.nameAr}»`)
-  const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
+  const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes))
   const main = state.warehouses.find(w => w.isMain)
   const seen = new Set<number>()
   const withdrawals = new Map<number, ReturnType<typeof withdrawStockValue>>()
@@ -4754,14 +4797,60 @@ function insuredShiftStamp(state: DataState, treasury: string): NonNullable<Jour
 }
 
 /** الملخص الوحيد للإقفال والتسوية والعرض، مع مطابقة حركات التأمين بالقيد والمطالبة. */
+/**
+ * تسوية فرق الوردية: تُبنى القيود والسلفة والطلب في **صورة واحدة** يعيدها المستدعي
+ * ليُنشرها مع بقية التغييرات في `set` واحد — الإقفال والتسوية يحدثان معاً أو لا يحدثان.
+ */
+function buildShiftVarianceSettlement(
+  state: DataState, shift: Shift, variance: number, mode: 'expense' | 'advance', employeeId?: number | null,
+): { entry: JournalEntry; advance?: EmployeeAdvance; shiftPatch: Partial<Shift> } {
+  const now = localIsoTimestamp()
+  const label = `وردية #${shift.id}`
+  if (mode === 'advance') {
+    if (variance > 0) throw new Error('السلفة تكون عن عجز فقط — الزيادة تُسوى كإيراد')
+    const emp = state.employees.find((e) => e.id === employeeId)
+    if (!emp) throw new Error('اختر الموظف الذي يتحمل العجز')
+    const advId = nextId(state.employeeAdvances)
+    const entryId = nextId(state.journal)
+    const advanceNumber = `ADV-${String(advId).padStart(4, '0')}`
+    const entry: JournalEntry = {
+      id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+      description: `عجز ${label} محمَّل سلفة على ${emp.nameAr} — ${advanceNumber}`,
+      sourceType: 'payment_voucher', sourceId: advId, sourceCollection: 'employeeAdvances',
+      lines: buildVarianceAdvanceEntry(variance, '1101', emp.nameAr),
+      createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+    }
+    const advance: EmployeeAdvance = {
+      id: advId, advanceNumber, employeeId: emp.id, date: now,
+      amountMinor: Math.abs(variance), recoveredMinor: 0,
+      source: 'cash', custodyFileId: null, treasury: '1101',
+      notes: `عجز ${label} — يُخصم من الرواتب`, journalEntryId: entryId,
+    }
+    return { entry, advance, shiftPatch: { varianceSettledMode: 'advance', varianceEntryId: entryId, varianceAdvanceId: advId } }
+  }
+  const entryId = nextId(state.journal)
+  const entry: JournalEntry = {
+    id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+    description: variance < 0 ? `تسوية عجز ${label} كمصروف` : `تسوية زيادة ${label} كإيراد آخر`,
+    sourceType: 'adjustment', sourceId: shift.id, sourceCollection: 'shifts',
+    lines: buildVarianceExpenseEntry(variance, '1101', label),
+    createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+  }
+  return { entry, shiftPatch: { varianceSettledMode: 'expense', varianceEntryId: entryId, varianceAdvanceId: null } }
+}
+
 function shiftSummaryForState(raw: DataState, shiftId: number): ShiftSummary {
   const scoped = getBranchScopedDataState(raw)
   const shifts = raw.shifts.filter(row => row.id === shiftId)
   if (shifts.length !== 1 || !scoped.shifts.some(row => row.id === shiftId)) throw new FinancialDataReviewError('الوردية', 'الوردية غير فريدة أو خارج الفرع')
   const shift = shifts[0]
   const kindOf = (code?: string) => scoped.treasuries.find(t => t.code === (code ?? '1101'))?.kind ?? 'cash'
-  const sales: ShiftDoc[] = scoped.sales.map(s => ({ shiftId: s.shiftId, payment: s.payment, totalMinor: s.totals.totalMinor, paidMinor: s.paidMinor, treasuryKind: kindOf(s.treasury), projectBilling: s.projectBilling }))
-  const returns: ShiftDoc[] = scoped.saleReturns.map(r => ({ shiftId: r.shiftId, payment: 'cash', totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(r.treasury ?? scoped.sales.find(s => s.id === r.saleId)?.treasury), projectBilling: r.projectBilling }))
+  /* F2: حقول تقرير Z تُمرَّر من نفس المستند — لا استعلام ثانٍ يختلف عنه */
+  /* paidMinor = النقد المستلم فعلاً: تقريب الفئات يدفع العميل مبلغاً مختلفاً عن إجمالي
+     الفاتورة، ودرج الوردية يُعدّ ما دخل الدرج لا ما تقوله الفاتورة (وإلا ظهرت زيادة
+     وهمية في الإقفال تساوي فرق التقريب المقيَّد أصلاً في 5112). */
+  const sales: ShiftDoc[] = scoped.sales.map(s => ({ shiftId: s.shiftId, payment: s.payment, totalMinor: s.totals.totalMinor, paidMinor: s.cashReceivedMinor ?? s.paidMinor, treasuryKind: kindOf(s.treasury), projectBilling: s.projectBilling, grossMinor: s.totals.grossMinor, discountMinor: s.totals.discountMinor, taxMinor: s.totals.taxMinor, cashRoundingMinor: s.cashRoundingMinor }))
+  const returns: ShiftDoc[] = scoped.saleReturns.map(r => ({ shiftId: r.shiftId, payment: 'cash', totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(r.treasury ?? scoped.sales.find(s => s.id === r.saleId)?.treasury), projectBilling: r.projectBilling, taxMinor: r.totals?.taxMinor }))
   const insuranceReceipts: ShiftDoc[] = [], insurancePayments: ShiftDoc[] = []
   const matched = new Set<number>()
   const fail = (): never => { throw new FinancialDataReviewError('حركة الوردية المؤمّنة', 'القيد أو المطالبة أو ربط الوردية غير مطابق') }
@@ -5533,7 +5622,7 @@ export function getBranchScopedDataState(state: DataState): DataState {
         state.items,
         state.warehouses,
         state.transfers,
-        buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
+        buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes),
       )
     : null
   // صنفاً محوّلاً يمكن عرضه كمرجع في الفرع المستقبل، لكن كمية المخزون الظاهرة له هي كمية مخازن هذا الفرع فقط.
@@ -8022,10 +8111,28 @@ export const useRawDataStore = create<DataState>()(
         set({ docApprovals: state.docApprovals.map((row) => (row.id === id ? updated : row)) })
         return updated
       },
-      markDocApprovalPosted: (id, documentId) => set((state) => ({
-        docApprovals: state.docApprovals.map((row) => (row.id === id ? { ...row, postedDocumentId: documentId } : row)),
-      })),
-      deleteDocApproval: (id) => set((state) => ({ docApprovals: state.docApprovals.filter((row) => row.id !== id) })),
+      markDocApprovalPosted: (id, documentId) => set((state) => {
+        /* معرّف مجهول أو مستند غير صالح يُرفض بصراحة: الكتابة الصامتة على طلب غير
+         * موجود تُوهم المستخدم بأن الربط وقع، وهي عين ما تحرسه بوابة الطفرات الصامتة. */
+        if (!Number.isSafeInteger(documentId) || documentId <= 0) throw new Error('معرّف المستند المرحّل غير صالح')
+        const target = state.docApprovals.find((row) => row.id === id)
+        if (!target) throw new Error('طلب الاعتماد غير موجود')
+        if (target.postedDocumentId != null && target.postedDocumentId !== documentId) throw new Error('الطلب مرتبط بمستند آخر — لا يُعاد ربطه')
+        return { docApprovals: state.docApprovals.map((row) => (row.id === id ? { ...row, postedDocumentId: documentId } : row)) }
+      }),
+      deleteDocApproval: (id) => set((state) => {
+        const target = state.docApprovals.find((row) => row.id === id)
+        if (!target) throw new Error('طلب الاعتماد غير موجود')
+        /* مستند رُحّل لا يُحذف طلبه: الحذف يمحو أثر الاعتماد ويترك القيد بلا سند
+         * موافقة. المسموح: طلب معلّق أو مرفوض لم يرحّل شيئاً. */
+        if (target.postedDocumentId != null) throw new Error('لا يُحذف طلب مرتبط بمستند رُحّل — أثر الاعتماد لا يُمحى')
+        return { docApprovals: state.docApprovals.filter((row) => row.id !== id) }
+      }),
+      assertApproved: (action, refId, subject, amountMinor) => {
+        const state = get()
+        const approvalRequests = planApprovalConsumption(state, action, refId, subject, amountMinor)
+        if (approvalRequests !== state.approvalRequests) set({ approvalRequests })
+      },
       purchaseOrders: [],
       addPurchaseOrder: (input) => {
         const state = get()
@@ -8068,6 +8175,9 @@ export const useRawDataStore = create<DataState>()(
         return { purchaseOrders: state.purchaseOrders.map((o) => (o.id === id ? { ...o, status, statusBeforeReceipt: status === 'draft' || status === 'sent' ? status : o.statusBeforeReceipt } : o)) }
       }),
       receivePurchaseOrder: (id, received, invoiceId) => set((state) => {
+        // إصلاح (مراجعة ممنهجة): كان الاستلام على معرّف أمر غير موجود يُحدّث الحالة
+        // بصمت بلا أثر، فيظن المستدعي أن الاستلام سُجّل. الآن يفشل صراحة كبقية المسارات.
+        if (!state.purchaseOrders.some((order) => order.id === id)) throw new Error('أمر الشراء غير موجود')
         if (invoiceId != null && state.purchaseOrders.some(order => order.id === id && order.invoiceIds?.includes(invoiceId))) return state
         const purchaseOrders = state.purchaseOrders.map((order) => {
           if (order.id !== id) return order
@@ -8468,11 +8578,18 @@ export const useRawDataStore = create<DataState>()(
         if (!created) throw new Error('تعذر إنشاء صنف الخدمة للبند الحر')
         return created.id
       },
-      addItem: (item) => {
+      addItem: (rawItem) => {
         // §81: حراس النواة داخل المستودع — الواجهة ليست المتصل الوحيد
         // (الإضافة السريعة في فاتورة الشراء، الاستيراد، نوافذ التحرير، بوت التليجرام…):
         // باركود مكرر بين صنفين يُنطق الكاشير بيع صنف بدل آخر، ومعامل وحدة < 1
         // يفسد خصم المخزون بالوحدة الأساسية. التحذيرات (سعر صفر/خسارة) قرار شاشة.
+        // التطبيع هنا (وليس في الشاشات فقط): قارئ بتخطيط لوحة مفاتيح عربية يُدخل
+        // «٦٢٢١٠٠» فيُحفظ بلا تطبيع ولا يُطابق «622100» عند المسح أو الاستيراد.
+        const item: typeof rawItem = {
+          ...rawItem,
+          barcodes: normalizeBarcodes(rawItem.barcodes),
+          extraUnits: (rawItem.extraUnits ?? []).map((unit) => ({ ...unit, ...(unit.barcode ? { barcode: normalizeBarcode(unit.barcode) } : {}) })),
+        }
         const guardState = get()
         const blockers = itemBlockers(item, getBranchScopedDataState(guardState).items)
         if (blockers.length) throw new Error(blockers[0])
@@ -8513,13 +8630,22 @@ export const useRawDataStore = create<DataState>()(
           openingItems: { ...state.openingItems, [id]: { qty: item.stockQty || 0, unitCostMinor: item.costMinor || 0 } },
         })
       },
-      updateItem: (id, patch) => {
+      updateItem: (id, rawPatch) => {
         const current = get().items.find((it) => it.id === id)
         if (!current) return
+        // تطبيع الباركود في التعديل أيضاً (نفس علة الإضافة)
+        const patch: typeof rawPatch = {
+          ...rawPatch,
+          ...(rawPatch.barcodes ? { barcodes: normalizeBarcodes(rawPatch.barcodes) } : {}),
+          ...(rawPatch.extraUnits ? { extraUnits: rawPatch.extraUnits.map((unit) => ({ ...unit, ...(unit.barcode ? { barcode: normalizeBarcode(unit.barcode) } : {}) })) } : {}),
+        }
         if ((patch.trackExpiry === false || patch.trackSerial === false) && get().serials.some(unit => unit.itemId === id && unit.expiryBatch != null)) throw new Error('لا يمكن تعطيل تتبع السيريال أو الصلاحية مع وجود وحدات مرتبطة بدفعات — يلزم معالجة المخزون أولاً')
         // §81: التحرير الجزئي يُحرَس على الصورة المدموجة كاملة — لا يمر تحرير
         // (نافذة سريعة/قائمة أسعار) بمعامل وحدة فاسد أو باركود مكرر أو سيريال+وزن.
-        const blockers = itemBlockers({ ...current, ...patch }, get().items.filter((it) => it.id !== id), id)
+        /* التكرار يُفحص داخل نطاق الفرع فقط: سلسلة بقالة تبيع نفس باركود المصنع
+           (EAN) في كل فرع — مقارنته بأصناف فرع آخر كانت تمنع تعديل البطاقة
+           نهائياً برسالة «مستخدم في صنف آخر» وهي في فرع مختلف. */
+        const blockers = itemBlockers({ ...current, ...patch }, getBranchScopedDataState(get()).items.filter((it) => it.id !== id), id)
         if (blockers.length) throw new Error(blockers[0])
         // v1.0.4 (بلاغ المالك — نمط العالمية): تحرير الكمية/التكلفة من بطاقة الصنف
         // لا يغيّر قيمة المخزون صامتاً — وإلا انكسر ثابت 1103 = Σ كمية×تكلفة.
@@ -8698,7 +8824,44 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         /* منع التكرار عند إعادة المحاولة بعد ضياع رد الحفظ (عقد sourceDraftId) */
         const sourceDraftId = rawInv.sourceDraftId?.trim()
-        const normalizedInv = { ...rawInv, lines: rawInv.lines.map(line => ({ ...line, qty: normalizeMovementQty(line.qty) })) }
+        /* خصم فاتورة الشراء (تجاري): يُطبَّق على أسعار السطور **قبل** توزيع
+           المصاريف وضريبة المدخلات، فلا تُحسب ضريبة على خصم لم يُدفع ولا
+           يُبالغ في قيمة المخزون ودين المورد. الشاشة المتقدمة كانت تفعل ذلك
+           بنفسها وترسل أسعاراً مخصومة؛ أي مستدعٍ يمرر الحقل كان يُتجاهل في
+           القيد ويظهر الخصم في بوابة الاعتماد فقط ⇒ تصحيح مركزي هنا. */
+        const goodsBeforeDiscount = rawInv.lines.reduce((sum, line) => sum + normalizeMovementQty(line.qty) * line.unitPriceMinor, 0)
+        const invoiceDiscountPercent = rawInv.discountPercent ?? 0
+        if (!Number.isFinite(invoiceDiscountPercent) || invoiceDiscountPercent < 0 || invoiceDiscountPercent > 100) {
+          throw new RangeError('نسبة خصم فاتورة الشراء بين 0 و100')
+        }
+        const requestedDiscountMinor = rawInv.discountMinor != null && rawInv.discountMinor > 0
+          ? Math.round(rawInv.discountMinor)
+          : invoiceDiscountPercent > 0
+            ? Math.round((goodsBeforeDiscount * invoiceDiscountPercent) / 100)
+            : 0
+        if (requestedDiscountMinor > goodsBeforeDiscount) {
+          throw new RangeError('خصم فاتورة الشراء أكبر من قيمة البضاعة — راجع الفاتورة')
+        }
+        const discountKeepPpm = goodsBeforeDiscount > 0 && requestedDiscountMinor > 0
+          ? Math.max(0, goodsBeforeDiscount - requestedDiscountMinor) / goodsBeforeDiscount
+          : 1
+        const discountedLines = rawInv.lines.map(line => ({
+          ...line,
+          qty: normalizeMovementQty(line.qty),
+          unitPriceMinor: discountKeepPpm === 1 ? line.unitPriceMinor : Math.round(line.unitPriceMinor * discountKeepPpm),
+        }))
+        /* الخصم المسجَّل على المستند = **الخصم المُقيَّد فعلاً** لا المطلوب:
+           توزيع الخصم على أسعار السطور يُقرَّب لكل سطر، فمجموع السطور قد يختلف عن
+           (البضاعة − المطلوب) بقرش أو قرشين. لو كتبنا المطلوب لصار في المستند خصمان:
+           رقم يُقرأ في التقارير، ورقم يدخل القيد والمخزون. */
+        const effectiveGoodsMinor = discountedLines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor, 0)
+        const effectiveDiscountMinor = Math.max(0, Math.round(goodsBeforeDiscount - effectiveGoodsMinor))
+        const normalizedInv = {
+          ...rawInv,
+          discountMinor: effectiveDiscountMinor,
+          discountPercent: invoiceDiscountPercent,
+          lines: discountedLines,
+        }
         const evidence = sourceDraftId ? (rawInv.__approvalBypass ? rawInv.__sourceDraftEvidence : draftInputEvidence(normalizedInv)) : undefined
         if (sourceDraftId) {
           const alreadyPosted = state.purchases.find((purchase) => purchase.sourceDraftId === sourceDraftId)
@@ -8735,6 +8898,7 @@ export const useRawDataStore = create<DataState>()(
         }
         // تحقق صارم قبل أي كتابة: سطور موجودة وكميات وأسعار سليمة (حماية من إفساد المخزون)
         if (!inv.lines.length) throw new Error('الفاتورة بلا أصناف')
+
         // الشراء النقدي الحقيقي يحمل supplierId=0: لا يُجبر المستخدم على إنشاء مورد وهمي،
         // ولا يظهر كدين مورد في الكشوف. كل رقم موجب يظل بحاجة إلى مورد مسجل.
         const cashPurchase = inv.supplierId === 0
@@ -8771,10 +8935,27 @@ export const useRawDataStore = create<DataState>()(
           if (l.shippedQty != null && (!Number.isFinite(l.shippedQty) || l.shippedQty <= 0)) throw new Error('الكمية/الوزن المرسَل من المورد غير صالح')
           if (l.moisturePercent != null && (!Number.isFinite(l.moisturePercent) || l.moisturePercent < 0 || l.moisturePercent > 100)) throw new Error('نسبة الرطوبة يجب أن تكون بين 0 و100')
           if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) throw new Error('سعر شراء غير صالح')
+          // نسبة ضريبة سالبة أو مجهولة كانت تُقصّ إلى صفر بصمت (Math.max) ⇒ ضريبة مدخلات ودين أقل بلا رسالة
+          if (l.vatPercent != null && (!Number.isFinite(l.vatPercent) || l.vatPercent < 0 || l.vatPercent > 100)) {
+            throw new Error(`نسبة ضريبة السطر للصنف #${l.itemId} يجب أن تكون بين 0 و100`)
+          }
         }
         for (const expense of inv.expenses) {
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام لمصروف «${expense.nameAr}» غير موجود أو غير نشط`)
           if (!expense.nameAr.trim() || !Number.isInteger(expense.amountMinor) || expense.amountMinor < 0) throw new Error('بيانات مصروف الشراء غير صالحة')
+          /* تحصين (جولة الثغرات): قيمة غير معروفة في «تحميل التكلفة» أو «جهة الدفع» أو
+             «طريقة التوزيع» كانت تُسقط المصروف من كل القوائم صامتاً — لا تكلفة ولا دين
+             ولا خزينة — فيضيع المبلغ من الدفاتر بلا رسالة. الآن يُرفض صراحةً. */
+          if (expense.costTreatment != null && expense.costTreatment !== 'inventory' && expense.costTreatment !== 'period') {
+            throw new Error(`تحميل تكلفة مصروف «${expense.nameAr}» غير معروف — اختر «على تكلفة المخزون» أو «مصروف فترة»`)
+          }
+          if (expense.method !== 'value' && expense.method !== 'qty') {
+            throw new Error(`طريقة توزيع مصروف «${expense.nameAr}» غير معروفة — «بالقيمة» أو «بالكمية»`)
+          }
+          const paidBy = expense.paidBy ?? 'supplier'
+          if (paidBy !== 'supplier' && paidBy !== 'treasury' && paidBy !== 'payable' && paidBy !== 'custody') {
+            throw new Error(`جهة دفع مصروف «${expense.nameAr}» غير معروفة — المورد أو خزينة أو استحقاق أو عهدة`)
+          }
           if (expense.paidBy === 'payable') {
             if (!expense.beneficiaryName?.trim()) throw new Error(`حدد الجهة المستحقة لمصروف «${expense.nameAr}»`)
             const payableCode = expense.payableAccountCode ?? '2117'
@@ -8822,12 +9003,25 @@ export const useRawDataStore = create<DataState>()(
           }
           for (const [itemId, qty] of requested) if (!available.has(itemId) || qty > available.get(itemId)!) throw new Error(`كمية الصنف #${itemId} تتجاوز المتبقي في أمر الشراء أو لا تنتمي إليه — راجع الأمر`)
         }
-        // تحقق تواريخ الصلاحية للأصناف المتتبَّعة (القرار 5) قبل أي كتابة
+        /* تحقق تواريخ الصلاحية للأصناف المتتبَّعة (القرار 5) قبل أي كتابة.
+           الدفعة بلا تاريخ تبقى مسموحة (خام يُفرز لاحقاً بتواريخ مخرجات مثل التمور)،
+           لكنها لا تدخل FEFO ولا تنبيهات الانتهاء — فتُعرض في تقرير «دفعات بلا تاريخ»
+           بدل أن تمرّ بصمت، ويحذّر منها الكاشير قبل الترحيل. */
         for (const l of inv.lines) {
           const item = state.items.find((it) => it.id === l.itemId)
           if (item?.trackExpiry && l.expiryDate && !isValidExpiryDate(l.expiryDate)) {
             throw new Error(`تاريخ صلاحية غير صحيح لـ«${item.nameAr}» — الصيغة YYYY-MM-DD`)
           }
+        }
+        /* سياسة المنشأة (اختيارية — الافتراضي مطفأة): من يشتري معبّأً فقط يُلزم
+           تاريخ الصلاحية، فيُرفض الترحيل هنا قبل أي كتابة بدل تمرير دفعة بلا تاريخ. */
+        const expiryPolicy = purchaseExpiryGuard({
+          requireExpiry: appSetupForState(state).requirePurchaseExpiry === true,
+          lines: inv.lines,
+          items: state.items,
+        })
+        if (expiryPolicy.blocked) {
+          throw new Error(`سياسة المنشأة تُلزم تاريخ صلاحية لكل صنف متتبَّع — ناقص: ${expiryPolicy.missingNames.map((n) => `«${n}»`).join('، ')} (أو أوقف الإلزام من الإعدادات العامة)`)
         }
         // سيريالات أصناف الموبايلات/الأجهزة (نمط موبايل شوب): تُفرز قبل أي كتابة
         // — لو أُدخلت يجب أن يطابق عددها الكمية وألا تتكرر أو تكون مسجلة من قبل
@@ -9394,6 +9588,11 @@ export const useRawDataStore = create<DataState>()(
           }
         }
         assertSaleItemsExist(state, normalizedArgs.lines, true)
+        // نوع دفع مجهول كان يمضي كأنه آجل: لا خزينة ولا ذمة، فيضيع الإجمالي بلا رسالة
+        // الأنواع المعتمدة هي نفسها المعلنة في PaymentMethod — أي قيمة خارجها تُرفض
+        if (!PAYMENT_METHODS.has(normalizedArgs.payment as string)) {
+          throw new Error('نوع دفع الفاتورة غير معروف — نقدي أو آجل أو بطاقة أو ماكينة')
+        }
         const activeBranch = getEffectiveActiveBranch(state)
         const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
         const args = activeBranch && !activeBranch.isMain
@@ -9493,9 +9692,13 @@ export const useRawDataStore = create<DataState>()(
         // 0.5) أرضية السعر (سد فجوة DEXEF/الأمين): بيع تحت الحد الأدنى للسعر
         // مرفوض إلا بموافقة مدير موثقة — حماية من البيع بخسارة سهواً أو تلاعباً
         {
-          const floorBad = priceFloorViolations(saleLines, state.items)
-          if (floorBad.length && !args.priceFloorOverrideBy) {
-            throw new PriceFloorError(floorBad)
+          const floorBad = priceFloorViolations(saleLines, state.items, args.invoiceDiscountPercent)
+          /* F4: عرض معتمد مسبقاً (loss leader) يغطي أصنافه — لا اعتماد مدير لكل فاتورة */
+          const lossLeader = lossLeaderApprovedItems(state.promotions, todayLocalIso())
+          const coveredNames = new Set(state.items.filter((it) => lossLeader.has(it.id)).map((it) => it.nameAr))
+          const stillBad = floorBad.filter((name) => !coveredNames.has(name))
+          if (stillBad.length && !args.priceFloorOverrideBy) {
+            throw new PriceFloorError(stillBad)
           }
         }
         // 1) فحص المخزون في المخزن الفعلي لكل سطر (وعلى خامات الوصفة داخله).
@@ -9516,7 +9719,7 @@ export const useRawDataStore = create<DataState>()(
           if (hasWarehouses) {
             const warehouseStock = computeWarehouseStock(
               state.items, state.warehouses, state.transfers,
-              buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
+              buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes),
             )
             const needsByWarehouse = new Map<number, Map<number, number>>()
           for (const line of saleLines) {
@@ -9660,9 +9863,63 @@ export const useRawDataStore = create<DataState>()(
           const expected = Math.round((current as number) * (l.unitFactor ?? 1))
           return expected !== l.unitCostMinor ? { ...l, unitCostMinor: expected } : l
         })
-        const baseTotals = computeTotals(costedLines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive, 2)
         const customerCharges = args.customerCharges ?? []
-        const totals = applySaleCustomerCharges(baseTotals, customerCharges, args.taxPercent, 2)
+        /* تكلفة البيع الدقيقة (لا المقربة): ثابت المحاسبة يقول `1103 = Σ قيمة الأصناف`
+           بالقرش الواحد. حساب التكلفة بـ(كمية × متوسط مقرب) يخالف القيمة المحمولة
+           عند كسور الأوزان (0.42 كجم × 1975.5 مثلاً) فينحرف الدفتر بقرش في كل حركة
+           وزن ويتراكم. الحل: نسحب القيمة من نفس الرصيد الدقيق (withdrawStockValue)
+           ونُخرج القيد بها — نفس ما يفعله الصنف، فلا ينفصل دفتر المخزون عن قيمته. */
+        const exactWithdrawals = new Map<number, ReturnType<typeof withdrawStockValue>>()
+        if (!isDocumentation) {
+          for (const [itemId, neededQty] of stockNeeds) {
+            const item = state.items.find((it) => it.id === itemId)
+            if (!item || isServiceItem(itemId)) continue
+            const prevQty = item.stockQty ?? 0
+            const prevValue = Number.isSafeInteger(item.stockValueMinor) && (item.stockValueMinor as number) >= 0
+              ? item.stockValueMinor as number
+              : Math.round(prevQty * item.costMinor)
+            if (!(prevQty + 1e-9 >= neededQty)) continue // بيع بالسالب: لا قيمة تُسحب
+            try { exactWithdrawals.set(itemId, withdrawStockValue(prevQty, prevValue, neededQty)) } catch { /* يعود للحساب المقرب */ }
+          }
+        }
+        /* توزيع التكلفة الدقيقة على السطور (costTotalMinor): حارس «تقريب الفاتورة»
+           في المرتجعات يعيد حساب الإجماليات من المستند، فيجب أن يعيد cogsMinor نفسه؛
+           ومرتجع السطر يأخذ نصيبه النسبي، فيبقى 1103 مساوياً تماماً لمجموع قيم الأصناف. */
+        let costedLinesExact = costedLines
+        if (!isDocumentation && exactWithdrawals.size > 0) {
+          const baseQtyOf = (l: CartLine): number => l.qty * (l.unitFactor ?? 1)
+          /* من يستهلك كل صنف فعلياً: سطر الصنف نفسه، أو سطر **طبق بوصفة «عند الطلب»**
+             الذي يستهلك خاماته. كان التوزيع يقف عند الصنف المباشر، فيخرج قيد الطبق
+             بتكلفة وصفة مقرَّبة بينما الخامات تُنقص بقيمتها الدقيقة — قرش ينحرف في
+             كل بيع طبق. الآن نصيب كل سطر = حصته من السحب الدقيق لخاماته. */
+          const consumersByItem = new Map<number, { index: number; qty: number }[]>()
+          const addConsumer = (itemId: number, index: number, qty: number) => {
+            if (!exactWithdrawals.has(itemId) || !(qty > 0)) return
+            const rows = consumersByItem.get(itemId) ?? []
+            rows.push({ index, qty })
+            consumersByItem.set(itemId, rows)
+          }
+          costedLines.forEach((l, index) => {
+            const recipe = recipeOf(l.itemId)
+            if (recipe) for (const ing of recipe.ingredients) addConsumer(ing.itemId, index, ing.qty * baseQtyOf(l))
+            else addConsumer(l.itemId, index, baseQtyOf(l))
+          })
+          const shares = new Map<number, number>()
+          for (const [itemId, consumers] of consumersByItem) {
+            const total = exactWithdrawals.get(itemId)!.withdrawnValueMinor
+            const basis = consumers.reduce((a, c) => a + c.qty, 0)
+            if (!(basis > 0)) continue
+            let given = 0
+            consumers.forEach((c, k) => {
+              const share = k === consumers.length - 1 ? total - given : Math.round((total * c.qty) / basis)
+              given += share
+              shares.set(c.index, (shares.get(c.index) ?? 0) + share)
+            })
+          }
+          costedLinesExact = costedLines.map((l, index) => shares.has(index) ? { ...l, costTotalMinor: shares.get(index)! } : l)
+        }
+        const baseTotals = computeTotals(costedLinesExact, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive, 2)
+        let totals = applySaleCustomerCharges(baseTotals, customerCharges, args.taxPercent, 2)
         /* ── حارس فوترة المشاريع — النموذج (أ) (أ-١ سقف «extra»، أ-٢ توثيق) ──
            يُفرض فقط حين تُرسل الواجهة طبيعة الفوترة صراحة؛ المسار التاريخي
            (بلا طبيعة) لا يتغيّر حتى تُلزم الواجهة الطبيعة لفواتير المشروعات.
@@ -9779,7 +10036,12 @@ export const useRawDataStore = create<DataState>()(
         }
         /* توثيق ⇒ بلا سطور قيد: يولد قيد «تذكاري» فارغ يربط المستند بدفتره
            (قرار 9: كل مستند مربوط بقيده) بلا أي أثر على الأرصدة */
-        const entryLines = isDocumentation ? [] : args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, receivable) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM, receivable)
+        /* F8: تقريب الفئات النقدية — يغيّر النقد المستلم فقط، وإجمالي الفاتورة الضريبية يبقى كما هو.
+           لا يُطبَّق على التحصيل المجزأ (توزيعات) ولا على الآجل: التقريب قرار نقدي بحت. */
+        const cashRounding = !isDocumentation && !args.paymentAllocations?.length && args.payment === 'cash' && paidM === totals.totalMinor
+          ? roundCashAmount(totals.totalMinor, args.cashRoundingStepMinor)
+          : null
+        const entryLines = isDocumentation ? [] : args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, receivable) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM, receivable, cashRounding?.diffMinor ? cashRounding.roundedMinor : null)
         const internalExpenses = args.internalExpenses ?? []
         const saleCustodyNeeds = new Map<number, number>()
         for (const expense of internalExpenses) {
@@ -9856,9 +10118,11 @@ export const useRawDataStore = create<DataState>()(
             ?? null,
           payment: isDocumentation ? 'credit' : args.payment,
           paidMinor: paidM,
+          /* F8: النقد المستلم بعد التقريب يُحفظ على المستند — والفاتورة تبقى محصلة كاملةً */
+          ...(cashRounding && cashRounding.diffMinor ? { cashReceivedMinor: cashRounding.roundedMinor, cashRoundingMinor: cashRounding.diffMinor } : {}),
           treasury: args.treasury ?? '1101',
           paymentAllocations: args.paymentAllocations,
-          lines: costedLines,
+          lines: costedLinesExact,
           ...(serialExpiryBatches.length ? { serialExpiryBatches } : {}),
           saleExpiryBatches,
           saleExpiryItemIds,
@@ -9925,9 +10189,23 @@ export const useRawDataStore = create<DataState>()(
         const earned = !isDocumentation && args.customerId != null ? earnedPoints(totals.totalMinor, decimals, loyaltySettings) : 0
 
         // 4) خصم المخزون (خامات الأطباق بدل الطبق نفسه) + تعليم السيريالات مباعة
-        const updatedItems = state.items.map((it) =>
-          stockNeeds.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - stockNeeds.get(it.id)!) * 1000) / 1000 } : it,
-        )
+        const updatedItems = state.items.map((it) => {
+          const need = stockNeeds.get(it.id)
+          if (need == null) return it
+          const withdrawal = exactWithdrawals.get(it.id)
+          if (withdrawal) {
+            // القيمة المحمولة تُحدَّث من نفس السحب الذي خرج به القيد — لا إعادة حساب لاحقة
+            return withExactStockValue({ ...it, stockQty: withdrawal.remainingQty, stockValueMinor: withdrawal.remainingValueMinor })
+          }
+          /* بيع بأذن رصيد سالب (allowNegativeStock): القيد يخصم تكلفة الكمية كلها من 1103،
+             فيجب أن تحمل البطاقة قيمة سالبة بالمقابل بدل الصفر — وإلا انحرف
+             «1103 = مجموع قيم الأصناف» بمقدار تكلفة البضاعة غير الموجودة (قيس 13,500). */
+          const nextQty = Math.round(((it.stockQty ?? 0) - need) * 1000) / 1000
+          if (nextQty < 0) {
+            return withExactStockValue({ ...it, stockQty: nextQty, stockValueMinor: Math.round(nextQty * (it.costMinor ?? 0)) })
+          }
+          return { ...it, stockQty: nextQty }
+        })
         // markSold يتحقق (موجود/متاح/يخص الصنف/غير مكرر) ويرمي خطأ عربياً قبل أي كتابة
         const updatedSerials = assignments.length ? markSold(state.serials, assignments, saleId, now) : state.serials
         // خصم مصفوفة المتغيرات (الرصيد الإجمالي خُصم أعلاه — هذا الدفتر الفرعي)
@@ -10026,7 +10304,11 @@ export const useRawDataStore = create<DataState>()(
         // لا يُستنتج أن الدفعة المصروفة في البيع هي الدفعة التي أعادها العميل.
         // الاختيار الصريح مقبول فقط مع إثبات كامل لسطر وحيد من الصنف ومخزنه.
         const isDish = (itemId: number) => state.recipes.some((r) => r.productItemId === itemId && r.mode === 'made_to_order')
-        const lines = rawLines.map((l) => (isDish(l.itemId) ? { ...l, unitCostMinor: 0 } : l))
+        /* طبق «يُجهَّز عند الطلب»: خاماته استُهلكت فعلاً ولا بضاعة تعود للمخزون،
+           فلا يجوز أن يُcredited 1103 ولا أن تتحرك تكلفة المبيعات أبداً. تصفير
+           التكلفة هنا يمنع الانتفاخ الدفتري (كان قيد المرتجع يزيد المخزون 176 قرشاً
+           بلا بضاعة مقابلها بعد تثبيت تكلفة السطر الدقيقة). */
+        const lines = rawLines.map((l) => (isDish(l.itemId) ? { ...l, unitCostMinor: 0, costTotalMinor: 0, nonRestockable: true } : l))
         const expiryReturnEvidence: NonNullable<JournalEntry['saleReturnExpiryBatches']> = []
         const expiryRestorations: { batch: StockBatch; qty: number }[] = []
         const scoped = getBranchScopedDataState(state)
@@ -10066,7 +10348,10 @@ export const useRawDataStore = create<DataState>()(
           const used = new Map<number, number>()
           const consume = (row: ReturnLine) => {
             const chosen = row.expiryBatchAllocations
-            if (row.saleLineIndex !== line.saleLineIndex || !Array.isArray(chosen) || !chosen.length || (row.warehouseId ?? sale.warehouseId ?? null) !== sourceWarehouse || (row.condition !== 'damaged' && row.condition !== 'resellable')) fail()
+            // رسالة صريحة لحالة «لم تُحدَّد الدفعة» بدل الرسالة العامة المضللة التي
+            // كانت تُقرأ كتلاعب في المستند (الحارس نفسه لم يتغير).
+            if (!Array.isArray(chosen) || !chosen.length) throw new Error(`«${row.nameAr}»: حدد الدفعة المستلمة المرتجعة (صلاحية مسجلة) قبل الترحيل`)
+            if (row.saleLineIndex !== line.saleLineIndex || (row.warehouseId ?? sale.warehouseId ?? null) !== sourceWarehouse || (row.condition !== 'damaged' && row.condition !== 'resellable')) fail()
             const ids = new Set<number>()
             let total = 0
             for (const allocation of chosen!) {
@@ -10291,7 +10576,7 @@ export const useRawDataStore = create<DataState>()(
           if (l.condition === 'damaged') continue // تالف: لا يدخل المخزون — تكلفته في 5111 بالقيد
           // سطر بوحدة أكبر: يعود للمخزون بالوحدة الأساسية qty×factor وبقيمته الكاملة
           qtyBack.set(l.itemId, (qtyBack.get(l.itemId) ?? 0) + baseQty(l))
-          valueBack.set(l.itemId, (valueBack.get(l.itemId) ?? 0) + Math.round(l.qty * l.unitCostMinor))
+          valueBack.set(l.itemId, (valueBack.get(l.itemId) ?? 0) + (l.costTotalMinor ?? Math.round(l.qty * l.unitCostMinor)))
         }
         const updatedItems = state.items.map((it) => {
           if (!qtyBack.has(it.id)) return it
@@ -10485,7 +10770,7 @@ export const useRawDataStore = create<DataState>()(
         if (args.lineSpecs?.length) {
           const warehouseStock = computeWarehouseStock(
             state.items, state.warehouses, state.transfers,
-            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
+            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes),
           )
           const needed = new Map<string, number>()
           for (const line of lines) {
@@ -10685,30 +10970,76 @@ export const useRawDataStore = create<DataState>()(
         return ret
       },
 
-      postStocktake: (counts, notes) => {
+      postStocktake: (counts, notes, shortageReason = 'unaccounted') => {
         const state = get()
         if (!counts.length) throw new Error('لا أصناف في الجرد')
         // حراسة §80: صنف غير مسجل يولّد قيد تسوية (5111/4110) بلا أثر مخزوني فعلي
         // فينفصل 1103 الدفتري عن قيمة المخزون الحقيقية (قيس: عجز وهمي 50,000).
         // كذلك «الدفتري» المُمرر يجب أن يطابق رصيد اللحظة وإلا كان الجرد على أساس قديم.
+        //
+        // نطاق الجرد = نطاق الفرع النشط: الشاشة تعرض أرصدة مخازن الفرع (getBranchScopedDataState)،
+        // فمقارنة المعدود بالرصيد الكلي للشركة كانت ترفض كل جرد فرعي برسالة مضللة
+        // («الرصيد الدفتري تغير» والفرق هو بضاعة فرع آخر). والفارق يُطبَّق كفرق على الرصيد
+        // الكلي ثم يُنسب للمخزن المعدود في اشتقاق أرصدة المخازن (buildWarehouseDocs).
+        const scoped = getBranchScopedDataState(state)
+        const activeBranch = getEffectiveActiveBranch(state)
+        const branchWarehouseId = activeBranch?.warehouseId ?? null
+        const scopedWarehouseIds = new Set(scoped.warehouses.map((warehouse) => warehouse.id))
+        const deltaByItem = new Map<number, number>()
         for (const c of counts) {
           const it = state.items.find((row) => row.id === c.itemId)
           if (!it) throw new Error(`«${c.nameAr}» (#${c.itemId}) ليس صنفاً مسجلاً — أزل سطر الجرد`)
+          // كمية نكرة أو سالبة أو تكلفة نكرة كانت تُنتج صفّ جرد بلا أثر أو بقيمة نكرة
+          if (!Number.isFinite(c.countedQty) || c.countedQty < 0) throw new Error(`«${c.nameAr}»: الكمية المعدودة يجب أن تكون رقماً غير سالب`)
+          if (!Number.isFinite(c.expectedQty) || c.expectedQty < 0) throw new Error(`«${c.nameAr}»: الرصيد الدفتري غير صالح`)
+          if (c.unitCostMinor != null && (!Number.isSafeInteger(c.unitCostMinor) || c.unitCostMinor < 0)) throw new Error(`«${c.nameAr}»: تكلفة الوحدة في الجرد غير صالحة`)
           if (Math.round(c.countedQty * 1000) !== Math.round(c.expectedQty * 1000)) assertSerialBatchMovementSupported(state, c.itemId)
-          if (Math.round((it.stockQty ?? 0) * 1000) !== Math.round(c.expectedQty * 1000)) {
-            throw new Error(`«${c.nameAr}»: الرصيد الدفتري تغير منذ العد (${it.stockQty ?? 0} حالياً) — أعد الجرد على الرصيد الحالي`)
+          const bookQty = scoped.items.find((row) => row.id === c.itemId)?.stockQty ?? it.stockQty ?? 0
+          if (Math.round(bookQty * 1000) !== Math.round(c.expectedQty * 1000)) {
+            throw new Error(`«${c.nameAr}»: الرصيد الدفتري تغير منذ العد (${bookQty} حالياً) — أعد الجرد على الرصيد الحالي`)
           }
+          deltaByItem.set(c.itemId, Math.round((c.countedQty - c.expectedQty) * 1000) / 1000)
         }
         const result = computeStocktake(counts)
+        /* تقييم الفارق من القيمة المحمولة نفسها لا من (كمية × متوسط مقرَّب):
+           العجز يُسحب بسحب القيمة الدقيق (نفس البيع والإتلاف)، والزيادة تُضاف بمتوسط
+           اللحظة. بدون ذلك يخرج قيد التسوية برقم ويُضبط الصنف برقم آخر — فينحرف
+           `1103` عن مجموع قيم الأصناف بقرش في كل جرد لا يُسترد أبداً (اكتُشف بمزعزع). */
+        const exactVariances = result.variances.map((v) => {
+          const tracked = state.items.find((row) => row.id === v.itemId)!
+          const prevQty = tracked.stockQty ?? 0
+          const prevValue = Number.isSafeInteger(tracked.stockValueMinor) && (tracked.stockValueMinor as number) >= 0
+            ? tracked.stockValueMinor as number
+            : Math.round(prevQty * tracked.costMinor)
+          // الكمية بعد الجرد = رصيد الشركة الفعلي + الفارق (الجرد يُقاس بنطاق الفرع،
+          // فاستخدام رصيد الفرع هنا كان يمحو أرصدة بقية الفروع عند الزيادة)
+          const nextQty = Math.round((prevQty + v.diffQty) * 1000) / 1000
+          if (v.diffQty < 0) {
+            const withdrawal = withdrawStockValue(prevQty, prevValue, -v.diffQty)
+            return { ...v, valueMinor: -withdrawal.withdrawnValueMinor, nextValueMinor: withdrawal.remainingValueMinor, nextQty: withdrawal.remainingQty }
+          }
+          const added = Math.round(v.diffQty * tracked.costMinor)
+          return { ...v, valueMinor: added, nextValueMinor: prevValue + added, nextQty }
+        })
+        const exactShortage = exactVariances.reduce((a, v) => a + (v.valueMinor < 0 ? -v.valueMinor : 0), 0)
+        const exactSurplus = exactVariances.reduce((a, v) => a + (v.valueMinor > 0 ? v.valueMinor : 0), 0)
+        const exactResult = {
+          ...result,
+          variances: exactVariances,
+          shortageValueMinor: exactShortage,
+          surplusValueMinor: exactSurplus,
+          netValueMinor: exactSurplus - exactShortage,
+        }
+        const exactVarianceById = new Map(exactVariances.map((v) => [v.itemId, v]))
         const stocktakeId = nextId(state.stocktakes)
         const now = localIsoTimestamp()
         const stocktakeNumber = `ST-${String(stocktakeId).padStart(4, '0')}`
 
         let entryId: number | null = null
         let journal = state.journal
-        if (result.variances.length > 0) {
-          // قيد تسوية واحد متوازن للعجز والزيادة معاً
-          const entryLines = buildAdjustmentEntry(result)
+        if (exactResult.variances.length > 0) {
+          // قيد تسوية واحد متوازن للعجز والزيادة معاً — بقيمة السحب/الإضافة الفعلية
+          const entryLines = buildAdjustmentEntry(exactResult, shortageReason)
           entryId = nextId(state.journal)
           const entry: JournalEntry = {
             id: entryId,
@@ -10728,24 +11059,52 @@ export const useRawDataStore = create<DataState>()(
 
         const st: Stocktake = {
           id: stocktakeId,
+          shortageReason,
           stocktakeNumber,
           date: now,
-          result,
+          result: exactResult,
           countedItems: counts.length,
           journalEntryId: entryId,
           notes,
+          warehouseId: branchWarehouseId,
         }
 
-        // ضبط المخزون على المعدود فعلياً
-        const countedBy = new Map(counts.map((c) => [c.itemId, c.countedQty]))
-        const updatedItems = state.items.map((it) =>
-          countedBy.has(it.id) ? { ...it, stockQty: countedBy.get(it.id)! } : it,
-        )
+        // ضبط المخزون على المعدود فعلياً داخل النطاق: الرصيد الكلي يتحرك بفارق الجرد فقط،
+        // فلا يُكتب رصيد فرع فوق رصيد بقية الفروع.
+        const updatedItems = state.items.map((it) => {
+          const variance = exactVarianceById.get(it.id)
+          if (!variance) return it
+          const newQty = variance.nextQty
+          return withExactStockValue({
+            ...it,
+            stockQty: newQty,
+            costMinor: newQty > 0 ? Math.round(variance.nextValueMinor / newQty) : it.costMinor,
+            stockValueMinor: variance.nextValueMinor,
+          })
+        })
 
         // V2 (مراجعة المخزون): العجز يُخصم من دفعات الصلاحية أيضاً (FEFO — الأقدم
         // انتهاءً أولاً باعتباره الأرجح فقداً/تلفاً) وإلا بقيت الدفعات أعلى من الرصيد
-        // فتنذر «منتهي الصلاحية» عن بضاعة غير موجودة أصلاً
+        // فتنذر «منتهي الصلاحية» عن بضاعة غير موجودة أصلاً.
+        // والزيادة تُثبت كدفعة بلا صلاحية معلومة (تشغيلة «جرد») في المخزن المعدود:
+        // بدونها يصبح مجموع الدفعات أقل من الرصيد فيرفض الكاشير بيع الصنف لاحقاً.
         let batches = state.batches
+        let nextStocktakeBatchId = nextId(state.batches)
+        for (const v of result.variances) {
+          if (v.diffQty <= 0) continue
+          const trackedItem = state.items.find(row => row.id === v.itemId)
+          if (!(trackedItem?.trackExpiry || batches.some(batch => batch.itemId === v.itemId))) continue
+          batches = [...batches, {
+            id: nextStocktakeBatchId++,
+            itemId: v.itemId,
+            warehouseId: branchWarehouseId,
+            lotNumber: `جرد ${stocktakeNumber}`,
+            expiryDate: null,
+            qty: Math.round(v.diffQty * 1000) / 1000,
+            purchaseId: null,
+            receivedAt: now,
+          }]
+        }
         for (const v of result.variances) {
           if (v.diffQty >= 0) continue
           let rest = -v.diffQty
@@ -10754,6 +11113,8 @@ export const useRawDataStore = create<DataState>()(
             .sort((a, b) => ((a.expiryDate ?? '9999') < (b.expiryDate ?? '9999') ? -1 : 1))
             .map((b) => {
               if (b.itemId !== v.itemId || rest <= 0 || b.qty <= 0) return b
+              // دفعة مخزن آخر لا تُستنزف بجرد هذا الفرع؛ الدفعة بلا مخزن (سجل قديم) تبقى مشمولة.
+              if (branchWarehouseId != null && b.warehouseId != null && !scopedWarehouseIds.has(b.warehouseId)) return b
               const take = Math.min(b.qty, rest)
               rest -= take
               return { ...b, qty: Math.round((b.qty - take) * 1000) / 1000 }
@@ -11436,6 +11797,10 @@ export const useRawDataStore = create<DataState>()(
         const args = activeBranch && !activeBranch.isMain && rawArgs.kind !== 'transfer' && (!rawArgs.treasury || rawArgs.treasury === '1101')
           ? { ...rawArgs, treasury: activeBranch.treasuryCode }
           : rawArgs
+        // نوع سند مجهول كان يُمرَّر كتحويل/صرف فيولّد قيداً بلا مستند طرف مطابق (ث7)
+        if (args.kind !== 'receipt' && args.kind !== 'payment' && args.kind !== 'transfer') {
+          throw new Error('نوع السند غير معروف — اختر سند قبض أو سند صرف أو تحويل خزينة')
+        }
         if (args.receiptCollectorEmployeeId != null) {
           const id = args.receiptCollectorEmployeeId
           if (args.kind !== 'receipt') throw new Error('المحصّل يحدد لسند قبض فقط')
@@ -12134,16 +12499,33 @@ export const useRawDataStore = create<DataState>()(
         return updatedVoucher
       },
 
-      openShift: (openedBy, openingCashMinor) => {
+      openShift: (openedBy, openingCashMinor, identity) => {
         const state = get()
         // AUDIT-010: اسم فاتح الوردية نص فقط (استدعاء خاطئ بكائن كان يُحفظ كما هو)
         if (typeof openedBy !== 'string') throw new Error('اسم فاتح الوردية مطلوب')
         const errors = validateOpenShift(openingCashMinor, getBranchScopedDataState(state).shifts)
         if (errors.length) throw new Error(errors.join('، '))
+        /* F6: ربط الهوية — مستخدم الجلسة إن وُجد، والموظف بتطابق اسم وحيد فقط.
+           اسم مكرر أو غير موجود ⇒ يبقى الربط null بلا تخمين (لا نحمّل عجزاً لشخص خطأ). */
+        const scoped = getBranchScopedDataState(state)
+        const explicitUser = identity?.userId
+        const resolvedUserId = explicitUser !== undefined
+          ? explicitUser
+          : (state.currentUserId != null && scoped.appUsers.some((user) => user.id === state.currentUserId) ? state.currentUserId : null)
+        if (resolvedUserId != null && !scoped.appUsers.some((user) => user.id === resolvedUserId)) throw new Error('مستخدم فاتح الوردية غير موجود في هذا الفرع')
+        let resolvedEmployeeId = identity?.employeeId ?? null
+        if (identity?.employeeId != null) {
+          if (!state.employees.some((emp) => emp.id === identity.employeeId && emp.active)) throw new Error('الموظف المرتبط بالوردية غير موجود أو موقوف')
+        } else if (identity?.employeeId === undefined) {
+          const matches = state.employees.filter((emp) => emp.active && emp.nameAr.trim() === openedBy.trim())
+          resolvedEmployeeId = matches.length === 1 ? matches[0].id : null
+        }
         const shift: Shift = {
           id: nextId(state.shifts),
           openedAt: new Date().toISOString(),
           openedBy,
+          openedByUserId: resolvedUserId,
+          openedByEmployeeId: resolvedEmployeeId,
           openingCashMinor,
           closedAt: null,
           countedCashMinor: null,
@@ -12155,15 +12537,29 @@ export const useRawDataStore = create<DataState>()(
 
       getShiftSummary: (shiftId) => shiftSummaryForState(get(), shiftId),
 
-      closeShift: (countedCashMinor, closeApprovedBy = null, closeApprovalNote = null) => {
+      closeShift: (countedCashMinor, closeApprovedBy = null, closeApprovalNote = null, settle = null) => {
         const state = get()
         const open = currentOpenShift(getBranchScopedDataState(state).shifts)
         if (!open) throw new Error('لا وردية مفتوحة')
         // AUDIT-010: المعدود عدد صحيح بالقرش — لا undefined ولا كسر
         if (!Number.isInteger(countedCashMinor)) throw new Error('النقدية المعدودة مطلوبة بالقرش الصحيح')
         if (countedCashMinor < 0) throw new Error('النقدية المعدودة لا تكون سالبة')
-        shiftSummaryForState(state, open.id)
+        const summary = shiftSummaryForState(state, open.id)
+        /* الفرق المتوقع يُحسب من المعدود الآن: `varianceMinor` في الملخص يبقى null
+           حتى تُقفل الوردية، فالاعتماد عليه هنا كان يجعل خيار التسوية صامتاً. */
+        const variance = countedCashMinor - summary.expectedCashMinor
         const closed: Shift = { ...open, closedAt: new Date().toISOString(), countedCashMinor, status: 'closed', closeApprovedBy, closeApprovalNote }
+        if (settle && variance !== 0) {
+          if (!closeApprovedBy) throw new Error('تسوية الفرق تحتاج اعتماد مشرف/مالك مسجَّلاً على الإقفال')
+          const plan = buildShiftVarianceSettlement(state, closed, variance, settle.mode, settle.employeeId)
+          const settled: Shift = { ...closed, ...plan.shiftPatch }
+          set({
+            shifts: state.shifts.map((s) => (s.id === open.id ? settled : s)),
+            journal: [...state.journal, plan.entry],
+            ...(plan.advance ? { employeeAdvances: [...state.employeeAdvances, plan.advance] } : {}),
+          })
+          return settled
+        }
         set({ shifts: state.shifts.map((s) => (s.id === open.id ? closed : s)) })
         return closed
       },
@@ -12177,53 +12573,15 @@ export const useRawDataStore = create<DataState>()(
         // نفس مصدر الملخص الذي يظهر ويُتحقق عند الإقفال.
         const variance = shiftSummaryForState(state, shift.id).varianceMinor
         if (variance === null || variance === 0) throw new Error('لا فرق في هذه الوردية للتسوية')
-        const now = localIsoTimestamp()
-        const label = `وردية #${shift.id}`
-
-        if (args.mode === 'advance') {
-          // سلفة على الموظف تُخصم من رواتبه (تظهر في مسير الرواتب تلقائياً)
-          if (variance > 0) throw new Error('السلفة تكون عن عجز فقط — الزيادة تُسوى كإيراد')
-          const emp = state.employees.find((e) => e.id === args.employeeId)
-          if (!emp) throw new Error('اختر الموظف الذي يتحمل العجز')
-          const advId = nextId(state.employeeAdvances)
-          const entryId = nextId(state.journal)
-          const advanceNumber = `ADV-${String(advId).padStart(4, '0')}`
-          const entry: JournalEntry = {
-            id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-            description: `عجز ${label} محمَّل سلفة على ${emp.nameAr} — ${advanceNumber}`,
-            sourceType: 'payment_voucher', sourceId: advId, sourceCollection: 'employeeAdvances',
-            lines: buildVarianceAdvanceEntry(variance, '1101', emp.nameAr),
-            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
-          }
-          const advance: EmployeeAdvance = {
-            id: advId, advanceNumber, employeeId: emp.id, date: now,
-            amountMinor: Math.abs(variance), recoveredMinor: 0,
-            source: 'cash', custodyFileId: null, treasury: '1101',
-            notes: `عجز ${label} — يُخصم من الرواتب`, journalEntryId: entryId,
-          }
-          const updated: Shift = { ...shift, varianceSettledMode: 'advance', varianceEntryId: entryId, varianceAdvanceId: advId }
-          set({
-            employeeAdvances: [...state.employeeAdvances, advance],
-            journal: [...state.journal, entry],
-            shifts: state.shifts.map((s) => (s.id === shift.id ? updated : s)),
-          })
-          return updated
-        }
-
-        // مصروف (عجز) أو إيراد آخر (زيادة)
-        const entryId = nextId(state.journal)
-        const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: variance < 0 ? `تسوية عجز ${label} كمصروف` : `تسوية زيادة ${label} كإيراد آخر`,
-          sourceType: 'adjustment', sourceId: shift.id, sourceCollection: 'shifts',
-          lines: buildVarianceExpenseEntry(variance, '1101', label),
-          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
-        }
-        const updated: Shift = { ...shift, varianceSettledMode: 'expense', varianceEntryId: entryId, varianceAdvanceId: null }
-        set({ journal: [...state.journal, entry], shifts: state.shifts.map((s) => (s.id === shift.id ? updated : s)) })
-        return updated
+        const plan = buildShiftVarianceSettlement(state, shift, variance, args.mode, args.employeeId)
+        const settled: Shift = { ...shift, ...plan.shiftPatch }
+        set({
+          journal: [...state.journal, plan.entry],
+          shifts: state.shifts.map((s) => (s.id === shift.id ? settled : s)),
+          ...(plan.advance ? { employeeAdvances: [...state.employeeAdvances, plan.advance] } : {}),
+        })
+        return settled
       },
-
       attachSaleTaxQr: (saleId, payload) => set((state) => ({
         sales: state.sales.map((sale) => (sale.id === saleId && !sale.taxQrPayload ? { ...sale, taxQrPayload: payload } : sale)),
       })),
@@ -12355,8 +12713,13 @@ export const useRawDataStore = create<DataState>()(
           const cur = stockAfterRestore.get(l.itemId)
           return { ...l, isServiceAtSale: false, unitCostMinor: cur && Number.isInteger(cur.costMinor) ? Math.round(cur.costMinor * (l.unitFactor ?? 1)) : l.unitCostMinor }
         })
-        const floorBad = priceFloorViolations(costedLines, state.items)
-        if (floorBad.length && !args.priceFloorOverrideBy) throw new PriceFloorError(floorBad)
+        const floorBad = priceFloorViolations(costedLines, state.items, args.invoiceDiscountPercent)
+        /* F4: عرض loss leader معتمد مسبقاً يغطي أصنافه — لا اعتماد لكل فاتورة */
+        const lossLeaderNames = new Set(state.items
+          .filter((it) => lossLeaderApprovedItems(state.promotions, todayLocalIso()).has(it.id))
+          .map((it) => it.nameAr))
+        const editStillBad = floorBad.filter((name) => !lossLeaderNames.has(name))
+        if (editStillBad.length && !args.priceFloorOverrideBy) throw new PriceFloorError(editStillBad)
         // ④ الإجماليات والقيد الجديد بنفس المعاملة الضريبية الأصلية
         // G1: المعاملة الضريبية المخزنة على الفاتورة أولاً (دقيقة مع الأصناف المعفاة المختلطة)
         const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
@@ -12631,6 +12994,9 @@ export const useRawDataStore = create<DataState>()(
         for (const l of args.lines) {
           if (!Number.isFinite(l.qty) || l.qty <= 0) throw new Error('كل كمية يجب أن تكون رقماً موجباً')
           if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) throw new Error('سعر شراء غير صالح')
+          if (l.vatPercent != null && (!Number.isFinite(l.vatPercent) || l.vatPercent < 0 || l.vatPercent > 100)) {
+            throw new Error(`نسبة ضريبة السطر للصنف #${l.itemId} يجب أن تكون بين 0 و100`)
+          }
         }
         // موانع السلامة: مستندات لاحقة بُنيت على الفاتورة
         if (state.serials.some((u) => u.purchaseId === inv.id)) {
@@ -13579,7 +13945,15 @@ export const useRawDataStore = create<DataState>()(
         if (transactions.some((row) => row!.occurredAt > input.settledAt)) throw new Error('لا يمكن تسوية عملية بتاريخ لاحق لتاريخ الدفعة')
         const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
         if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, input.terminalId, 'settle', input.grossMinor)
-        const calculated = calculateTerminalSettlement(input)
+        // إصلاح: كان يُمرَّر كائن التسوية كاملاً (id/terminalId/التواريخ) إلى مدقق
+        // يفحص كل قيمة كعدد صحيح ⇒ ترمي دائماً «قيمة id في التسوية غير صالحة»،
+        // فلا يمكن تسجيل أي دفعة تسوية إطلاقاً. يُمرَّر الآن الحقول المالية وحدها.
+        const calculated = calculateTerminalSettlement({
+          grossMinor: input.grossMinor,
+          feeMinor: input.feeMinor,
+          feeTaxMinor: input.feeTaxMinor,
+          depositedMinor: input.depositedMinor,
+        })
         if (!state.treasuries.some((row) => row.code === input.bankAccountCode)) throw new Error('حساب البنك المستلم غير موجود')
         const lines: JournalLine[] = [
           { accountCode: input.bankAccountCode, debit: input.depositedMinor, credit: 0, note: 'صافي تسوية ماكينة دفع' },
@@ -15414,7 +15788,11 @@ export const useRawDataStore = create<DataState>()(
           qtyByItem.set(l.itemId, (qtyByItem.get(l.itemId) ?? 0) + baseQty(l))
         }
         const floorBad = priceFloorViolations(args.lines, state.items)
-        if (floorBad.length) throw new PriceFloorError(floorBad)
+        const exchangeCovered = new Set(state.items
+          .filter((it) => lossLeaderApprovedItems(state.promotions, todayLocalIso()).has(it.id))
+          .map((it) => it.nameAr))
+        const exchangeBad = floorBad.filter((name) => !exchangeCovered.has(name))
+        if (exchangeBad.length) throw new PriceFloorError(exchangeBad)
         for (const [itemId, qty] of qtyByItem) {
           const it = state.items.find((x) => x.id === itemId)
           if (!it) throw new Error('صنف غير موجود')
@@ -19849,12 +20227,6 @@ export const useRawDataStore = create<DataState>()(
         return updated
       },
 
-      assertApproved: (action, refId, subject, amountMinor) => {
-        const state = get()
-        const approvalRequests = planApprovalConsumption(state, action, refId, subject, amountMinor)
-        if (approvalRequests !== state.approvalRequests) set({ approvalRequests })
-      },
-
       /* ─── الوصفات والتصنيع (مطاعم — سد فجوة Foodics) ─── */
       addRecipe: (input) => {
         const state = get()
@@ -19909,7 +20281,7 @@ export const useRawDataStore = create<DataState>()(
         const outputWarehouseId = args.outputWarehouseId ?? legacyWarehouseId
         if (ingredientWarehouseId != null && !state.warehouses.some((warehouse) => warehouse.id === ingredientWarehouseId)) throw new Error('اختر مخزن صرف خامات صحيحاً')
         if (outputWarehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === outputWarehouseId)) throw new Error('اختر مخزن استلام ناتج صحيحاً')
-        const warehouseStock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
+        const warehouseStock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes))
         const availableInWarehouse = (itemId: number, warehouseId: number | null) => warehouseStock.get(warehouseId ?? -1)?.get(itemId) ?? 0
         const ingredients: { itemId: number; qty: number; warehouseId?: number | null }[] = direct ? (args.ingredients ?? []) : recipe.ingredients.map((ing) => ({ itemId: ing.itemId, qty: ing.qty * batches, warehouseId: ingredientWarehouseId }))
         const producedQty = direct ? (args.producedQty ?? 0) : recipe.yieldQty * batches
@@ -20021,7 +20393,7 @@ export const useRawDataStore = create<DataState>()(
           state.items,
           state.warehouses,
           state.transfers,
-          buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
+          buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes),
         )
         const availableSource = warehouseStock.get(sourceWarehouseId)?.get(source.id) ?? 0
         if (!args.allowNegativeSource && availableSource < args.sourceQty) {
@@ -20329,7 +20701,8 @@ export const useRawDataStore = create<DataState>()(
         const state = getBranchScopedDataState(get())
         const item = state.items.find((it) => it.id === itemId)
         const retail = item?.priceMinor ?? 0
-        return resolvePrice(itemId, retail, listId, state.priceLists, state.priceListEntries, state.priceListCategoryRules, item?.categoryId ?? null)
+        // قاعدة الفئة تسري على أبنائها (شجرة بقالة عميقة: ألبان ← حليب)
+        return resolvePrice(itemId, retail, listId, state.priceLists, state.priceListEntries, state.priceListCategoryRules, item?.categoryId ?? null, categoryAncestors(item?.categoryId ?? null, state.categories))
       },
       setCustomerPriceList: (customerId, listId) => {
         const state = get()
@@ -20343,17 +20716,40 @@ export const useRawDataStore = create<DataState>()(
       addPromotion: (input) => {
         const state = get()
         const scoped = getBranchScopedDataState(state)
-        const errors = validatePromotion(input, scoped.promotions, scoped.items, (iid) => hasVariantStock(scoped.variantStocks, iid))
+        const errors = validatePromotion(input, scoped.promotions, scoped.items, (iid) => hasVariantStock(scoped.variantStocks, iid), undefined, { allowPendingApproval: true })
         if (errors.length) throw new Error(errors.join('، '))
         const promo: Promotion = { ...input, nameAr: input.nameAr.trim(), id: nextId(state.promotions) }
         set({ promotions: [...state.promotions, promo] })
         return promo
       },
+      approvePromotionBelowCost: (promotionId, approvedBy) => {
+        const state = get()
+        const scoped = getBranchScopedDataState(state)
+        const promo = scoped.promotions.find((p) => p.id === promotionId)
+        if (!promo) throw new Error('العرض غير موجود في هذا الفرع')
+        const name = approvedBy.trim()
+        if (!name) throw new Error('اسم المعتمِد مطلوب — الاعتماد بلا شخص لا يُحتجّ به')
+        /* الاعتماد بلا فترة سريان مفتوح إلى الأبد: قيد زمني إلزامي */
+        if (!promo.endIso) throw new Error('حدد نهاية سريان للعرض قبل اعتماد البيع بخسارة — اعتماد مفتوح بلا حد زمني مرفوض')
+        if (!promo.isActive) throw new Error('العرض معطل — فعّله قبل الاعتماد')
+        const updated: Promotion = { ...promo, belowCostApprovedBy: name, belowCostApprovedAt: new Date().toISOString() }
+        set({ promotions: state.promotions.map((p) => (p.id === promotionId ? updated : p)) })
+        return updated
+      },
+      revokePromotionBelowCost: (promotionId) => {
+        const state = get()
+        const scoped = getBranchScopedDataState(state)
+        const promo = scoped.promotions.find((p) => p.id === promotionId)
+        if (!promo) throw new Error('العرض غير موجود في هذا الفرع')
+        const updated: Promotion = { ...promo, belowCostApprovedBy: null, belowCostApprovedAt: null }
+        set({ promotions: state.promotions.map((p) => (p.id === promotionId ? updated : p)) })
+        return updated
+      },
       updatePromotion: (id, input) => {
         const state = get()
         const scoped = getBranchScopedDataState(state)
         if (!scoped.promotions.some((p) => p.id === id)) throw new Error('العرض غير موجود في هذا الفرع')
-        const errors = validatePromotion(input, scoped.promotions, scoped.items, (iid) => hasVariantStock(scoped.variantStocks, iid), id)
+        const errors = validatePromotion(input, scoped.promotions, scoped.items, (iid) => hasVariantStock(scoped.variantStocks, iid), id, { allowPendingApproval: true })
         if (errors.length) throw new Error(errors.join('، '))
         set({ promotions: state.promotions.map((p) => (p.id === id ? { ...p, ...input, nameAr: input.nameAr.trim() } : p)) })
       },
@@ -20374,6 +20770,10 @@ export const useRawDataStore = create<DataState>()(
         const promo = state.promotions.find((p) => p.id === promotionId)
         if (!promo) throw new Error('العرض غير موجود')
         if (!promotionActiveOn(promo, todayLocalIso())) throw new Error(`عرض «${promo.nameAr}» غير سارٍ اليوم — راجع فترة السريان أو فعّله`)
+        /* F4: العرض الخاسر لا يُباع قبل اعتماد المالك — الرسالة تقول أين يُعتمد */
+        if (promotionBelowCost(promo, state.items) && !promo.belowCostApprovedBy) {
+          throw new Error(`عرض «${promo.nameAr}» يبيع تحت التكلفة بلا اعتماد — يعتمده المالك من شاشة العروض أولاً`)
+        }
         return promotionCartLines(promo, count, state.items)
       },
 
@@ -21194,7 +21594,10 @@ export const useRawDataStore = create<DataState>()(
         if (!ticket) throw new Error('التذكرة غير موجودة')
         const sessions = ticket.workSessions ?? []
         if (sessions.some((s) => s.endedAt == null)) throw new Error('توجد جلسة عمل مفتوحة بالفعل على هذه التذكرة')
-        const updated: MaintenanceTicket = { ...ticket, workSessions: [...sessions, { startedAt: new Date().toISOString(), endedAt: null }] }
+        // إصلاح (مراجعة ممنهجة): كانت البداية بختم UTC (`toISOString`) والنهاية بختم محلي
+        // بإزاحة (`localIsoTimestamp`) ⇒ طرفا الجلسة نفسها على أساسين زمنيين مختلفين،
+        // فتنقلب المقارنة النصية في المناطق غرب غرينتش. توحّد الختم محلياً كبقية المستندات.
+        const updated: MaintenanceTicket = { ...ticket, workSessions: [...sessions, { startedAt: localIsoTimestamp(), endedAt: null }] }
         set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)) })
         return updated
       },
@@ -21481,7 +21884,7 @@ export const useRawDataStore = create<DataState>()(
         if (closed) throw new Error(`تاريخ التحويل داخل السنة المالية المقفلة «${closed.nameAr}»`)
 
         // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
-        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
+        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes))
         const sourceMap = stock.get(args.fromWarehouseId)
         const errors = validateTransfer(
           { fromWarehouseId: args.fromWarehouseId, toWarehouseId: args.toWarehouseId, lines: args.lines },
@@ -21495,11 +21898,59 @@ export const useRawDataStore = create<DataState>()(
           if (item.isService) throw new Error('الخدمة لا تُحوَّل كمخزون')
           if (item.trackSerial || state.serials.some(unit => unit.itemId === l.itemId && unit.status === 'in_stock')) throw new Error('تحويل السيريال لا يحدد وحداته ومخازنها — يلزم مسار موثق')
           assertSerialBatchMovementSupported(state, l.itemId)
-          if (item.trackExpiry || state.batches.some(batch => batch.itemId === item.id)) throw new Error('تحويل الصلاحية لا يحدد الدفعات المنقولة — يلزم مسار موثق للدفعات')
+          const tracked = item.trackExpiry || state.batches.some(batch => batch.itemId === item.id)
+          if (!tracked) continue
+          // تحويل بضاعة بصلاحية كان مرفوضاً قطعاً ⇒ لا يمكن نقل الألبان/الأجبان بين المخازن
+          // إطلاقاً في نشاط بقالة. الآن يُخطَّط التخصيص (يدوي إن مُرِّر وإلا FEFO من المخزن
+          // المصدر) ويُنقل كمّ الدفعة إلى مخزن الوجهة بدفعة موثقة، فلا يضيع أثر الصلاحية.
+          const requested = l.batchAllocations
+          if (requested && requested.length) {
+            const sum = Math.round(requested.reduce((total, row) => total + row.qty, 0) * 1000) / 1000
+            if (Math.round(sum * 1000) !== Math.round(l.qty * 1000)) errors.push(`«${item.nameAr}»: مجموع الدفعات المحددة ${sum} لا يساوي كمية التحويل ${l.qty}`)
+            for (const row of requested) {
+              const batch = state.batches.find(candidate => candidate.id === row.batchId)
+              if (!batch || batch.itemId !== item.id) { errors.push(`«${item.nameAr}»: دفعة غير معروفة (#${row.batchId})`); continue }
+              if (!(row.qty > 0)) errors.push(`«${item.nameAr}»: كمية دفعة غير صالحة`)
+              if (Math.round(row.qty * 1000) > Math.round(batch.qty * 1000)) errors.push(`«${item.nameAr}»: الدفعة ${batch.lotNumber ?? batch.id} لا تحمل الكمية المطلوبة`)
+              if (batch.warehouseId != null && batch.warehouseId !== args.fromWarehouseId) errors.push(`«${item.nameAr}»: الدفعة ${batch.lotNumber ?? batch.id} في مخزن آخر غير المصدر`)
+            }
+          } else {
+            const plan = planFefo(state.batches, item.id, l.qty, createdAt.slice(0, 10), args.fromWarehouseId)
+            if (plan.untrackedQty > 1e-9) errors.push(`«${item.nameAr}»: دفعات المخزن المصدر لا تغطي الكمية (ناقص ${plan.untrackedQty}) — راجع استلام البضاعة`)
+          }
         }
         if (errors.length) throw new Error(errors.join(' — '))
 
-        // 2) مستند مرقّم — بلا قيد (حركة داخلية لا تغيّر قيمة 1103)
+        // 2) تخصيص الدفعات: تقليل كمّ المصدر وإنشاء دفعة مطابقة في مخزن الوجهة
+        //    (دفعة المصدر تُقسَّم عند النقل الجزئي، فلا تنفصل الدفعات عن الرصيد).
+        let batches = state.batches
+        let nextBatchId = nextId(state.batches)
+        const allocationsByItem = new Map<number, { batchId: number; qty: number }[]>()
+        for (const l of args.lines) {
+          const item = state.items.find(row => row.id === l.itemId)!
+          const tracked = item.trackExpiry || batches.some(batch => batch.itemId === item.id)
+          if (!tracked) continue
+          const chosen = l.batchAllocations?.length
+            ? l.batchAllocations.map(row => ({ batchId: row.batchId, qty: Math.round(row.qty * 1000) / 1000 }))
+            : planFefo(batches, item.id, l.qty, createdAt.slice(0, 10), args.fromWarehouseId).allocations.map(row => ({ batchId: row.batchId, qty: row.qty }))
+          allocationsByItem.set(l.itemId, chosen)
+          for (const allocation of chosen) {
+            batches = batches.map(batch => batch.id === allocation.batchId
+              ? { ...batch, qty: Math.round((batch.qty - allocation.qty) * 1000) / 1000 }
+              : batch)
+            const source = batches.find(batch => batch.id === allocation.batchId)!
+            batches = [...batches, {
+              ...source,
+              id: nextBatchId++,
+              qty: allocation.qty,
+              warehouseId: args.toWarehouseId,
+              receivedAt: createdAt,
+            }]
+          }
+          batches = batches.filter(batch => batch.qty > 0)
+        }
+
+        // 3) مستند مرقّم — بلا قيد (حركة داخلية لا تغيّر قيمة 1103)
         const id = nextId(state.transfers)
         const transfer: StockTransfer = {
           id,
@@ -21513,11 +21964,12 @@ export const useRawDataStore = create<DataState>()(
             nameAr: state.items.find((it) => it.id === l.itemId)?.nameAr ?? '',
             // احفظ ما تحققنا منه، لا ضجيج حسابات المتصفح الثنائية.
             qty: Math.round(l.qty * 1000) / 1000,
+            ...(allocationsByItem.has(l.itemId) ? { batchAllocations: allocationsByItem.get(l.itemId)! } : {}),
           })),
           totalQty: transferTotalQty(args.lines),
           notes: args.notes.trim(),
         }
-        set({ transfers: [...state.transfers, transfer] })
+        set({ transfers: [...state.transfers, transfer], batches })
         return transfer
       },
       addAsset: (args) => {

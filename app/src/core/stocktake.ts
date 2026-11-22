@@ -82,12 +82,29 @@ export function computeStocktake(counts: CountInput[]): StocktakeResult {
  * يفصل خسارة المخزون عن المصروف العمومي، ويعترف بالفائض إيراداً آخر.
  * يُبنى قيد واحد صافٍ بطرفي العجز والزيادة معاً — ويرمي خطأ لو لا فوارق.
  */
-export function buildAdjustmentEntry(result: StocktakeResult): JournalLine[] {
+/** أسباب العجز: مبرَّر (تلف/انتهاء صلاحية) ⇒ 5111 هالك، وغير مبرَّر (فقد/سرقة/خطأ) ⇒ 5120 */
+export type ShortageReason = 'expired' | 'damaged' | 'unaccounted'
+
+export const SHORTAGE_REASON_LABELS: Record<ShortageReason, string> = {
+  expired: 'منتهي الصلاحية',
+  damaged: 'تالف',
+  unaccounted: 'فقد/غير مبرَّر',
+}
+
+/** حساب العجز بحسب سببه: المبرَّر هالك (5111)، وغير المبرَّر فقد (5120). */
+export const WASTE_ACCOUNT = '5111'
+export const STOCK_SHORTAGE_ACCOUNT = '5120'
+export function shortageAccountFor(reason: ShortageReason): string {
+  return reason === 'unaccounted' ? STOCK_SHORTAGE_ACCOUNT : WASTE_ACCOUNT
+}
+
+export function buildAdjustmentEntry(result: StocktakeResult, shortageReason: ShortageReason = 'unaccounted'): JournalLine[] {
   const { shortageValueMinor: sh, surplusValueMinor: su } = result
   if (sh === 0 && su === 0) throw new RangeError('لا فوارق — لا حاجة لقيد تسوية')
   const lines: JournalLine[] = []
   if (sh > 0) {
-    lines.push({ accountCode: '5111', debit: sh, credit: 0, note: 'عجز جرد — هالك/فقد مخزون' })
+    const reason = SHORTAGE_REASON_LABELS[shortageReason] ?? SHORTAGE_REASON_LABELS.unaccounted
+    lines.push({ accountCode: shortageAccountFor(shortageReason), debit: sh, credit: 0, note: `عجز جرد — ${reason}` })
     lines.push({ accountCode: '1103', debit: 0, credit: sh, note: 'تخفيض المخزون بالعجز' })
   }
   if (su > 0) {

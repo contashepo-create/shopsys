@@ -50,12 +50,13 @@ function invariants(label) {
   // المخزون الدفتري ضد الفعلي (سماحية تقريب المتوسط: قرش لكل صنف له مخزون)
   const glStock = bal('1103')
   // الدفتر المساعد للمخزون = أصناف (كمية × متوسط) + سيارات متاجرة غير مباعة (شراء + تجهيز)
-  const itemsStock = S().items.reduce((a, it) => a + Math.round((it.stockQty ?? 0) * (it.costMinor ?? 0)), 0)
+  /* القيمة المحمولة الدقيقة (stockValueMinor) هي مرجع 1103 — لا كمية×متوسط مقرب،
+     وهي التي تُحدَّث بنفس سحب القيمة الذي يخرج به قيد التكلفة (بعد إغلاق انحراف الوزن). */
+  const itemsStock = S().items.reduce((a, it) => a + (Number.isFinite(it.stockValueMinor) ? it.stockValueMinor : Math.round((it.stockQty ?? 0) * (it.costMinor ?? 0))), 0)
   const carsStock = (S().cars ?? []).filter((c) => c.status !== 'sold').reduce((a, c) => a + c.purchaseCostMinor + c.prepCostMinor, 0)
   const subStock = itemsStock + carsStock
-  // المتوسط يُخزَّن قرشاً صحيحاً لكل وحدة → أقصى انحراف مشروع = نصف قرش × الكمية لكل صنف
-  const tolerance = S().items.reduce((a, it) => a + Math.ceil((it.stockQty ?? 0) / 2), 0) + 1
-  if (Math.abs(glStock - subStock) > tolerance) errs.push(`مخزون: دفتري ${glStock} ≠ فعلي ${subStock}`)
+  // لا تسامح: 1103 يجب أن يساوي مجموع القيم المحمولة بالقرش
+  if (glStock !== subStock) errs.push(`مخزون: دفتري ${glStock} ≠ فعلي ${subStock}`)
   // المعادلة المحاسبية
   const eq = root('1') - (-root('2')) - (-root('3')) - (-root('4') - root('5'))
   if (eq !== 0) errs.push(`المعادلة المحاسبية منحرفة بـ ${eq}`)

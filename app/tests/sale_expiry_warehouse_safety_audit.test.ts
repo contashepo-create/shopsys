@@ -59,12 +59,21 @@ it('شراء جديد بلا اختيار مخزن يثبت الدفعة في ا
  expect(purchase.lines[0].warehouseId).toBe(1)
  expect(useRawDataStore.getState().batches.find(batch => batch.purchaseId === purchase.id)?.warehouseId).toBe(1)
 })
-it('تحويل صنف صلاحية بلا تحديد دفعة لا يغير أرصدة المخازن مع بقاء الدفعة في المصدر', () => {
+it('تحويل صنف صلاحية بلا تحديد دفعة يخصم دفعة المصدر وينشئ دفعة وجهة بنفس الصلاحية', () => {
  useRawDataStore.setState({ warehouses: [{ id: 1, nameAr: 'رئيسي', isMain: true }, { id: 2, nameAr: 'ثان', isMain: false }] as never })
- const s = useDataStore.getState(), before = useRawDataStore.getState()
- expect(() => s.postTransfer({ fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: 1, qty: 3 }], notes: '' })).toThrow(/دفعات|صلاحية/)
- expect(useRawDataStore.getState().transfers).toBe(before.transfers)
- expect(useRawDataStore.getState().batches).toBe(before.batches)
+ const s = useDataStore.getState()
+ const transfer = s.postTransfer({ fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: 1, qty: 3 }], notes: '' })
+ const after = useRawDataStore.getState()
+ expect(transfer.lines[0].batchAllocations).toEqual([{ batchId: 1, qty: 3 }])
+ expect(after.batches.find(batch => batch.id === 1)!.qty).toBe(7)
+ const moved = after.batches.find(batch => batch.id !== 1)!
+ expect(moved).toMatchObject({ itemId: 1, warehouseId: 2, qty: 3, expiryDate: '2099-01-01' })
+ // الثابت الأهم: مجموع دفعات كل مخزن = رصيده المشتق، ومجموع الدفعات = رصيد الصنف
+ const byWarehouse = new Map<number, number>()
+ for (const batch of after.batches) byWarehouse.set(batch.warehouseId ?? 1, (byWarehouse.get(batch.warehouseId ?? 1) ?? 0) + batch.qty)
+ expect(byWarehouse.get(1)).toBe(7)
+ expect(byWarehouse.get(2)).toBe(3)
+ expect([...byWarehouse.values()].reduce((sum, qty) => sum + qty, 0)).toBe(after.items[0].stockQty)
 })
 it('لا يرحل طبقاً من مخزن آخر قبل توثيق حركة خاماته لكل مخزن', () => {
  useRawDataStore.setState({ warehouses: [{ id: 1, nameAr: 'رئيسي', isMain: true }, { id: 2, nameAr: 'ثان', isMain: false }] as never, items: [

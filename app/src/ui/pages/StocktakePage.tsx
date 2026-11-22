@@ -1,6 +1,7 @@
 /**
  * الجرد بالباركود (المرحلة 3):
- * ابدأ جلسة ← امسح باركود كل قطعة (كل مسحة +1) أو اكتب المعدود يدوياً ←
+ * ابدأ جلسة ← امسح باركود كل قطعة (كل مسحة +1، وملصق الميزان يضيف وزنه)
+ * أو اكتب المعدود يدوياً ←
  * النظام يقارن بالدفتري ويعرض الفوارق مُقيَّمة بالتكلفة ← رحّل فيتولد
  * قيد تسوية واحد متوازن ويُضبط المخزون على المعدود.
  */
@@ -10,6 +11,8 @@ import { useDataStore, type Stocktake } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, normalizeDigits } from '../../core/money.ts'
+import { normalizeBarcode } from '../../core/items.ts'
+import { parseScaleBarcodeUniversal, matchScaleItem, itemTareGrams, netWeightKg } from '../../core/barcode.ts'
 import type { CountInput } from '../../core/stocktake.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -18,7 +21,7 @@ import { localDateTimeLabel } from '../../core/time.ts'
 
 export function StocktakePage() {
   const { items, stocktakes, journal, postStocktake } = useDataStore()
-  const { setup } = useAppStore()
+  const { setup, scaleRules } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -27,7 +30,16 @@ export function StocktakePage() {
   const [counted, setCounted] = useState<Record<number, string>>({}) // itemId -> معدود
   const [scan, setScan] = useState('')
   const [notes, setNotes] = useState('')
+  /* F3: سبب العجز يحدد الحساب — مبرَّر (تلف/انتهاء) ⇒ 5111، غير مبرَّر ⇒ 5120 */
+  const [shortageReason, setShortageReason] = useState<'unaccounted' | 'expired' | 'damaged'>('unaccounted')
   const [viewing, setViewing] = useState<Stocktake | null>(null)
+  /**
+   * أداء الجرد في بقالة بآلاف الأصناف: الجدول كان يرسم **كل** الأصناف النشطة
+   * فتتجمد الشاشة عند كل مسحة. الآن: بحث فوري (اسم/باركود/SKU) + مرشّح
+   * «المعدود فقط» + سقف رسم 200 صف مع دعوة صريحة للبحث — والمسح هو المسار الأساسي.
+   */
+  const [query, setQuery] = useState('')
+  const [countedOnly, setCountedOnly] = useState(false)
   const scanRef = useRef<HTMLInputElement>(null)
 
   const entry = viewing?.journalEntryId ? journal.find((e) => e.id === viewing.journalEntryId) : null
@@ -36,23 +48,57 @@ export function StocktakePage() {
   const startSession = () => {
     setCounted({})
     setScan('')
+    setQuery('')
+    setCountedOnly(false)
     setNotes('')
     setSession(true)
     setTimeout(() => scanRef.current?.focus(), 50)
   }
 
-  /** مسح باركود أثناء الجرد: كل مسحة تزيد المعدود 1 */
+  /**
+   * مسح باركود أثناء الجرد: المسحة العادية +1، وملصق الميزان يضيف وزنه
+   * (وإلا احتُسبت 0.750 كجم «قطعة واحدة» فخرجت التسوية بفارق وهمي 0.25).
+   * الترتيب: باركود الصنف الحرفي أولاً ثم الميزان — نفس قاعدة الكاشير.
+   */
   const onScan = () => {
-    const q = normalizeDigits(scan.trim())
+    // تطبيع الأرقام والفراغات — نفس علاج الكاشير (تخطيط لوحة مفاتيح عربية)
+    const q = normalizeBarcode(scan)
     if (!q) return
-    const it = active.find((x) => x.barcodes.includes(q) || x.sku === q || x.nameAr === q)
+    const exact = active.find((x) => x.barcodes.some((b) => normalizeBarcode(b) === q) || x.sku === q || x.nameAr === q)
+    // باركود وحدة أكبر (كرتونة = 12 قطعة): مسحته أثناء الجرد تضيف **معامله**
+    // لا قطعة واحدة — وإلا خرج الجرد بعجز وهمي 11 لكل كرتونة.
+    const unitHit = exact
+      ? undefined
+      : active
+          .map((it) => ({ it, unit: (it.extraUnits ?? []).find((u) => u.barcode && normalizeBarcode(u.barcode) === q) }))
+          .find((row) => row.unit)
+    const scale = exact || unitHit ? null : parseScaleBarcodeUniversal(q, scaleRules)
+    const weighed = scale && scale.weightKg != null
+      ? matchScaleItem(scale.itemCode, active, { requireWeighted: true })
+      : undefined
+    const it = exact ?? unitHit?.it ?? weighed
     if (!it) {
       toast.show(`لا صنف بالباركود «${q}»`, 'error')
       setScan('')
       return
     }
-    setCounted((c) => ({ ...c, [it.id]: String((Number(c[it.id]) || 0) + 1) }))
-    toast.show(`${it.nameAr} — المعدود ${(Number(counted[it.id]) || 0) + 1}`)
+    let qty = unitHit?.unit ? unitHit.unit.factor : 1
+    let label = qty === 1 ? '' : ` ${it.baseUnit}`
+    if (weighed && scale?.weightKg != null) {
+      // وزن الوعاء يُطرح من ملصق الميزان في الجرد أيضاً — الجرد يعدّ صافي البضاعة
+      const tare = itemTareGrams(it)
+      qty = tare > 0 ? netWeightKg(scale.weightKg, tare) : scale.weightKg
+      label = ' كجم'
+      if (qty <= 0) {
+        toast.show(`«${it.nameAr}»: الوزن ${scale.weightKg} كجم لا يغطي وزن الوعاء ${tare} جم`, 'error')
+        setScan('')
+        return
+      }
+    }
+    // العدّاد المعروض يُحسب من الحالة الجديدة لا القديمة (كان يسبق مسحة واحدة)
+    const nextQty = Math.round(((Number(counted[it.id]) || 0) + qty) * 1000) / 1000
+    setCounted((c) => ({ ...c, [it.id]: String(nextQty) }))
+    toast.show(`${it.nameAr} — المعدود ${nextQty}${label}`)
     setScan('')
   }
 
@@ -80,7 +126,7 @@ export function StocktakePage() {
     if (!liveCounts.length) { toast.show('لم تعدّ أي صنف بعد', 'error'); return }
     approval.request(() => {
     try {
-      const st = postStocktake(liveCounts, notes.trim())
+      const st = postStocktake(liveCounts, notes.trim(), shortageReason)
       toast.show(
         st.journalEntryId
           ? `رُحّل الجرد ${st.stocktakeNumber} — ضُبط المخزون وتولد قيد التسوية ✓`
@@ -92,6 +138,20 @@ export function StocktakePage() {
     }
     })
   }
+
+  /** سقف الرسم: ما يزيد عن 200 صف يُطلب بالبحث/المسح — لا شاشة تتجمد */
+  const STOCKTAKE_RENDER_CAP = 200
+  const visibleRows = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const base = countedOnly ? active.filter((it) => (counted[it.id] ?? '') !== '') : active
+    if (!q) return base
+    return base.filter((it) =>
+      it.nameAr.toLowerCase().includes(q)
+      || (it.sku ?? '').toLowerCase().includes(q)
+      || (it.barcodes ?? []).some((b) => String(b).includes(q)),
+    )
+  }, [active, counted, countedOnly, query])
+  const renderedRows = visibleRows.slice(0, STOCKTAKE_RENDER_CAP)
 
   return (
     <div className="space-y-4">
@@ -128,6 +188,32 @@ export function StocktakePage() {
             />
           </div>
 
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="🔍 بحث بالاسم أو الباركود أو SKU"
+              className={`${inputCls} flex-1 min-w-56 py-2`}
+              data-stocktake-search
+            />
+            {([
+              [false, `كل الأصناف (${active.length})`],
+              [true, `المعدود فقط (${liveCounts.length})`],
+            ] as const).map(([value, label]) => (
+              <button
+                key={String(value)}
+                data-stocktake-counted-only={String(value)}
+                onClick={() => setCountedOnly(value)}
+                className={`px-3 py-2 rounded-xl border-2 text-[12px] font-bold transition-all ${countedOnly === value ? 'border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-slate-200 dark:border-slate-700 text-slate-500'}`}
+              >
+                {label}
+              </button>
+            ))}
+            {query && (
+              <button onClick={() => setQuery('')} className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-[12px] font-bold text-slate-500">مسح البحث</button>
+            )}
+          </div>
+
           <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden max-h-[26rem] overflow-y-auto">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-slate-50 dark:bg-slate-900 z-10">
@@ -140,12 +226,12 @@ export function StocktakePage() {
                 </tr>
               </thead>
               <tbody>
-                {active.map((it) => {
+                {renderedRows.map((it) => {
                   const v = counted[it.id] ?? ''
                   const c = v === '' ? null : Number(normalizeDigits(v)) || 0
                   const diff = c === null ? null : Math.round((c - (it.stockQty ?? 0)) * 1000) / 1000
                   return (
-                    <tr key={it.id} className={`border-b border-slate-50 dark:border-slate-800/50 ${diff ? (diff < 0 ? 'bg-rose-500/[0.04]' : 'bg-emerald-500/[0.04]') : ''}`}>
+                    <tr key={it.id} data-stocktake-row={it.id} className={`border-b border-slate-50 dark:border-slate-800/50 ${diff ? (diff < 0 ? 'bg-rose-500/[0.04]' : 'bg-emerald-500/[0.04]') : ''}`}>
                       <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{it.nameAr}<span className="text-[10px] text-slate-400 mr-2">{it.sku}</span></td>
                       <td className="px-4 py-2 text-slate-500">{it.stockQty ?? 0} {it.baseUnit}</td>
                       <td className="px-4 py-2">
@@ -167,9 +253,43 @@ export function StocktakePage() {
                 })}
               </tbody>
             </table>
+            {visibleRows.length > renderedRows.length && (
+              <div className="px-4 py-2.5 text-[11.5px] font-bold text-amber-700 dark:text-amber-400 bg-amber-500/5 border-t border-amber-500/20">
+                يُعرض {renderedRows.length} من {visibleRows.length} صنفاً للحفاظ على سرعة الشاشة — اكتب في البحث أو امسح الباركود للوصول المباشر.
+              </div>
+            )}
+            {visibleRows.length === 0 && (
+              <div className="px-4 py-6 text-center text-[12px] text-slate-400">
+                {countedOnly ? 'لم تعدّ أي صنف بعد — امسح الباركود أو اكتب المعدود في الجدول' : 'لا صنف يطابق البحث'}
+              </div>
+            )}
           </div>
 
           <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="ملاحظات الجرد (اختياري): جرد نهاية الشهر…" className={inputCls} />
+          {/* سبب العجز: يفصل الهالك المبرَّر (5111) عن الفقد غير المبرَّر (5120) */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+            <div className="text-[12px] font-bold text-slate-600 dark:text-slate-300">سبب العجز إن وُجد نقص</div>
+            <div className="flex flex-wrap gap-2">
+              {([
+                ['unaccounted', 'فقد/غير مبرَّر', 'يُقيَّد على 5120 فقد وعجز جرد'],
+                ['expired', 'منتهي الصلاحية', 'يُقيَّد على 5111 هالك وتوالف'],
+                ['damaged', 'تالف', 'يُقيَّد على 5111 هالك وتوالف'],
+              ] as const).map(([value, label, hint]) => (
+                <button
+                  key={value}
+                  onClick={() => setShortageReason(value)}
+                  data-shortage-reason={value}
+                  className={`text-right px-3 py-2 rounded-xl border-2 transition-all ${shortageReason === value ? 'border-brand-500/60 bg-brand-500/10' : 'border-slate-200 dark:border-slate-700'}`}
+                >
+                  <div className="font-bold text-[12px] text-slate-700 dark:text-slate-200">{label}</div>
+                  <div className="text-[10px] text-slate-400">{hint}</div>
+                </button>
+              ))}
+            </div>
+            <div className="text-[11px] text-slate-400">
+              {liveDiffs.some((c) => c.countedQty < c.expectedQty) ? 'يوجد نقص في هذا الجرد — السبب أعلاه هو ما سيُقيَّد.' : 'لا نقص في هذا الجرد — السبب لا يؤثر على القيد.'}
+            </div>
+          </div>
         </div>
       )}
 

@@ -1,3 +1,4 @@
+import { useTextPrompt } from '../components/TextPrompt.tsx'
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * تخطيط المقاولات — نقلة AccFlex/pro-acc:
@@ -201,8 +202,16 @@ export function ProjectTasksPage() {
       setAddOpen(false); setTName(''); setTStart(''); setTEnd(''); setTBoq('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
-  const bumpProgress = (taskId: number, current: number) => {
-    const raw = window.prompt('نسبة الإنجاز الجديدة (تراكمية 0–100):', String(current))
+  /* نافذة الإدخال الخاصة بالتطبيق: window.prompt غير مدعوم في Electron إطلاقاً */
+  const textPrompt = useTextPrompt()
+  const bumpProgress = async (taskId: number, current: number) => {
+    const raw = await textPrompt.ask({
+      title: 'تحديث نسبة الإنجاز',
+      label: 'نسبة الإنجاز الجديدة (تراكمية 0–100)',
+      defaultValue: String(current),
+      hint: 'النسبة تراكمية: لا تنخفض عن السابقة، وتُسجَّل على المهمة وتظهر على الشريط الزمني.',
+      testId: 'task-progress',
+    })
     if (raw === null) return
     try { updateProjectTaskProgress(taskId, Number(raw)); toast.show('حُدث التقدم ✅') } catch (e) { toast.show((e as Error).message, 'error') }
   }
@@ -281,6 +290,7 @@ export function ProjectTasksPage() {
           </div>
         </div>
       </Modal>
+    {textPrompt.promptElement}
     </div>
   )
 }

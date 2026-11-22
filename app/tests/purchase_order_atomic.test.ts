@@ -72,6 +72,14 @@ describe('ترحيل فاتورة وأمر شراء كوحدة واحدة', () =
     expect(S().items).toBe(before.items)
     expect(S().purchaseOrders).toBe(before.orders)
   })
+  it('الاستلام على أمر غير موجود يفشل صراحةً ولا يغيّر الحالة', () => {
+    addOrder()
+    const before = { orders: S().purchaseOrders, items: S().items, journal: S().journal }
+    expect(() => S().receivePurchaseOrder(9999, [{ itemId: 1, qty: 1 }])).toThrow(/أمر الشراء غير موجود/)
+    expect(S().purchaseOrders).toBe(before.orders)
+    expect(S().items).toBe(before.items)
+    expect(S().journal).toBe(before.journal)
+  })
   it('تكرار ربط فاتورة استلام جزئي لا يضيف كميتها مرة ثانية', () => {
     const order = addOrder(3)
     const invoice = S().postPurchase(input(order.id, 1, 'partial'))

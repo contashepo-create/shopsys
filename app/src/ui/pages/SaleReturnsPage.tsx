@@ -9,13 +9,13 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { returnPostingFingerprint } from './returnPostingFingerprint.ts'
 import { useNavigate } from 'react-router-dom'
-import { RotateCcw, Search, BookOpenText, Eye, Printer, ChevronRight, ChevronLeft, Repeat, Pencil } from 'lucide-react'
+import { RotateCcw, Search, BookOpenText, Eye, Printer, ChevronRight, ChevronLeft, Repeat, Pencil, ScanLine } from 'lucide-react'
 import { useDataStore, useRawDataStore, type SaleInvoice, type SaleReturn } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { cumulativeSaleReturnTotals, remainingByLine, returnCashRefundMinor, allocationOf, validateRefundAllocation, RETURN_REASONS, returnReasonName, type ReturnLineSpec, type ReturnCondition, type RefundAllocation } from '../../core/returns.ts'
+import { cumulativeSaleReturnTotals, remainingByLine, returnLineCostMinor, returnCashRefundMinor, allocationOf, validateRefundAllocation, RETURN_REASONS, returnReasonName, type ReturnLineSpec, type ReturnCondition, type RefundAllocation } from '../../core/returns.ts'
 import { computeTotals } from '../../core/pos.ts'
 import { normalizeSerial } from '../../core/serials.ts'
 import { partyCode } from '../../core/partyCodes.ts'
@@ -34,6 +34,7 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { rowOpenProps } from '../components/rowOpen.ts'
 import { localDateIso, localDateTimeLabel } from '../../core/time.ts'
+import { resolveReturnLineScan, RETURN_SCAN_ERROR_TEXT } from './returnLineScan.ts'
 
 /** حالة سطر واحد في المعالج */
 interface WizardLine {
@@ -53,7 +54,7 @@ const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مر�
 
 export function SaleReturnsPage() {
   const { sales, saleReturns, customers, items, serials, recipes, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId, attachSaleReturnTaxQr } = useDataStore()
-  const { setup, receipt } = useAppStore()
+  const { setup, receipt, scaleRules } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -68,6 +69,8 @@ export function SaleReturnsPage() {
   const postingRef = useRef(false)
   const [step, setStep] = useState(0)
   const [pickQuery, setPickQuery] = useState('')
+  /** كود ممسوح في خطوة البنود: يحدد السطر ويضع الكمية من الملصق/القطعة */
+  const [lineScan, setLineScan] = useState('')
   const [pickIndex, setPickIndex] = useState(0)
   const [customerFilterId, setCustomerFilterId] = useState(0)
   const [sale, setSale] = useState<SaleInvoice | null>(null)
@@ -114,7 +117,21 @@ export function SaleReturnsPage() {
   const resetWizard = () => {
     setStep(0); setSale(null); setWiz({}); setRefund('cash'); setRefundTreasury(''); setTerminalRefundReference('')
     setCustomCash(''); setCustomCredit(''); setCustomStore(''); setCustomWaived('')
-    setReasonCode('changed_mind'); setReason(''); setPickQuery(''); setCustomerFilterId(0)
+    setReasonCode('changed_mind'); setReason(''); setPickQuery(''); setCustomerFilterId(0); setLineScan('')
+  }
+  /**
+   * مسح باركود داخل خطوة البنود: لا يضيف سطراً — يحدد السطر المطابق في الفاتورة
+   * ويقترح الكمية (وزن الملصق للصنف الموزون، أو قطعة واحدة)، بلا تجاوز المتبقي.
+   */
+  const applyLineScan = () => {
+    if (!sale) return
+    const outcome = resolveReturnLineScan({ code: lineScan, lines: sale.lines, items, remaining, rules: scaleRules })
+    if ('error' in outcome) { toast.show(RETURN_SCAN_ERROR_TEXT[outcome.error], 'error'); return }
+    const { index, qty, label } = outcome.hit
+    setWiz((prev) => ({ ...prev, [index]: { ...prev[index], qty: String(qty), condition: prev[index]?.condition ?? 'resellable', batchConfirmation: undefined } }))
+    setLineScan('')
+    toast.show(label)
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-return-line="${index}"] input[inputmode="decimal"]`)?.focus())
   }
   const openWizard = () => { resetWizard(); setWizardOpen(true) }
   const discardWizard = () => { setWizardOpen(false); resetWizard() }
@@ -167,7 +184,22 @@ export function SaleReturnsPage() {
   const preview = useMemo(() => {
     if (!sale || !specs.length || lineErrors.length) return null
     try {
-      const lines = specs.map((s) => ({ ...sale.lines[s.lineIndex], qty: s.qty, saleLineIndex: s.lineIndex, ...(recipes.some(r => r.productItemId === sale.lines[s.lineIndex].itemId && r.mode === 'made_to_order') ? { unitCostMinor: 0 } : {}) }))
+      /* معاينة السطر يجب أن تحمل حصة الجزء المُرجَع من سعر الملصق وتكلفته المثبتة،
+         وإلا خالفت نواة الترحيل (التي تقسّم تراكمياً) فتُحجب المعاينة أو تنحرف. */
+      const lines = specs.map((s) => {
+        const src = sale.lines[s.lineIndex]
+        const priorQty = Math.round((src.qty - (remaining[s.lineIndex] ?? src.qty)) * 1000) / 1000
+        return {
+          ...src,
+          qty: s.qty,
+          saleLineIndex: s.lineIndex,
+          ...(src.lineTotalOverrideMinor != null && s.qty < src.qty - 1e-9
+            ? { lineTotalOverrideMinor: Math.round((src.lineTotalOverrideMinor * s.qty) / src.qty) }
+            : {}),
+          ...(src.costTotalMinor != null ? { costTotalMinor: returnLineCostMinor(src, priorQty, s.qty) } : {}),
+          ...(recipes.some(r => r.productItemId === src.itemId && r.mode === 'made_to_order') ? { unitCostMinor: 0, costTotalMinor: 0 } : {}),
+        }
+      })
       const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
         ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
         : deriveTaxConfig(sale.totals, sale.lines)
@@ -204,10 +236,10 @@ export function SaleReturnsPage() {
         alloc = allocationOf(totals.totalMinor, refund, openCredit, received)
       }
       const damagedCost = specs.filter((s) => s.condition === 'damaged')
-        .reduce((a, s) => a + Math.round(s.qty * sale.lines[s.lineIndex].unitCostMinor), 0)
+        .reduce((a, s) => a + (lines.find(l => l.saleLineIndex === s.lineIndex)?.costTotalMinor ?? Math.round(s.qty * sale.lines[s.lineIndex].unitCostMinor)), 0)
       return { totals, alloc, allocErrors, damagedCost, openCredit: Math.max(0, openCredit), received: Math.max(0, received) }
     } catch { return null }
-  }, [sale, specs, lineErrors, refund, saleReturns, recipes, clientSettlements, vouchers, customCash, customCredit, customStore, customWaived, cur.decimals])
+  }, [sale, specs, lineErrors, remaining, refund, saleReturns, recipes, clientSettlements, vouchers, customCash, customCredit, customStore, customWaived, cur.decimals])
 
   const approval = useSupervisorApproval()
   const submit = () => {
@@ -487,6 +519,21 @@ export function SaleReturnsPage() {
                 حدد <b>كل سطر</b> على حدة — يمكن إرجاع بند واحد فقط أو جزء من كميته. البضاعة
                 <b className="text-emerald-600"> السليمة</b> تعود للمخزون؛ <b className="text-rose-500">التالفة</b> لا تدخل المخزون وتُقيَّد هالكاً (5111) تلقائياً.
               </p>
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-brand-500/30 bg-brand-500/5 px-3 py-2">
+                <ScanLine size={15} className="shrink-0 text-brand-600" />
+                <input
+                  data-return-line-scan
+                  aria-label="مسح باركود الصنف أو ملصق الميزان لتحديد السطر"
+                  value={lineScan}
+                  onChange={(event) => setLineScan(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); applyLineScan() } }}
+                  placeholder="امسح باركود الصنف أو ملصق الميزان…"
+                  className={`${inputCls} flex-1 min-w-48 py-1.5`}
+                  autoComplete="off"
+                  autoFocus
+                />
+                <span className="text-[11px] text-slate-500">Enter يحدد السطر — ملصق الوزن يضع الكمية بالكيلو</span>
+              </div>
               <table className="invoice-lines-table w-full text-[13px]">
                 <thead>
                   <tr className="text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
@@ -504,7 +551,7 @@ export function SaleReturnsPage() {
                     const rem = remaining[idx] ?? 0
                     const w = wiz[idx]
                     return (
-                      <tr key={idx} data-entry-row className={`border-b border-slate-50 dark:border-slate-800/50 ${Number(w?.qty) > 0 ? 'bg-rose-500/[0.03]' : ''}`}>
+                      <tr key={idx} data-entry-row data-return-line={idx} className={`border-b border-slate-50 dark:border-slate-800/50 ${Number(w?.qty) > 0 ? 'bg-rose-500/[0.03]' : ''}`}>
                         <td className="px-3 py-2 text-center text-slate-400 text-[11px]">{idx + 1}</td>
                         <td tabIndex={0} className="px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-brand-500/40">
                           <span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.soldByWeight && '⚖️ '}{l.nameAr}

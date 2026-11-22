@@ -59,7 +59,7 @@ const stockBefore = bal('1103')
 S().postPurchase({
   supplierId: sup.id, date: '2026-09-16',
   lines: [{ itemId: cement.id, qty: 200, unitPriceMinor: 18000, expiryDate: null }],
-  expenses: [{ nameAr: 'نقل', amountMinor: 200000, allocation: 'value', payment: 'cash' }],
+  expenses: [{ nameAr: 'نقل', amountMinor: 200000, method: 'value', paidBy: 'supplier', costTreatment: 'inventory' }],
   paidMinor: 3800000, notes: '',
 })
 const afterBuy = S().items.find((it) => it.id === cement.id)

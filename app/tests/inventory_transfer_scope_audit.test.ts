@@ -52,9 +52,15 @@ it('يسمح بتحويل صنف مخزني مثبت داخل الفرع ويح�
  expect(after.items).toBe(before.items)
  expect(after.journal).toBe(before.journal)
 })
-it('لا يتجاهل دفعات مخزنية باقية بعد إيقاف علم الصلاحية', () => {
+it('لا يتجاهل دفعات مخزنية باقية بعد إيقاف علم الصلاحية — ينقلها بدفعة موثقة', () => {
  useRawDataStore.setState({ batches: [{ id: 1, itemId: item.id, warehouseId: 1, lotNumber: 'أ', expiryDate: '2099-01-01', qty: 5, purchaseId: null, receivedAt: '2026-01-01' }] as never })
- const before = useRawDataStore.getState()
- expect(() => useDataStore.getState().postTransfer(args)).toThrow(/دفعة|صلاحية/)
- expect(useRawDataStore.getState().transfers).toBe(before.transfers)
+ const transfer = useDataStore.getState().postTransfer(args)
+ const after = useRawDataStore.getState()
+ // لم يعد التحويل مرفوضاً قطعاً (كان يمنع نقل كل بضاعة لها صلاحية)، لكنه لا يتجاهل الدفعة:
+ // يخصم من دفعة المصدر وينشئ دفعة الوجهة بنفس الصلاحية والتشغيلة.
+ expect(transfer.lines[0].batchAllocations).toEqual([{ batchId: 1, qty: 1 }])
+ expect(after.batches.find((batch) => batch.id === 1)!.qty).toBe(4)
+ const moved = after.batches.find((batch) => batch.id !== 1)!
+ expect(moved).toMatchObject({ itemId: item.id, warehouseId: 2, qty: 1, lotNumber: 'أ', expiryDate: '2099-01-01' })
+ expect(after.batches.reduce((sum, batch) => sum + batch.qty, 0)).toBe(5)
 })

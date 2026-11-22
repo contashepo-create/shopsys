@@ -1,3 +1,4 @@
+import { useTextPrompt } from '../components/TextPrompt.tsx'
 import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * خدمات المحافظ والدفع الإلكتروني (طلب المالك — نمط mobileshop حرفياً):
@@ -41,6 +42,8 @@ export function WalletServicesPage() {
   const session = useRef(0)
   const draft = useRef('')
   const fingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.treasuries, s.customers, s.walletOps, s.journal, s.paymentTerminals, s.paymentTerminalTransactions]) }
+  /* نافذة إدخال النص (بديل window.prompt غير المدعوم في Electron) */
+  const textPrompt = useTextPrompt()
   const [viewing, setViewing] = useState<WalletServiceOp | null>(null)
   const [type, setType] = useState<WalletServiceType>('balance_transfer')
   const [provider, setProvider] = useState<WalletProvider>('vodafone')
@@ -96,9 +99,17 @@ export function WalletServicesPage() {
     } finally { pending.current = false; setSaving(false) }
   }
 
-  const doReturn = (op: WalletServiceOp) => {
+  const doReturn = async (op: WalletServiceOp) => {
     const originalTerminal = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'wallet_service' && row.documentId === String(op.id))
-    const refundReference = originalTerminal ? window.prompt('أدخل مرجع refund من إيصال ماكينة الدفع')?.trim() : undefined
+    /* نافذة الإدخال الخاصة بالتطبيق: window.prompt لا يعمل في Electron (نسخة سطح المكتب) */
+    const refundReference = originalTerminal
+      ? (await textPrompt.ask({
+        title: `مرتجع ${op.opNumber}`,
+        label: 'مرجع refund من إيصال ماكينة الدفع',
+        hint: 'مطلوب لمطابقة المرتجع بإيصال الماكينة؛ يُسجَّل مع الحركة العكسية.',
+        testId: 'wallet-refund-reference',
+      }))?.trim()
+      : undefined
     if (originalTerminal && !refundReference) return
     approval.request((approvedBy) => {
     try {
@@ -287,6 +298,7 @@ export function WalletServicesPage() {
       </Modal>
       {approval.dialog}
       {creditApproval.dialog}
+    {textPrompt.promptElement}
     </div>
   )
 }

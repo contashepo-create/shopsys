@@ -32,7 +32,9 @@ const FILES = [
 ]
 
 /* صفحات تطبع مستندات شراء/عروض/مناقصات — خارج نطاق رمز البيع بقرار المالك */
-const NON_SALES_FILES = ['PurchasesPage', 'PurchaseReturnsPage', 'PurchaseOrdersPage', 'QuotationsPage', 'AdvancedPurchaseInvoicePage', 'ContractingPages', 'ContractingDepthPages']
+/* وثيقة داخلية لا تُسلّم لعميل ولا تحمل رمزاً ضريبياً: تقرير X للوردية
+   (معاينة وردية مفتوحة قبل إقفالها) — تُطبع من ShiftsPage بلا بيع ولا ضريبة. */
+const NON_SALES_FILES = ['PurchasesPage', 'PurchaseReturnsPage', 'PurchaseOrdersPage', 'QuotationsPage', 'AdvancedPurchaseInvoicePage', 'ContractingPages', 'ContractingDepthPages', 'ShiftsPage']
 let pass = 0, fail = 0
 const ok = (cond, name) => { if (cond) pass++; else { fail++; console.error(`❌ ${name}`) } }
 

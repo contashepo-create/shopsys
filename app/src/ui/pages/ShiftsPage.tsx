@@ -12,10 +12,13 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { currentOpenShift, type Shift } from '../../core/shifts.ts'
+import { currentOpenShift, zReportRows, xReportRows, zReportSequence, type Shift } from '../../core/shifts.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
-import { localDateTimeLabel } from '../../core/time.ts'
+import { localDateTimeLabel, todayLocalIso } from '../../core/time.ts'
+import { buildSimpleDocModel } from '../../core/receipt.ts'
+import { printModelWithTemplate } from '../print/printDoc.ts'
+import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 
 function StatCard({ label, value, icon: Icon, tone }: { label: string; value: string; icon: typeof Banknote; tone: string }) {
   return (
@@ -41,11 +44,56 @@ export function ShiftsPage() {
   const [closeModal, setCloseModal] = useState(false)
   const [countedCash, setCountedCash] = useState('')
   // تسوية فرق الوردية (طلب المالك)
+  const [xReportOpen, setXReportOpen] = useState(false)
   const [settleShift, setSettleShift] = useState<Shift | null>(null)
   const [settleMode, setSettleMode] = useState<'expense' | 'advance'>('expense')
+  /* F5: تسوية الفرق في نفس الإقفال — يوفّر خطوة لاحقة ويترك المستند مكتملاً */
+  const [settleOnClose, setSettleOnClose] = useState(true)
+  /* F2: طباعة تقرير Z فور الإقفال — الدرج لا يُسلَّم بلا ورق مطبوع */
+  const [printZOnClose, setPrintZOnClose] = useState(true)
+  /* F6: ربط الوردية بموظف مسجَّل — بلا ربط لا يُحمَّل عجز على شخص بثقة */
+  const [shiftEmployeeId, setShiftEmployeeId] = useState(0)
   const [settleEmployeeId, setSettleEmployeeId] = useState(0)
 
   const open = currentOpenShift(shifts)
+
+  /**
+   * طباعة تقرير X: ملخص الوردية الحالية كما هو، بلا قيد ولا إقفال.
+   * يمر عبر نفس قالب الإيصال/الفاتورة المعتمد للفرع كي يخرج بشكل موحّد.
+   */
+  const printXReport = (shift: Shift, summary: ReturnType<typeof getShiftSummary>, mode: 'X' | 'Z' = 'X') => {
+    try {
+      const variance = summary.varianceMinor ?? 0
+      /* F2: صفوف Z من دالة واحدة (`zReportRows`) تغذّي الإيصال والاختبار — لا حساب مزدوج */
+      const zNumber = zReportSequence(shifts, shift.id)
+      /* X وZ من دالتين خالصتين تغذّيهما نفس `summarizeShift` — لا صفوف مبنية بيد الشاشة */
+      const rows = (mode === 'Z' ? zReportRows(shift, summary) : xReportRows(shift, summary))
+        .map((row) => ({ nameAr: row.nameAr, qty: 1, unitPriceMinor: row.valueMinor, totalMinor: row.valueMinor }))
+      const settings = resolveDocumentPrintSettings(shift).receipt
+      const model = buildSimpleDocModel({
+        docTitle: mode === 'Z' ? 'تقرير Z — إقفال وردية' : 'تقرير X — معاينة وردية',
+        invoiceNumber: mode === 'Z' ? `Z-${String(zNumber).padStart(4, '0')}` : `X-${shift.id}`,
+        refCode: mode === 'Z' ? `Z-${String(zNumber).padStart(4, '0')}` : `X-${shift.id}`,
+        dateIso: todayLocalIso(),
+        partyLabel: shift.openedBy,
+        paymentLabel: mode === 'Z' ? 'إقفال نهائي' : 'معاينة بلا إقفال',
+        rows,
+        totalMinor: mode === 'Z' ? (shift.countedCashMinor ?? summary.expectedCashMinor) : summary.expectedCashMinor,
+        paidMinor: 0,
+        operatorName: appUsers.find((u) => u.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك',
+        settings,
+        extraFooter: mode === 'Z'
+          ? `تقرير Z رقم ${String(zNumber).padStart(4, '0')} — إقفال الوردية #${shift.id}${shift.closedAt ? ` في ${localDateTimeLabel(shift.closedAt)}` : ''}${shift.closeApprovedBy ? ` باعتماد ${shift.closeApprovedBy}` : ''}. الفرق ${formatMinor(variance, cur, false)}${
+            shift.varianceEntryId ? ` — سُوّي بقيد #${shift.varianceEntryId}` : variance === 0 ? ' — لا تسوية مطلوبة' : ' — لم تُسوَّ بعد، يلزم قيد تسوية'
+          }.`
+          : 'تقرير X لا يقفل الوردية ولا يُنشئ قيداً — المتوقع في الدرج أعلاه.',
+      })
+      printModelWithTemplate(model, cur, settings, 'thermal')
+      toast.show(`أُرسل تقرير ${mode} للوردية #${shift.id} للطباعة 🖨️`)
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : 'تعذّرت طباعة تقرير X', 'error')
+    }
+  }
 
   // ملخص واحد يُستخدم أيضاً في المتجر عند الإقفال وتسوية الفرق.
   const openSummary = open ? getShiftSummary(open.id) : null
@@ -53,10 +101,15 @@ export function ShiftsPage() {
   const doOpen = () => {
     try {
       const activeName = appUsers.find((u) => u.id === currentUserId)?.nameAr ?? (setup.ownerName || 'المالك')
-      const s = openShift(activeName, toMinor(openingCash || '0', cur.decimals))
-      toast.show(`فُتحت الوردية #${s.id} — كل فاتورة من الآن تُحسب عليها ✓`)
+      const s = openShift(activeName, toMinor(openingCash || '0', cur.decimals), {
+        userId: currentUserId,
+        employeeId: shiftEmployeeId || undefined,
+      })
+      const linked = s.openedByEmployeeId ? ' — مربوطة بموظف مسجَّل' : ''
+      toast.show(`فُتحت الوردية #${s.id}${linked} — كل فاتورة من الآن تُحسب عليها ✓`)
       setOpenModal(false)
       setOpeningCash('')
+      setShiftEmployeeId(0)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -67,12 +120,20 @@ export function ShiftsPage() {
       const projectedVariance = counted - openSummary.expectedCashMinor
       const approvalNote = projectedVariance === 0 ? null : (projectedVariance < 0 ? `اعتماد عجز ${fmt(-projectedVariance)}` : `اعتماد زيادة ${fmt(projectedVariance)}`)
       const closerName = appUsers.find((u) => u.id === currentUserId)?.nameAr ?? (setup.ownerName || 'المالك')
-      const s = closeShift(counted, projectedVariance === 0 ? null : (approvedBy ?? closerName), approvalNote)
+      const s = closeShift(
+        counted,
+        projectedVariance === 0 ? null : (approvedBy ?? closerName),
+        approvalNote,
+        settleOnClose && projectedVariance !== 0 ? { mode: 'expense' } : null,
+      )
       const sum = getShiftSummary(s.id)
       const v = sum.varianceMinor ?? 0
-      toast.show(v === 0 ? `أُقفلت الوردية — الدرج مضبوط تماماً ✓` : v < 0 ? `أُقفلت الوردية باعتماد مشرف — عجز ${fmt(-v)}` : `أُقفلت الوردية باعتماد مشرف — زيادة ${fmt(v)}`, v < 0 ? 'error' : 'success')
+      const settledNote = s.varianceSettledMode ? ' — سُوّي الفرق بقيده في نفس الإقفال' : ''
+      toast.show(v === 0 ? `أُقفلت الوردية — الدرج مضبوط تماماً ✓` : `${v < 0 ? `أُقفلت الوردية باعتماد مشرف — عجز ${fmt(-v)}` : `أُقفلت الوردية باعتماد مشرف — زيادة ${fmt(v)}`}${settledNote}`, v < 0 ? 'error' : 'success')
       setCloseModal(false)
       setCountedCash('')
+      /* F2: تقرير Z يخرج مع الإقفال نفسه — يُطبع من نفس أرقام الشاشة (summarizeShift) */
+      if (printZOnClose) printXReport(s, sum, 'Z')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -101,9 +162,16 @@ export function ShiftsPage() {
                 <div className="text-[11px] text-slate-400">فتحها {open.openedBy} · {localDateTimeLabel(open.openedAt)}</div>
               </div>
             </div>
-            <Btn onClick={() => { setCountedCash(''); setCloseModal(true) }}>
-              <Lock size={15} /> إقفال الوردية وعدّ الدرج
-            </Btn>
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* تقرير X: معاينة الوردية وطباعتها **بلا إقفال** — الكاشير يراجع
+                  درجه في منتصف الوردية، والإقفال يبقى بعّد أعمى (بلا معرفة المتوقع). */}
+              <Btn variant="ghost" onClick={() => setXReportOpen(true)} shortcut="F7">
+                🖨️ تقرير X — معاينة بلا إقفال
+              </Btn>
+              <Btn onClick={() => { setCountedCash(''); setCloseModal(true) }}>
+                <Lock size={15} /> إقفال الوردية وعدّ الدرج
+              </Btn>
+            </div>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
             <StatCard label="رصيد افتتاحي" value={fmt(open.openingCashMinor)} icon={Banknote} tone="border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200" />
@@ -161,7 +229,7 @@ export function ShiftsPage() {
                   <tr key={s.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/[0.03] transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-800 dark:text-white">#{s.id} · {s.openedBy}</div>
-                      <div className="text-[11px] text-slate-400">{sum.invoiceCount} فاتورة · {sum.returnCount} مرتجع{ s.closeApprovedBy ? ` · اعتماد: ${s.closeApprovedBy}` : ''}</div>
+                      <div className="text-[11px] text-slate-400">{sum.invoiceCount} فاتورة · {sum.returnCount} مرتجع{ s.closeApprovedBy ? ` · اعتماد: ${s.closeApprovedBy}` : ''}{s.openedByEmployeeId ? ` · موظف #${s.openedByEmployeeId}` : ' · بلا ربط موظف'}</div>
                     </td>
                     <td className="px-4 py-3 text-[12px] text-slate-500">
                       {s.openedAt.slice(5, 16).replace('T', ' ')} ← {s.closedAt?.slice(5, 16).replace('T', ' ')}
@@ -181,10 +249,18 @@ export function ShiftsPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-left">
+                      <button
+                        title="تقرير Z — مستند إقفال الوردية (المعدود والفرق)"
+                        onClick={() => printXReport(s, sum, 'Z')}
+                        data-z-report={s.id}
+                        className="text-[11px] px-2.5 py-1 mb-1 rounded-lg bg-slate-500/10 text-slate-600 font-bold hover:bg-slate-500/20 transition-colors flex items-center gap-1"
+                      >
+                        🖨️ تقرير Z
+                      </button>
                       {v !== 0 && !s.varianceSettledMode && (
                         <button
                           title="تسوية الفرق: مصروف/إيراد أو سلفة على الموظف"
-                          onClick={() => { setSettleShift(s); setSettleMode('expense'); setSettleEmployeeId(0) }}
+                          onClick={() => { setSettleShift(s); setSettleMode('expense'); setSettleEmployeeId((s as Shift).openedByEmployeeId ?? 0) }}
                           className="text-[11px] px-2.5 py-1 rounded-lg bg-brand-500/10 text-brand-600 font-bold hover:bg-brand-500/20 transition-colors flex items-center gap-1"
                         >
                           <Scale size={11} /> تسوية
@@ -210,11 +286,61 @@ export function ShiftsPage() {
           <Field label={`رصيد الدرج الافتتاحي (${cur.symbol})`} hint="عدّ النقدية الموجودة في الدرج الآن قبل البدء">
             <input value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} placeholder="0" className={inputCls} autoFocus dir="ltr" />
           </Field>
+          <Field label="الموظف المسؤول عن الدرج (اختياري)" hint="ربط الوردية بموظف مسجَّل يجعل تحميل العجز سلفةً عليه ممكناً بثقة، ويظهر اسمه على تقريري X وZ.">
+            <PartyQuickPicker
+              parties={employees.filter((employee) => employee.active).map((employee) => ({ ...employee, nameAr: employee.jobTitle ? `${employee.nameAr} — ${employee.jobTitle}` : employee.nameAr }))}
+              value={shiftEmployeeId}
+              onChange={setShiftEmployeeId}
+              cashLabel="بلا ربط بموظف"
+              label="بحث الموظف"
+              showCash
+            />
+          </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpenModal(false)}>إلغاء</Btn>
             <Btn onClick={doOpen} shortcut="F9">🔓 فتح الوردية</Btn>
           </div>
         </div>
+      </Modal>
+
+      {/* تقرير X — معاينة الوردية المفتوحة بلا إقفال (طلب البقالة) */}
+      <Modal open={xReportOpen && !!open && !!openSummary} onClose={() => setXReportOpen(false)} title={`تقرير X — الوردية #${open?.id ?? ''} (بلا إقفال)`}>
+        {open && openSummary && (
+          <div className="space-y-4" data-testid="shift-x-report">
+            <div className="text-[12px] text-slate-500 dark:text-slate-300">
+              فتحها {open.openedBy} · {localDateTimeLabel(open.openedAt)} — التقرير لا يقفل الوردية ولا يغيّر أي رصيد.
+            </div>
+            <table className="w-full text-sm" dir="rtl">
+              <tbody>
+                {[
+                  ['رصيد الدرج الافتتاحي', open.openingCashMinor],
+                  [`محصل نقداً (${openSummary.invoiceCount} فاتورة)`, openSummary.cashSalesMinor],
+                  ['محصل على بنوك/محافظ (لا يدخل الدرج)', openSummary.bankSalesMinor],
+                  ['آجل غير محصل', openSummary.creditSalesMinor],
+                  [`مرتجعات نقدية (${openSummary.returnCount} مرتجع)`, -openSummary.cashRefundsMinor],
+                  ['تحصيل تأمين نقداً', openSummary.cashInsuranceReceiptsMinor],
+                  ['صرف تأمين نقداً', -openSummary.cashInsurancePaymentsMinor],
+                ].map(([label, value]) => (
+                  <tr key={String(label)} className="border-b border-slate-100 dark:border-slate-800">
+                    <td className="py-2 text-slate-500">{label}</td>
+                    <td className="py-2 text-left font-bold" dir="ltr">{fmt(value as number)}</td>
+                  </tr>
+                ))}
+                <tr className="bg-sky-500/5">
+                  <td className="py-2 font-black">المتوقع في الدرج</td>
+                  <td className="py-2 text-left font-black text-sky-600 dark:text-sky-400" dir="ltr">{fmt(openSummary.expectedCashMinor)}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="text-[11px] text-amber-600 dark:text-amber-400">
+              ⚠️ الإقفال يبقى «عدّاً أعمى»: لا يُقبل معدود مساوٍ للمتوقع تلقائياً — أدخل ما في الدرج فعلاً وقت الإقفال.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => setXReportOpen(false)}>إغلاق</Btn>
+              <Btn onClick={() => printXReport(open, openSummary)}>🖨️ طباعة تقرير X</Btn>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* إقفال وردية */}
@@ -227,9 +353,23 @@ export function ShiftsPage() {
               <div className="text-[11px] text-slate-400 mt-1">افتتاحي {fmt(open?.openingCashMinor ?? 0)} + كاش {fmt(openSummary.cashSalesMinor)} − مرتجعات {fmt(openSummary.cashRefundsMinor)} + تحصيل تأمين {fmt(openSummary.cashInsuranceReceiptsMinor)} − صرف تأمين {fmt(openSummary.cashInsurancePaymentsMinor)}</div>
             </div>
           )}
-          <Field label={`النقدية المعدودة فعلياً (${cur.symbol})`} hint="إذا ظهر عجز أو زيادة فلن تُقفل الوردية إلا باعتماد مشرف/مالك، ثم تُسوّى كإجراء مستقل.">
+          <Field label={`النقدية المعدودة فعلياً (${cur.symbol})`} hint="إذا ظهر عجز أو زيادة فلن تُقفل الوردية إلا باعتماد مشرف/مالك. القيد يُنشأ مع الإقفال إن أبقيت الخيار أدناه.">
             <input value={countedCash} onChange={(e) => setCountedCash(e.target.value)} placeholder="0" className={inputCls} autoFocus dir="ltr" />
           </Field>
+          <label className="flex items-start gap-2 rounded-xl border border-slate-200 dark:border-slate-700 p-3 cursor-pointer">
+            <input type="checkbox" checked={settleOnClose} onChange={(e) => setSettleOnClose(e.target.checked)} className="mt-1" data-settle-on-close />
+            <span className="text-[12px] leading-5 text-slate-600 dark:text-slate-300">
+              <b>سوِّ الفرق في نفس الإقفال</b> — يُنشأ قيد المصروف/الإيراد فوراً مع الإقفال بدل ترك فرق معلّق.
+              <span className="block text-[11px] text-slate-400">بدونه يبقى الفرق ظاهراً في سجل الورديات حتى تُسوّيه يدوياً (مصروف أو سلفة على موظف).</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 rounded-xl border border-slate-200 dark:border-slate-700 p-3 cursor-pointer">
+            <input type="checkbox" checked={printZOnClose} onChange={(e) => setPrintZOnClose(e.target.checked)} className="mt-1" data-print-z-on-close />
+            <span className="text-[12px] leading-5 text-slate-600 dark:text-slate-300">
+              <b>اطبع تقرير Z مع الإقفال</b> — مستند الإقفال يتضمن المبيعات والخصومات والضريبة والمرتجعات والمتوقع والمعدود والفرق ورقم قيد التسوية.
+              <span className="block text-[11px] text-slate-400">يُطبع من نفس أرقام الشاشة فلا يختلف رقمان بين الورق والدفتر.</span>
+            </span>
+          </label>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setCloseModal(false)}>إلغاء</Btn>
             <Btn onClick={doClose} shortcut="F9">🔒 إقفال الوردية</Btn>

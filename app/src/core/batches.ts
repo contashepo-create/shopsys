@@ -99,6 +99,65 @@ export function applyFefo(batches: StockBatch[], plan: FefoPlan): StockBatch[] {
     .filter((b) => b.qty > 0)
 }
 
+/* ─── دفعات بلا تاريخ صلاحية (لا تدخل FEFO ولا تنبيهات الانتهاء) ─── */
+
+export interface UndatedBatchRow {
+  itemId: number
+  nameAr: string
+  lotNumber: string | null
+  qty: number
+  warehouseId: number | null
+}
+
+/**
+ * دفعات متتبَّعة للصلاحية لكن بلا تاريخ — تُشترى خاماً (تمور/لحوم تُفرز لاحقاً)
+ * أو تُدخل بسرعة. لا نمنع الاستلام، لكن تمريرها بصمت يعني بيعاً منتهياً بلا تنبيه،
+ * فتُعرض في تقرير الصلاحية حتى يضبطها المسؤول.
+ */
+export function undatedBatches(
+  batches: readonly StockBatch[],
+  nameOf: (itemId: number) => string,
+): UndatedBatchRow[] {
+  return batches
+    .filter((b) => b.expiryDate == null && b.qty > 0)
+    .map((b) => ({ itemId: b.itemId, nameAr: nameOf(b.itemId), lotNumber: b.lotNumber ?? null, qty: b.qty, warehouseId: b.warehouseId ?? null }))
+    .sort((a, b) => b.qty - a.qty)
+}
+
+/* ─── سياسة إلزام تاريخ الصلاحية عند الاستلام ─── */
+
+export interface PurchaseExpiryGuardArgs {
+  /** سياسة المنشأة: true = يُرفض ترحيل استلام صنف متتبَّع بلا تاريخ (افتراضياً false) */
+  requireExpiry: boolean
+  lines: readonly { itemId: number; expiryDate?: string | null }[]
+  items: readonly { id: number; nameAr: string; trackExpiry: boolean }[]
+}
+
+export interface PurchaseExpiryGuardResult {
+  /** true = الترحيل يرفض بلا تجاوز (أصناف متتبَّعة بلا تاريخ) */
+  blocked: boolean
+  /** أسماء الأصناف الناقصة بلا تكرار — لرسالة واحدة واضحة للمستخدم */
+  missingNames: string[]
+}
+
+/**
+ * حدود صلاحية الاستلام:
+ *  - الافتراضي (بلا سياسة) **لا يمنع** التاريخ الناقص: خام التمور/اللحوم يُشترى
+ *    بلا تاريخ ويُفرز لاحقاً بتواريخ مخرجات، فيُنبَّه المستخدم ويظهر في تقرير
+ *    «دفعات بلا تاريخ».
+ *  - من يريد الإلزام الصارم (سوبرماركت يشتري معبّأً فقط) يفعّل السياسة من
+ *    الإعدادات، فيُرفض الترحيل قبل أي كتابة بدل تمرير دفعة بلا تاريخ.
+ */
+export function purchaseExpiryGuard(args: PurchaseExpiryGuardArgs): PurchaseExpiryGuardResult {
+  const missingNames: string[] = []
+  for (const line of args.lines) {
+    const item = args.items.find((it) => it.id === line.itemId)
+    if (!item?.trackExpiry || line.expiryDate) continue
+    if (!missingNames.includes(item.nameAr)) missingNames.push(item.nameAr)
+  }
+  return { blocked: args.requireExpiry && missingNames.length > 0, missingNames }
+}
+
 /* ─── تنبيهات الصلاحية ─── */
 
 export interface ExpiryAlertRow {

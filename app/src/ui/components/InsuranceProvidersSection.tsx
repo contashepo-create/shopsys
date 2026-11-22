@@ -24,20 +24,37 @@ function useCur() {
 }
 
 export function InsuranceProvidersSection() {
-  const { insuranceProviders, insuranceClaims, items, paymentTerminals, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims, getInsuranceRefundBalance, payInsuranceRefund, refundSettledInsuredSale, refundSettledInsuredSalePartial } = useDataStore()
+  const { insuranceProviders, insuranceClaims, items, paymentTerminals, addInsuranceProvider, updateInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims, getInsuranceRefundBalance, payInsuranceRefund, refundSettledInsuredSale, refundSettledInsuredSalePartial } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [insOpen, setInsOpen] = useState(false)
+  const [insEditingId, setInsEditingId] = useState<number | null>(null)
   const [insName, setInsName] = useState('')
   const [insPercent, setInsPercent] = useState('80')
   const [insPhone, setInsPhone] = useState('')
+  const [insNotes, setInsNotes] = useState('')
+  const resetInsForm = () => { setInsEditingId(null); setInsName(''); setInsPercent('80'); setInsPhone(''); setInsNotes('') }
+  /** تصحيح نسبة التحميل أو الاسم — النسبة تُثبت على كل زيارة لحظة تسجيلها،
+      فتصحيحها هنا يخصّ الزيارات القادمة ولا يعيد كتابة مستندات سابقة. */
+  const openInsEditor = (providerId: number) => {
+    const provider = insuranceProviders.find((row) => row.id === providerId)
+    if (!provider) return
+    setInsEditingId(provider.id); setInsName(provider.nameAr); setInsPercent(String(provider.coveragePercent))
+    setInsPhone(provider.phone ?? ''); setInsNotes(provider.notes ?? ''); setInsOpen(true)
+  }
   const saveIns = () => {
     try {
-      addInsuranceProvider({ nameAr: insName, coveragePercent: Number(insPercent) || 0, phone: insPhone.trim() })
-      toast.show('أُضيفت الجهة — ستظهر كخيار تغطية ✅')
-      setInsOpen(false); setInsName(''); setInsPercent('80'); setInsPhone('')
+      const payload = { nameAr: insName, coveragePercent: Number(insPercent) || 0, phone: insPhone.trim(), notes: insNotes.trim() }
+      if (insEditingId != null) {
+        updateInsuranceProvider(insEditingId, payload)
+        toast.show('حُدِّثت الجهة — النسبة الجديدة تسري على الزيارات القادمة ✅')
+      } else {
+        addInsuranceProvider(payload)
+        toast.show('أُضيفت الجهة — ستظهر كخيار تغطية ✅')
+      }
+      setInsOpen(false); resetInsForm()
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
   const [claimTreasury, setClaimTreasury] = useState('1101')
@@ -141,6 +158,7 @@ export function InsuranceProvidersSection() {
                     <td className="px-4 py-2.5 text-left">
                       <div className="flex gap-1 justify-end">
                         {balance > 0 && <Btn variant="soft" onClick={() => doSettleClaims(pv.id, pv.nameAr)}>تحصيل الكل</Btn>}
+                        <button onClick={() => openInsEditor(pv.id)} className="text-[11px] font-bold text-slate-500 hover:text-violet-600 px-2" data-insurance-provider-edit={pv.id}>تعديل</button>
                         <button onClick={() => toggleInsuranceProvider(pv.id)} className="text-[11px] font-bold text-slate-400 hover:text-amber-600 px-2">{pv.isActive ? 'تعطيل' : 'تفعيل'}</button>
                       </div>
                     </td>
@@ -195,15 +213,16 @@ export function InsuranceProvidersSection() {
         </div>
       </Modal>
 
-      <Modal open={insOpen} onClose={() => setInsOpen(false)} title="جهة تأمين / تعاقد جديدة" subtitle="ملف تعاقد: نسبة تحمّل الجهة وما يدفعه المريض نقداً">
+      <Modal open={insOpen} onClose={() => { setInsOpen(false); resetInsForm() }} title={insEditingId != null ? 'تصحيح جهة تأمين / تعاقد' : 'جهة تأمين / تعاقد جديدة'} subtitle="ملف تعاقد: نسبة تحمّل الجهة وما يدفعه المريض نقداً">
         <div className="space-y-3"><DocSectionHead step="١" title="الجهة ونسبة تحمّلها وشروط التحصيل" hint="حصة الجهة ذمة عليها لا نقدية في الخزينة" />
           <Field label="اسم الجهة *"><input value={insName} onChange={(e) => setInsName(e.target.value)} placeholder="شركة مصر للتأمين…" className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="نسبة التحمل ٪ *" hint="ما تتحمله الجهة من الفاتورة"><input value={insPercent} onChange={(e) => setInsPercent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="هاتف"><input value={insPhone} onChange={(e) => setInsPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
           </div>
-          <DocOutcome>الأثر: <b>لا قيد</b> عند التعاقد — ومع كل زيارة/طلب مؤمَّن يتوزع الإيراد: حصة المريض تحصيلاً نقدياً وحصة الجهة ذمةً على <b>1110 مطالبات تأمين</b> باسمها حتى التحصيل.</DocOutcome>
-          <Btn onClick={saveIns} className="w-full" disabled={!insName.trim() || !insPercent}>إضافة الجهة</Btn>
+          <Field label="ملاحظات تعاقد"><input value={insNotes} onChange={(e) => setInsNotes(e.target.value)} placeholder="سقف التغطية، شروط الموافقة المسبقة…" className={inputCls} /></Field>
+          <DocOutcome>الأثر: <b>لا قيد</b> عند التعاقد أو تعديل النسبة — ومع كل زيارة/طلب مؤمَّن يتوزع الإيراد: حصة المريض تحصيلاً نقدياً وحصة الجهة ذمةً على <b>1110 مطالبات تأمين</b> باسمها حتى التحصيل. تعديل النسبة لا يمسّ الزيارات المسجَّلة سابقاً.</DocOutcome>
+          <Btn onClick={saveIns} className="w-full" disabled={!insName.trim() || !insPercent} data-insurance-provider-save>{insEditingId != null ? 'حفظ تعديل الجهة' : 'إضافة الجهة'}</Btn>
         </div>
       </Modal>
     </div>

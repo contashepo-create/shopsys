@@ -13,6 +13,7 @@ import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.
 import { useItemLedgerInput } from '../hooks/useItemLedgerInput.ts'
 import { ItemSearchPanel, type QuickItem, type QuickItemMeta } from '../components/KeyboardPickers.tsx'
 import { resolvePrice, priceSource } from '../../core/priceLists.ts'
+import { categoryAncestors } from '../../core/items.ts'
 import { useWindowHost } from './windowHostContext.ts'
 import { openItemEditorWindow, openItemLedgerWindow, openItemPricesWindow, openPartyLedgerWindow } from './windowStore.ts'
 import type { SmartEntry } from '../components/smartEntry.ts'
@@ -429,7 +430,7 @@ export function ItemPricesWindowView() {
   const marginPercent = cost > 0 ? Math.round((marginMinor / cost) * 1000) / 10 : null
   const categoryName = categories.find((cat) => cat.id === item.categoryId)?.nameAr ?? '—'
   const rows = priceLists.map((list) => {
-    const price = resolvePrice(item.id, retail, list.id, priceLists, priceListEntries, priceListCategoryRules, item.categoryId ?? null)
+    const price = resolvePrice(item.id, retail, list.id, priceLists, priceListEntries, priceListCategoryRules, item.categoryId ?? null, categoryAncestors(item.categoryId ?? null, useDataStore.getState().categories))
     const source = priceSource(item.id, list.id, priceLists, priceListEntries, priceListCategoryRules, item.categoryId ?? null)
     const rule = priceListCategoryRules.find((entry) => entry.listId === list.id && entry.categoryId === (item.categoryId ?? 0))
     return { list, price, source, rule }

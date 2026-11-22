@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { isDriverEmployee } from '../../core/jobTitles.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { confirmDialog } from '../components/confirmStore.ts'
 import { buildVehicleReport, vehicleReportCategories, type VehicleReportKind } from '../../core/vehicleReports.ts'
 import { vehicleComplianceWarnings, vehicleFuelStats, fuelDeviationWarnings, VEHICLE_COST_LABELS, type VehicleCostKind } from '../../core/logistics.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -21,7 +22,7 @@ const VEHICLE_TYPES = ['تريلا', 'قلاب', 'دينا', 'سطحة', 'برا
 const VEHICLE_COST_KINDS: VehicleCostKind[] = ['fuel', 'maintenance', 'parts', 'tolls', 'other']
 
 export function FleetPage() {
-  const { vehicles, employees, trips, vehicleCostEntries, vehicleParts, addVehicle, updateVehicle, removeVehicle, addVehicleExpense, addEmployee } = useDataStore()
+  const { vehicles, employees, trips, vehicleCostEntries, vehicleParts, addVehicle, updateVehicle, removeVehicle, addVehicleExpense, addEmployee, addVehiclePart, updateVehiclePart, removeVehiclePart } = useDataStore()
   const { setup } = useAppStore()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -152,6 +153,54 @@ export function FleetPage() {
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
 
+  /* مخزون قطع الغيار — كانت الدالة الثلاثية (إضافة/تحرير/حذف) في النواة بلا شاشة،
+     والقطعة الوحيدة تدخل السجل من نموذج المصروف فلا تُصحَّح ولا تُضبط كميتها. */
+  const [partFormOpen, setPartFormOpen] = useState(false)
+  const [editingPartId, setEditingPartId] = useState<number | null>(null)
+  const [partName, setPartName] = useState('')
+  const [partQty, setPartQty] = useState('0')
+  const [partMinQty, setPartMinQty] = useState('0')
+  const [partCost, setPartCost] = useState('')
+  const [partNotes, setPartNotes] = useState('')
+  const resetPartForm = () => { setEditingPartId(null); setPartName(''); setPartQty('0'); setPartMinQty('0'); setPartCost(''); setPartNotes('') }
+  const openPartEditor = (partId: number | null) => {
+    const part = partId == null ? null : vehicleParts.find((row) => row.id === partId)
+    if (part) {
+      setEditingPartId(part.id); setPartName(part.nameAr); setPartQty(String(part.qty)); setPartMinQty(String(part.minQty))
+      setPartCost(String(part.unitCostMinor / 10 ** cur.decimals)); setPartNotes(part.notes ?? '')
+    } else { resetPartForm() }
+    setPartFormOpen(true)
+  }
+  const savePart = () => {
+    try {
+      const payload = {
+        nameAr: partName.trim(),
+        qty: Math.max(0, Number(partQty) || 0),
+        minQty: Math.max(0, Number(partMinQty) || 0),
+        unitCostMinor: toMinor(partCost || '0', cur.decimals),
+        notes: partNotes.trim(),
+      }
+      if (editingPartId != null) {
+        updateVehiclePart(editingPartId, payload)
+        toast.show(`حُدِّثت قطعة «${payload.nameAr}» ✓`)
+      } else {
+        addVehiclePart(payload)
+        toast.show(`أُضيفت قطعة «${payload.nameAr}» إلى مخزون قطع الغيار ✓`)
+      }
+      setPartFormOpen(false); resetPartForm()
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
+  const deletePart = async (partId: number, nameAr: string) => {
+    const ok = await confirmDialog({
+      title: `حذف «${nameAr}»`,
+      message: 'تُحذف القطعة من مخزون قطع الغيار. القطع المرتبطة بمصاريف مسجَّلة لا تُحذف حفاظاً على مركز التكلفة.',
+      confirmLabel: 'حذف', danger: true, testId: 'delete-vehicle-part',
+    })
+    if (!ok) return
+    try { removeVehiclePart(partId); if (editingPartId === partId) resetPartForm(); toast.show(`حُذفت «${nameAr}» ✓`) }
+    catch (err) { toast.show((err as Error).message, 'error') }
+  }
+
   return (
     <div className="space-y-4">
       <div className="anim-up flex items-center justify-between">
@@ -219,6 +268,58 @@ export function FleetPage() {
           </div>
         </section>
       )}
+
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 space-y-3" data-vehicle-parts>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-black text-slate-800 dark:text-white">🔧 مخزون قطع الغيار</h2>
+            <p className="text-[11px] text-slate-400 mt-1">رصيد كل قطعة وتكلفتها وحد إعادة الطلب — الصرف يتم من «تسجيل مصروف · قطع غيار» فيخصم الرصيد.</p>
+          </div>
+          <Btn variant="ghost" onClick={() => openPartEditor(null)} data-add-vehicle-part><Plus size={14} /> قطعة جديدة</Btn>
+        </div>
+        {partFormOpen && (
+          <div className="grid gap-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 md:grid-cols-[1fr_100px_100px_130px_1fr_auto]" data-vehicle-part-form>
+            <Field label="اسم القطعة *"><input className={inputCls} value={partName} onChange={(event) => setPartName(event.target.value)} placeholder="مثال: فلتر زيت" /></Field>
+            <Field label="الرصيد"><input className={inputCls} inputMode="decimal" value={partQty} onChange={(event) => setPartQty(event.target.value)} /></Field>
+            <Field label="حد الطلب"><input className={inputCls} inputMode="decimal" value={partMinQty} onChange={(event) => setPartMinQty(event.target.value)} /></Field>
+            <Field label={`تكلفة الوحدة (${cur.symbol})`}><input className={inputCls} inputMode="decimal" value={partCost} onChange={(event) => setPartCost(event.target.value)} /></Field>
+            <Field label="ملاحظات"><input className={inputCls} value={partNotes} onChange={(event) => setPartNotes(event.target.value)} /></Field>
+            <div className="flex items-end gap-2">
+              <Btn onClick={savePart} disabled={!partName.trim()} data-vehicle-part-save>{editingPartId != null ? 'حفظ التعديل' : 'إضافة'}</Btn>
+              <Btn variant="ghost" onClick={() => { setPartFormOpen(false); resetPartForm() }}>إلغاء</Btn>
+            </div>
+          </div>
+        )}
+        {vehicleParts.length === 0 ? (
+          <p className="rounded-xl bg-slate-500/5 p-4 text-center text-[12px] text-slate-400">لا قطع مسجَّلة — أضف القطعة الأكثر استهلاكاً ليتحرك رصيدها مع كل صرف.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-100 dark:border-slate-800">
+            <table className="w-full text-[12px] min-w-[640px]" data-vehicle-parts-table>
+              <thead><tr className="border-b border-slate-100 text-slate-400 dark:border-slate-800"><th className="p-2 text-right">القطعة</th><th className="p-2">الرصيد</th><th className="p-2">حد الطلب</th><th className="p-2">تكلفة الوحدة</th><th className="p-2">قيمة المخزون</th><th className="p-2">إجراء</th></tr></thead>
+              <tbody>
+                {vehicleParts.map((part) => (
+                  <tr key={part.id} className={`border-b border-slate-50 dark:border-slate-800/50 ${part.minQty > 0 && part.qty <= part.minQty ? 'bg-amber-500/5' : ''}`} data-vehicle-part-row={part.id}>
+                    <td className="p-2 font-bold">{part.nameAr}{part.notes ? <span className="text-slate-400"> · {part.notes}</span> : null}</td>
+                    <td className={`p-2 text-center font-mono ${part.minQty > 0 && part.qty <= part.minQty ? 'font-black text-amber-600' : ''}`} data-vehicle-part-qty={part.id}>{part.qty}</td>
+                    <td className="p-2 text-center font-mono text-slate-500">{part.minQty}</td>
+                    <td className="p-2 text-center font-mono">{fmt(part.unitCostMinor)}</td>
+                    <td className="p-2 text-center font-mono">{fmt(Math.round(part.qty * part.unitCostMinor))}</td>
+                    <td className="p-2 text-center whitespace-nowrap">
+                      <button type="button" className="mx-1 text-[11.5px] font-bold text-amber-600 hover:underline" onClick={() => openPartEditor(part.id)} data-vehicle-part-edit={part.id}>تعديل</button>
+                      <button type="button" className="mx-1 text-[11.5px] font-bold text-rose-600 hover:underline" onClick={() => deletePart(part.id, part.nameAr)} data-vehicle-part-remove={part.id}>حذف</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {vehicleParts.some((part) => part.minQty > 0 && part.qty <= part.minQty) && (
+          <p className="rounded-xl bg-amber-500/10 p-2 text-[11.5px] font-bold text-amber-700 dark:text-amber-300">
+            ⚠ قطع وصلت حد إعادة الطلب: {vehicleParts.filter((part) => part.minQty > 0 && part.qty <= part.minQty).map((part) => part.nameAr).join('، ')}
+          </p>
+        )}
+      </section>
 
       {vehicles.length === 0 ? (
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">

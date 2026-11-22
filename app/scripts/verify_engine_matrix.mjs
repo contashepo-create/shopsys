@@ -75,6 +75,9 @@ const UNUSED_ACCOUNT_DISPOSITIONS = {
   '5117': ['مصروف عمولات الموظفين', 'src/core/staffCommissions.ts'],
   '5118': ['خسارة استبعاد أصل', 'src/core/assets.ts'],
   '5119': ['خسارة فرق العملة', 'src/core/fxTreasury.ts'],
+  // F3: حساب الفقد غير المبرَّر — ترحيله مشروط بسبب الجرد (خيار المستخدم)، فلا يظهر
+  // رقماً ثابتاً في قيود المصفوفة، وهو مقصود لا ميت.
+  '5120': ['عجز جرد غير مبرَّر — يختاره سبب الجرد', 'src/core/stocktake.ts'],
 }
 const classifiedCodes = Object.keys(UNUSED_ACCOUNT_DISPOSITIONS).sort()
 const discoveredUnused = [...unused].sort()

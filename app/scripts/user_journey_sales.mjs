@@ -280,4 +280,22 @@ const shirtInjection = 96000
 assert.equal(bal('1103'), bookInv - shirtInjection)
 ok(`دفتر المخزون 1103 = Σ(كمية×متوسط) − حقن القمصان الصوري: ${((bookInv - shirtInjection) / 100).toFixed(2)} — كل قرش مفسَّر`)
 
+// ═══ بوابة الثوابت المشتركة (توزان/مرجع المصدر/1103 = قيمة المخزون/الدفعات) ═══
+{
+  const { assertJourneyInvariants } = await import(pathToFileURL(join(root, 'scripts/journey_invariants.mjs')).href)
+  const { useRawDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+  const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
+  const raw = useRawDataStore.getState()
+  const setup = useAppStore.getState().setup
+  const stats = assertJourneyInvariants(raw, {
+    label: 'sales',
+    allowNegativeStock: setup.allowNegativeStock === true,
+    allowNegativeTreasury: setup.allowNegativeTreasury !== false,
+    // بذرة اختبار التجهيزات: رصيد الملابس يُكتب مباشرة (8 × 12,000) خارج الدفتر،
+    // فقيمة الأصناف تزيد عن دفتر 1103 بهذا المقدار بالضبط (فارق بذرة لا تسريب قيمة)
+    stockLedgerDriftMinor: -8 * 12000,
+  })
+  console.log(`  ✓ الثوابت: ${stats.entries} قيداً متزنة · 1103 = قيمة المخزون ${stats.stockValue}`)
+}
+
 console.log(`\n✅ رحلة مبيعات المستخدم اكتملت: ${step} تحققاً عبر 8 محاور\n`)

@@ -11,10 +11,11 @@ import { Truck, CheckCircle2, PlayCircle } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { SignaturePad } from '../components/SignaturePad.tsx'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { confirmDialog } from '../components/confirmStore.ts'
 
 
 export function DeliveryTasksPage() {
-  const { deliveryJobs, sales, setDeliveryStatus, completeDeliveryWithSignature } = useDataStore()
+  const { deliveryJobs, sales, setDeliveryStatus, completeDeliveryWithSignature, deleteDeliveryJob } = useDataStore()
   const toast = useToast()
   const [assignee, setAssignee] = useState('')
   const [signingId, setSigningId] = useState<number | null>(null)
@@ -61,6 +62,20 @@ export function DeliveryTasksPage() {
                 <Btn onClick={() => setSigningId(job.id)} className="text-[12px]">
                   <CheckCircle2 size={14} className="ml-1" /> تأكيد التسليم
                 </Btn>
+                {job.status === 'scheduled' && (
+                  /* إلغاء جدولة خاطئة: لا يُحذف طلب بدأ تنفيذه ولا مسلَّم — التسليم دليل تم ولا يُلغى من هنا */
+                  <button type="button" className="text-[11px] font-bold text-rose-500 hover:underline" data-delete-delivery-job={job.id}
+                    onClick={async () => {
+                      const ok = await confirmDialog({
+                        title: `إلغاء جدولة توصيل الفاتورة ${sale?.invoiceNumber ?? `#${job.saleId}`}`,
+                        message: 'يبقى سجل الفاتورة كاملاً، وتُعاد الجدولة من شاشة التقارير عند الحاجة.',
+                        confirmLabel: 'إلغاء الجدولة', danger: true, testId: 'cancel-delivery-job',
+                      })
+                      if (!ok) return
+                      try { deleteDeliveryJob(job.id); toast.show('أُلغيت الجدولة — أعدها من شاشة التقارير عند الحاجة ✓') }
+                      catch (e) { toast.show((e as Error).message, 'error') }
+                    }}>إلغاء الجدولة</button>
+                )}
               </div>
             </div>
           ))}

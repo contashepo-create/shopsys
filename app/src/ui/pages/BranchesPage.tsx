@@ -20,12 +20,13 @@ import { formatMinor } from '../../core/money.ts'
 import { validateFiscalYear } from '../../core/fiscal.ts'
 import { getCountry } from '../../core/countries.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { confirmDialog } from '../components/confirmStore.ts'
 
 export function BranchesPage() {
   const {
     branches, warehouses, treasuries, addBranch, updateBranch, removeBranch,
     activeBranchId, setActiveBranchId, currentUserId, appUsers, loggedOut,
-    sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders, processingOrders,
+    sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders, processingOrders, stocktakes,
   } = useDataStore()
   const canManageAllBranches = currentUserId == null || appUsers.find((user) => user.id === currentUserId)?.roleId === 'owner'
   useEffect(() => {
@@ -65,7 +66,7 @@ export function BranchesPage() {
         accountBalances.set(l.accountCode, (accountBalances.get(l.accountCode) ?? 0) + l.debit - l.credit)
       }
     }
-    const warehouseStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders))
+    const warehouseStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes))
     return compareBranches({
       branches,
       sales,
@@ -77,7 +78,7 @@ export function BranchesPage() {
       itemValueById: new Map(items.map((it) => [it.id, it.stockValueMinor ?? Math.round((it.stockQty ?? 0) * it.costMinor)])),
       itemQtyById: new Map(items.map((it) => [it.id, it.stockQty ?? 0])),
     })
-  }, [branches, sales, saleReturns, purchases, purchaseReturns, transfers, items, warehouses, journal, productionOrders, processingOrders])
+  }, [branches, sales, saleReturns, purchases, purchaseReturns, transfers, items, warehouses, journal, productionOrders, processingOrders, stocktakes])
 
   /* ─── إنشاء/تعديل فرع ─── */
   const [open, setOpen] = useState(false)
@@ -299,8 +300,13 @@ export function BranchesPage() {
                   </button>
                   {!b.isMain && canManageAllBranches && (
                     <button
-                      onClick={() => {
-                        if (!window.confirm(`حذف فرع «${b.nameAr}»؟ لا يُسمح بحذف فرع له مستخدمون أو سجلات تشغيلية؛ عطّله للحفاظ على تاريخه.`)) return
+                      onClick={async () => {
+                        const ok = await confirmDialog({
+                          title: `حذف فرع «${b.nameAr}»`,
+                          message: 'لا يُسمح بحذف فرع له مستخدمون أو سجلات تشغيلية؛ عطّله للحفاظ على تاريخه. المخزن والخزينة المرتبطان به يبقيان بعد الحذف.',
+                          confirmLabel: 'حذف الفرع', danger: true, testId: 'delete-branch',
+                        })
+                        if (!ok) return
                         try { removeBranch(b.id); toast.show('حُذف الفرع (المخزن والخزينة باقيان)') }
                         catch (err) { toast.show((err as Error).message, 'error') }
                       }}

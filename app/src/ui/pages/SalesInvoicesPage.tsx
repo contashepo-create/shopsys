@@ -17,7 +17,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { buildReceiptModel, type InvoiceTemplate } from '../../core/receipt.ts'
-import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
+import { computeTotals, lineTotal, CreditLimitError, type CartLine } from '../../core/pos.ts'
 import { effectiveVatPercent, PriceFloorError } from '../../core/items.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
@@ -432,7 +432,7 @@ export function SalesInvoicesPage() {
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>
                     <td className="px-3 py-2 text-sky-600 font-bold">{(l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent) > 0 ? `${l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent}٪` : ''}</td>
                     <td className="px-3 py-2">{l.discountPercent ? `${l.discountPercent}٪` : '—'}</td>
-                    <td className="px-3 py-2 font-bold">{fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}</td>
+                    <td className="px-3 py-2 font-bold">{fmt(lineTotal(l, 2))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -539,7 +539,7 @@ export function SalesInvoicesPage() {
                           className={inputCls + ' !py-1.5 !text-[12px]'} dir="ltr" placeholder="0"
                         />
                       </td>
-                      <td className="px-3 py-2 font-bold text-emerald-600">{fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}</td>
+                      <td className="px-3 py-2 font-bold text-emerald-600">{fmt(lineTotal(l, 2))}</td>
 
                     </tr>
                   ))}
