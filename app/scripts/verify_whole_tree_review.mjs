@@ -206,19 +206,29 @@ for (const [file, text] of source) {
     declared.set(match[1], (declared.get(match[1]) ?? 0) + 1)
   }
 }
+// تستخدم بوابة المحاسبة هاتين الدالتين فعلياً، لكن الواجهة لا تستدعيهما.
+const scriptOnly = new Map([
+  ['computeTrialBalance', 'verify_accounting.mjs'],
+  ['computeIncomeStatement', 'verify_accounting.mjs'],
+])
+const scriptOnlyFailures = []
+for (const [name, file] of scriptOnly) {
+  const text = readFileSync(join(appRoot, 'scripts', file), 'utf8')
+  if (!coreExports.has(name) || !new RegExp(`\\b${name}\\s*\\(`).test(text) || (identifierCount.get(name) ?? 0) - (declared.get(name) ?? 0) > 0) scriptOnlyFailures.push(name)
+}
 const dead = []
 for (const name of coreExports) {
   /* الاستخدام الحقيقي = كل ذكر للمعرّف ناقص مواضع التصريح/التصدير */
   const uses = (identifierCount.get(name) ?? 0) - (declared.get(name) ?? 0)
-  if (uses <= 0 && !DEAD_EXPORT_BASELINE.has(name)) dead.push(name)
+  if (uses <= 0 && !DEAD_EXPORT_BASELINE.has(name) && !scriptOnly.has(name)) dead.push(name)
 }
 const staleDispositions = [...DEAD_EXPORT_BASELINE.keys()].filter((name) => {
   const uses = (identifierCount.get(name) ?? 0) - (declared.get(name) ?? 0)
   return !coreExports.has(name) || uses > 0
 })
-check(dead.length === 0 && staleDispositions.length === 0,
-  `R11 كل تصدير تشغيلي في النواة (${coreExports.size}) له مستهلك أو في لقطة الدين (${DEAD_EXPORT_CEILING} سقفاً لا يزيد)`,
-  [...dead, ...staleDispositions.map((name) => `${name} — له مستهلك الآن، احذفه من اللقطة`)])
+check(dead.length === 0 && staleDispositions.length === 0 && scriptOnlyFailures.length === 0,
+  `R11 كل تصدير تشغيلي في النواة (${coreExports.size}) له مستهلك أو في لقطة الدين (${DEAD_EXPORT_CEILING} سقفاً لا يزيد؛ ${scriptOnly.size} لسكربتات الفحص فقط)`,
+  [...dead, ...scriptOnlyFailures, ...staleDispositions.map((name) => `${name} — له مستهلك الآن، احذفه من اللقطة`)])
 
 /* سقف الدين لا يزيد: لو زادت أسماء اللقطة عن السقف المكتوب فشل الفحص */
 check(DEAD_EXPORT_BASELINE.size <= DEAD_EXPORT_CEILING,

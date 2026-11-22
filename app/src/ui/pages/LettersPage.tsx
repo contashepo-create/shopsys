@@ -14,6 +14,7 @@ import { inspectLetterCanvas, measureLetterHeaderBottom, type LetterCanvasIssue 
 import { todayLocalIso } from '../../core/time.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { useToast, useUnsavedChangesGuard } from '../components/ui.tsx'
+import { confirmDialog } from '../components/confirmStore.ts'
 import './letters.css'
 
 const paragraphPresets: Record<string, string> = {
@@ -97,6 +98,8 @@ export function LettersPage() {
   const [automaticNumber, setAutomaticNumber] = useState(false)
   const sheetRef = useRef<HTMLDivElement>(null)
   const draftRef = useRef(draft)
+  const mounted = useRef(false)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   useLayoutEffect(() => { draftRef.current = draft }, [draft])
   const paragraphRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
   useEffect(() => { void document.fonts?.load('16px LetterArabic', 'العربية').catch(() => {}) }, [])
@@ -132,7 +135,14 @@ export function LettersPage() {
   }, [customers, letters])
   const selected = draft?.paragraphs.find(p => p.id === selectedId) ?? draft?.paragraphs[0]
   const branchId = () => getEffectiveActiveBranch(useRawDataStore.getState())?.id ?? null
-  const canLeave = () => !dirty || window.confirm('لديك تعديلات غير محفوظة. هل تريد إغلاقها؟')
+  // لا تُطبق عملية على مسودة تغيرت أثناء انتظار نافذة التأكيد.
+  const confirmCurrent = async (message: string) => {
+    const before = draftRef.current
+    const accepted = await confirmDialog({ title: 'تأكيد العملية', message })
+    if (!mounted.current) return false
+    if (accepted && draftRef.current !== before) { toast.show('تغير الخطاب أثناء التأكيد؛ أعد المحاولة', 'error'); return false }
+    return accepted
+  }
   const patch = (values: Partial<Letter>) => { setDraft(current => current ? { ...current, ...values } : current); setDirty(true) }
   const selectedStyle = draft ? formatTarget === 'paragraph' ? selected : letterFieldStyle(draft, formatTarget as LetterField) : undefined
   const patchStyle = (values: Partial<LetterTextStyle>) => {
@@ -142,8 +152,8 @@ export function LettersPage() {
     patch({ fieldStyles: { ...draft.fieldStyles, [field]: { ...selectedStyle, ...values } } })
   }
   const patchParagraph = (values: Partial<LetterParagraph>) => { if (!draft || !selected) return; patch({ paragraphs: draft.paragraphs.map(p => p.id === selected.id ? { ...p, ...values } : p) }) }
-  const start = (existing?: Letter) => {
-    if (!canLeave()) return
+  const start = async (existing?: Letter) => {
+    if (dirty && !await confirmCurrent('لديك تعديلات غير محفوظة. هل تريد إغلاقها؟')) return
     if (!existing && (!useRawDataStore.persist.hasHydrated() || !useAppStore.persist.hasHydrated())) { toast.show('لا تزال البيانات تُحمّل — انتظر اكتمالها قبل إنشاء خطاب', 'error'); return }
     const now = new Date().toISOString(), p = newLetterParagraph(paragraphPresets.official)
     const today = todayLocalIso()
@@ -164,7 +174,7 @@ export function LettersPage() {
         else value.layout = createLetterLayout(value, selection.slice(8) as LetterTemplate)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'تعذر تحميل القالب الافتراضي'
-        if (!message.startsWith('القالب الافتراضي المحفوظ غير متاح') || !window.confirm(`${message}. هل تريد فتح تصميم جاهز مؤقتاً لتغيير الاختيار؟ لن يُستبدل الافتراضي إلا إذا حفظت اختياراً آخر.`)) { toast.show(message, 'error'); return }
+        if (!message.startsWith('القالب الافتراضي المحفوظ غير متاح') || !await confirmCurrent(`${message}. هل تريد فتح تصميم جاهز مؤقتاً لتغيير الاختيار؟ لن يُستبدل الافتراضي إلا إذا حفظت اختياراً آخر.`)) { toast.show(message, 'error'); return }
         value.layout = createLetterLayout(value, 'classic')
       }
     }
@@ -188,9 +198,9 @@ export function LettersPage() {
     setDraft(current => current?.layout ? { ...current, layout: { ...current.layout, boxes: { ...current.layout.boxes, [key]: box } } } : current)
     setDirty(true)
   }
-  const applyTemplate = (template: LetterTemplate) => {
+  const applyTemplate = async (template: LetterTemplate) => {
     if (!draft || draft.layout?.template === template) return
-    if (draft.layout && !window.confirm('تغيير القالب يعيد المواضع وتوزيع الصفحات لافتراضياته. هل تريد المتابعة؟')) return
+    if (draft.layout && !await confirmCurrent('تغيير القالب يعيد المواضع وتوزيع الصفحات لافتراضياته. هل تريد المتابعة؟')) return
     patch({ layout: createLetterLayout(draft, template) }); setLayoutTarget('reference'); setFormatTarget('paragraph')
   }
   const updateBackground = (background: NonNullable<NonNullable<Letter['layout']>['background']>) => {
@@ -211,8 +221,8 @@ export function LettersPage() {
     if (!draft?.layout || busy) return
     const saved = action !== 'save' ? (letterTemplates ?? []).find(row => row.id === id) : undefined
     if (action !== 'save' && !saved) return
-    if (action === 'delete' && !window.confirm(`حذف القالب «${saved!.name}»؟ لا تتغير الخطابات التي استعملته.`)) return
-    if (action === 'update' && !window.confirm(`تحديث القالب «${saved!.name}» من هذا الخطاب؟ سيُستخدم التحديث في الخطابات الجديدة إذا كان افتراضياً، ولا يتغير أي خطاب محفوظ.${saved!.content && !includeTemplateContent ? ' ستُزال النصوص والصور المحفوظة سابقاً من القالب لأن خيار تضمينها غير محدد.' : ''}`)) return
+    if (action === 'delete' && !await confirmCurrent(`حذف القالب «${saved!.name}»؟ لا تتغير الخطابات التي استعملته.`)) return
+    if (action === 'update' && !await confirmCurrent(`تحديث القالب «${saved!.name}» من هذا الخطاب؟ سيُستخدم التحديث في الخطابات الجديدة إذا كان افتراضياً، ولا يتغير أي خطاب محفوظ.${saved!.content && !includeTemplateContent ? ' ستُزال النصوص والصور المحفوظة سابقاً من القالب لأن خيار تضمينها غير محدد.' : ''}`)) return
     const template = action === 'delete' ? null : captureLetterTemplate(draft, saved?.name ?? templateName, saved?.id ?? crypto.randomUUID(), true, includeTemplateContent, true)
     if (template && !template.name) { toast.show('أدخل اسم القالب أولاً', 'error'); return }
     setBusy(true); let changed = false
@@ -269,7 +279,7 @@ export function LettersPage() {
     patch({ paragraphs, layout: { ...draft.layout, pageCount: Math.max(draft.layout.pageCount ?? 1, nextPage), boxes: { ...draft.layout.boxes, [letterParagraphKey(next.id)]: { ...box, y: 55, page: nextPage, repeat: false } } } })
     setSelectedId(next.id); setFormatTarget('paragraph'); setLayoutTarget(letterParagraphKey(next.id))
   }
-  const distributeParagraph = (paragraph: LetterParagraph) => {
+  const distributeParagraph = async (paragraph: LetterParagraph) => {
     if (!draft?.layout || !sheetRef.current) return
     const key = letterParagraphKey(paragraph.id), box = getLetterBoxes(draft)[key]
     if (box.repeat) { toast.show('أوقف تكرار الفقرة قبل توزيعها على الصفحات', 'error'); return }
@@ -286,7 +296,8 @@ export function LettersPage() {
       const parts = distributeLetterText(paragraph.text, box.page ?? 1, box.y, text => { probe.textContent = text; return probe.getBoundingClientRect().height }, pageRect.height / 297)
       if (parts.length === 1 && parts[0].page === (box.page ?? 1)) { toast.show('الفقرة تتسع في صفحتها الحالية'); return }
       if (draft.paragraphs.length + parts.length - 1 > 100) throw new Error('التوزيع يتجاوز الحد الأقصى للفقرات؛ لم يتغير الخطاب')
-      if (!window.confirm(`سيُوزّع نص الفقرة على ${parts.length} جزء، ضمن الصفحات حتى ${parts[parts.length - 1].page}. لن تتحرك بقية العناصر تلقائياً، وقد يلزم تعديلها لتجنب التداخل. هل تريد المتابعة؟`)) return
+      probe.remove() // لا يبقى مجس القياس أثناء انتظار التأكيد
+      if (!await confirmCurrent(`سيُوزّع نص الفقرة على ${parts.length} جزء، ضمن الصفحات حتى ${parts[parts.length - 1].page}. لن تتحرك بقية العناصر تلقائياً، وقد يلزم تعديلها لتجنب التداخل. هل تريد المتابعة؟`)) return
       const paragraphs = parts.map((part, index) => ({ ...paragraph, id: index ? crypto.randomUUID() : paragraph.id, text: part.text }))
       const boxes = { ...draft.layout.boxes }
       paragraphs.forEach((p, index) => { boxes[letterParagraphKey(p.id)] = { ...box, page: parts[index].page, y: parts[index].y, repeat: false } })
@@ -299,7 +310,7 @@ export function LettersPage() {
   const checkBranch = () => { if (branchId() !== branchAtOpen) throw new Error('تغير الفرع منذ فتح الخطاب — أعد فتحه قبل الحفظ') }
   const commit = async (kind: 'save' | 'delete') => {
     if (!draft || busy) return
-    if (kind === 'delete' && !window.confirm('هل تريد حذف هذا الخطاب نهائياً؟')) return
+    if (kind === 'delete' && !await confirmCurrent('هل تريد حذف هذا الخطاب نهائياً؟')) return
     if (kind === 'save') { const errors = validateLetter(draft); if (errors.length) { toast.show(errors.join(' — '), 'error'); return } }
     setBusy(true)
     let changed = false
@@ -326,10 +337,10 @@ export function LettersPage() {
     const errors = validateLetter(draft); if (errors.length) { toast.show(errors.join(' — '), 'error'); return }
     if (automaticNumber) { toast.show('احفظ الخطاب أولاً لتثبيت الرقم التلقائي قبل التصدير أو الطباعة', 'error'); return }
     if (draft.layout) {
-      if ([...sheetRef.current.querySelectorAll<HTMLElement>('.letters-canvas')].some(canvas => inspectLetterCanvas(canvas).length > 0) && !window.confirm('بعض عناصر التخطيط تتداخل أو تتجاوز الصفحة وقد تُقص عند التصدير. راجع المعاينة أو حرّك العناصر. هل تريد المتابعة؟')) return
-      if (kind === 'word' && !window.confirm('يُصدّر Word العناصر في إطارات قابلة للتحرير؛ قد يختلف ترتيبها أو التفاف النص حسب برنامج Word والخطوط. راجع الملف قبل استخدامه. هل تريد المتابعة؟')) return
+      if ([...sheetRef.current.querySelectorAll<HTMLElement>('.letters-canvas')].some(canvas => inspectLetterCanvas(canvas).length > 0) && !await confirmCurrent('بعض عناصر التخطيط تتداخل أو تتجاوز الصفحة وقد تُقص عند التصدير. راجع المعاينة أو حرّك العناصر. هل تريد المتابعة؟')) return
+      if (kind === 'word' && !await confirmCurrent('يُصدّر Word العناصر في إطارات قابلة للتحرير؛ قد يختلف ترتيبها أو التفاف النص حسب برنامج Word والخطوط. راجع الملف قبل استخدامه. هل تريد المتابعة؟')) return
     }
-    if (!draft.layout && kind === 'pdf' && sheetRef.current.scrollHeight > 1123 && !window.confirm('الخطاب يتجاوز صفحة واحدة؛ قد تنقسم السطور بين صفحات PDF ولا تتكرر الترويسة والتذييل. يُنصح باستخدام Word للخطابات الطويلة. هل تريد متابعة التصدير؟')) return
+    if (!draft.layout && kind === 'pdf' && sheetRef.current.scrollHeight > 1123 && !await confirmCurrent('الخطاب يتجاوز صفحة واحدة؛ قد تنقسم السطور بين صفحات PDF ولا تتكرر الترويسة والتذييل. يُنصح باستخدام Word للخطابات الطويلة. هل تريد متابعة التصدير؟')) return
     setBusy(true)
     try {
       const exportPage = sheetRef.current.cloneNode(true) as HTMLElement
@@ -365,14 +376,14 @@ export function LettersPage() {
       </div>
       {visible.length === 0 ? <div style={{ textAlign: 'center', padding: '55px 20px', color: '#7c8d9c' }}><FileText size={38} style={{ margin: 'auto auto 12px', color: '#91b6bd' }} /><strong>{hasFilters ? 'لا توجد نتائج مطابقة' : 'لا توجد خطابات محفوظة بعد'}</strong><p style={{ fontSize: 13, marginTop: 8 }}>ابدأ بخطاب جديد وخصصه حسب احتياجك.</p></div> : visible.map(letter => <div className="letters-list-row" key={letter.id}><div><h3>{letter.subject}</h3><p>{letter.recipient} · {letter.date} {letter.reference && `· ${letter.reference}`}</p></div><button className="letters-button" onClick={() => start(letter)}><Pencil size={14} /> فتح ومعاينة</button></div>)}
     </section> : <>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginTop: 18 }}><div className="letters-toolbar"><button className="letters-button" onClick={() => { if (canLeave()) { setDraft(null); setDirty(false) } }}><ArrowRight size={15} /> السجل</button><span style={{ fontSize: 12, color: '#748799' }}>{dirty ? 'تعديلات غير محفوظة' : basis ? 'خطاب محفوظ' : 'خطاب جديد'}</span></div><div className="letters-toolbar"><button className="letters-button primary" disabled={busy} onClick={() => void commit('save')}><Save size={15} /> حفظ</button><button className="letters-button" disabled={busy} onClick={() => void exportFile('pdf')}><Download size={15} /> PDF</button><button className="letters-button" disabled={busy} onClick={() => void exportFile('word')}><Download size={15} /> Word</button><button className="letters-button" disabled={busy} onClick={() => void exportFile('print')}><Printer size={15} /> طباعة</button>{basis && <button className="letters-button" disabled={busy} onClick={() => void commit('delete')} style={{ color: '#b34545' }}><Trash2 size={15} /> حذف</button>}</div></div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginTop: 18 }}><div className="letters-toolbar"><button className="letters-button" onClick={async () => { if (!dirty || await confirmCurrent('لديك تعديلات غير محفوظة. هل تريد إغلاقها؟')) { setDraft(null); setDirty(false) } }}><ArrowRight size={15} /> السجل</button><span style={{ fontSize: 12, color: '#748799' }}>{dirty ? 'تعديلات غير محفوظة' : basis ? 'خطاب محفوظ' : 'خطاب جديد'}</span></div><div className="letters-toolbar"><button className="letters-button primary" disabled={busy} onClick={() => void commit('save')}><Save size={15} /> حفظ</button><button className="letters-button" disabled={busy} onClick={() => void exportFile('pdf')}><Download size={15} /> PDF</button><button className="letters-button" disabled={busy} onClick={() => void exportFile('word')}><Download size={15} /> Word</button><button className="letters-button" disabled={busy} onClick={() => void exportFile('print')}><Printer size={15} /> طباعة</button>{basis && <button className="letters-button" disabled={busy} onClick={() => void commit('delete')} style={{ color: '#b34545' }}><Trash2 size={15} /> حذف</button>}</div></div>
       <div className="letters-editor-grid" inert={busy}><section className="letters-card letters-form">
         <div><h2 style={{ margin: 0, fontSize: 17, fontWeight: 900 }}>محرر الخطاب</h2><p style={{ fontSize: 12, color: '#8191a1', margin: '5px 0 0' }}>اختر أي حقل أو فقرة لتنسيقهما بصورة مستقلة. تُحفظ بيانات الأطراف والتنسيقات مع الخطاب.</p></div>
         <div className="letters-layout-controls">
           <label>تصميم جاهز لهذا الخطاب فقط<select aria-label="قالب شكل الخطاب" value={draft.layout?.template ?? 'legacy'} onChange={e => {
             const template = e.target.value as LetterTemplate
             if (!Object.hasOwn(LETTER_TEMPLATES, template)) return
-            applyTemplate(template)
+            void applyTemplate(template)
           }}><option value="legacy" disabled>التخطيط القديم</option>{Object.entries(LETTER_TEMPLATES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
           {!draft.layout && <div className="letters-layout-warning">هذا الخطاب يستخدم العرض القديم. اختر قالباً لتطبيق الترويسة الجديدة والتذييل الثابت؛ لن يتغير الخطاب المحفوظ حتى تضغط حفظ.</div>}
           {draft.layout && <>
@@ -392,14 +403,14 @@ export function LettersPage() {
               <label className="letters-repeat-option"><input type="checkbox" aria-label="حفظ نصوص الخطاب وصور التوقيع والختم في القالب" checked={includeTemplateContent} onChange={e => setIncludeTemplateContent(e.target.checked)} /> تضمين نصوص الخطاب وصور التوقيع والختم في القالب</label>
               <small>يحفظ القالب بيانات المنشأة وشعارها وجميع المواضع والمسافات وتنسيقات النصوص والخلفية وإظهار عناصر الترويسة. عند تحديد الخيار ستظهر النصوص والصور في كل خطاب جديد يستخدمه؛ لا تُنسخ بيانات العميل أو موضوع الخطاب أو رقمه أو التاريخ. لتغيير قالب محفوظ استخدم «تحديث من الخطاب». أزل التحديد إن لم ترد حفظ النصوص والصور.</small>
               <div className="letters-template-save"><label className="letters-repeat-option"><input type="checkbox" aria-label="تثبيت القالب المحفوظ افتراضياً" checked={saveAsDefault} onChange={e => setSaveAsDefault(e.target.checked)} /> استخدام هذا التصميم افتراضياً للخطابات الجديدة في الفرع</label><label>اسم القالب المخصص<input aria-label="اسم القالب المخصص" maxLength={80} value={templateName} onChange={e => setTemplateName(e.target.value)} placeholder="مثلاً: مراسلات الشركة" /></label><button type="button" className="letters-button" onClick={() => void changeSavedTemplate('save')}>حفظ التصميم كقالب</button></div>
-              {(letterTemplates ?? []).length > 0 && <div className="letters-saved-templates"><strong>القوالب المحفوظة</strong>{letterTemplates.map(template => <div className="letters-saved-template" key={template.id}><span>{template.name}</span><button type="button" className="letters-button" onClick={() => { if (window.confirm(`تطبيق القالب «${template.name}» يعيد المواضع والتنسيقات وتوزيع الصفحات${template.content ? ' ويستبدل نصوص الخطاب وصور التوقيع والختم بما في القالب' : ''}${template.identity ? ' ويستبدل بيانات المنشأة وشعارها' : ''}. هل تريد المتابعة؟`)) { patch(applyCompleteLetterTemplate(draft, template)); setLayoutTarget('reference'); setFormatTarget('paragraph') } }}>تطبيق</button><button type="button" className="letters-button" aria-label={`تحديث قالب ${template.name}`} onClick={() => void changeSavedTemplate('update', template.id)}>تحديث من الخطاب</button><button type="button" className="letters-button" aria-label={`حذف قالب ${template.name}`} onClick={() => void changeSavedTemplate('delete', template.id)}>حذف</button></div>)}</div>}
+              {(letterTemplates ?? []).length > 0 && <div className="letters-saved-templates"><strong>القوالب المحفوظة</strong>{letterTemplates.map(template => <div className="letters-saved-template" key={template.id}><span>{template.name}</span><button type="button" className="letters-button" onClick={async () => { if (await confirmCurrent(`تطبيق القالب «${template.name}» يعيد المواضع والتنسيقات وتوزيع الصفحات${template.content ? ' ويستبدل نصوص الخطاب وصور التوقيع والختم بما في القالب' : ''}${template.identity ? ' ويستبدل بيانات المنشأة وشعارها' : ''}. هل تريد المتابعة؟`)) { patch(applyCompleteLetterTemplate(draft, template)); setLayoutTarget('reference'); setFormatTarget('paragraph') } }}>تطبيق</button><button type="button" className="letters-button" aria-label={`تحديث قالب ${template.name}`} onClick={() => void changeSavedTemplate('update', template.id)}>تحديث من الخطاب</button><button type="button" className="letters-button" aria-label={`حذف قالب ${template.name}`} onClick={() => void changeSavedTemplate('delete', template.id)}>حذف</button></div>)}</div>}
             </div>}
             {draft.layout.contentVersion !== 2 && draft.layout.contentVersion !== 3 && draft.layout.contentVersion !== 4 && <div className="letters-layout-warning">هذا الخطاب يستخدم تخطيطاً محفوظاً سابقاً. لتطبيق الترويسة الجديدة والتذييل الثابت اختر «إعادة ترتيب عناصر القالب»؛ سيعاد ضبط مواضع العناصر بعد التأكيد.</div>}
             <details className="letters-header-visibility"><summary>إظهار أو إخفاء عناصر الترويسة</summary><div className="letters-header-visibility-grid">{letterHeaderKeys(draft).map(key => <label key={key} className="letters-repeat-option"><input type="checkbox" aria-label={`إظهار ${letterBoxLabel(key, draft)}`} checked={isLetterItemVisible(draft, key)} onChange={e => { const hidden = new Set(draft.layout!.hiddenHeader ?? []); if (e.target.checked) hidden.delete(key); else hidden.add(key); patch({ layout: { ...draft.layout!, hiddenHeader: [...hidden] } }) }} /> {letterBoxLabel(key, draft)}</label>)}</div><small>الإخفاء لا يحذف البيانات، ويسري على المعاينة والطباعة وPDF وWord. التذييل مستقل وثابت.</small></details>
             <details className="letters-advanced-layout"><summary>أدوات المواضع والصفحات المتقدمة</summary><div className="letters-advanced-layout-content">
-            <button type="button" className="letters-button" onClick={() => { if (window.confirm('إعادة تنسيق عناصر القالب الحالي ستعيد مواضعها وتوزيع الصفحات إلى التصميم الجديد. ستبقى الخلفية والتوقيع والنصوص. هل تريد المتابعة؟')) { const layout = createLetterLayout(draft, draft.layout!.template); layout.background = draft.layout!.background; patch({ layout }); setLayoutTarget('reference'); setFormatTarget('paragraph') } }}>إعادة ترتيب عناصر القالب</button>
-            {(draft.layout.contentVersion === 2 || draft.layout.contentVersion === 3 || draft.layout.contentVersion === 4) && <button type="button" className="letters-button" onClick={() => {
-              if (!window.confirm('تقريب بيانات المنشأة والجهة يعيد مواضع حقول البيانات في الترويسة إلى التوزيع المدمج؛ لا يغير بقية العناصر أو صفحاتها. هل تريد المتابعة؟')) return
+            <button type="button" className="letters-button" onClick={async () => { if (await confirmCurrent('إعادة تنسيق عناصر القالب الحالي ستعيد مواضعها وتوزيع الصفحات إلى التصميم الجديد. ستبقى الخلفية والتوقيع والنصوص. هل تريد المتابعة؟')) { const layout = createLetterLayout(draft, draft.layout!.template); layout.background = draft.layout!.background; patch({ layout }); setLayoutTarget('reference'); setFormatTarget('paragraph') } }}>إعادة ترتيب عناصر القالب</button>
+            {(draft.layout.contentVersion === 2 || draft.layout.contentVersion === 3 || draft.layout.contentVersion === 4) && <button type="button" className="letters-button" onClick={async () => {
+              if (!await confirmCurrent('تقريب بيانات المنشأة والجهة يعيد مواضع حقول البيانات في الترويسة إلى التوزيع المدمج؛ لا يغير بقية العناصر أو صفحاتها. هل تريد المتابعة؟')) return
               const defaults = defaultLetterBoxes(draft, draft.layout!.template), current = getLetterBoxes(draft)
               const keys = ['headerAddress', 'headerPhone', 'headerEmail', 'headerPoBox', 'headerWebsite', 'headerCommercialRegister', 'headerTaxNumber', 'recipientAddress', 'recipientPhone', 'recipientEmail', 'recipientTaxNumber', 'recipientCommercialReg', 'recipientNationalId', 'recipientContactPerson', 'recipientContactRole', 'recipientContactPhone', 'recipientContactEmail']
               const boxes = { ...draft.layout!.boxes }
@@ -421,10 +432,10 @@ export function LettersPage() {
                 <small>تغيير تباعد السطور يرتب بيانات المجموعة الظاهرة أولاً ثم الفارغة، ويحافظ على صفحاتها. المسافة الأفقية تغيّر عرض عمود الجهة؛ والخط يُضبط وفق آخر عنصر ظاهر في صفحته. بقية العناصر لا تتحرك تلقائياً؛ راجع التنبيهات والتفاف السطور ثم احفظ.</small>
               </div>
             })()}
-            <div className="letters-page-controls"><strong>الصفحات: {draft.layout.pageCount ?? 1}</strong><button type="button" className="letters-button" disabled={(draft.layout.pageCount ?? 1) >= 10} onClick={() => patch({ layout: { ...draft.layout!, pageCount: (draft.layout!.pageCount ?? 1) + 1 } })}>+ صفحة</button><button type="button" className="letters-button" disabled={(draft.layout.pageCount ?? 1) <= 1} onClick={() => {
+            <div className="letters-page-controls"><strong>الصفحات: {draft.layout.pageCount ?? 1}</strong><button type="button" className="letters-button" disabled={(draft.layout.pageCount ?? 1) >= 10} onClick={() => patch({ layout: { ...draft.layout!, pageCount: (draft.layout!.pageCount ?? 1) + 1 } })}>+ صفحة</button><button type="button" className="letters-button" disabled={(draft.layout.pageCount ?? 1) <= 1} onClick={async () => {
               const count = draft.layout!.pageCount ?? 1
               if (Object.values(getLetterBoxes(draft)).some(box => (box.page ?? 1) === count)) { toast.show('انقل عناصر الصفحة الأخيرة أولاً قبل حذفها، بما فيها الحقول الفارغة.', 'error'); return }
-              if (window.confirm('حذف الصفحة الأخيرة؟')) patch({ layout: { ...draft.layout!, pageCount: count - 1 } })
+              if (await confirmCurrent('حذف الصفحة الأخيرة؟')) patch({ layout: { ...draft.layout!, pageCount: count - 1 } })
             }}>حذف الصفحة الأخيرة</button></div>
             <button type="button" className="letters-button" onClick={() => {
               const boxes = getLetterBoxes(draft), keys = ['logo', 'identityName', ...(draft.layout?.contentVersion === 1 || draft.layout?.contentVersion === 2 || draft.layout?.contentVersion === 3 || draft.layout?.contentVersion === 4 ? ['headerAddress', 'headerPhone', 'headerEmail', 'headerPoBox', 'headerWebsite', 'headerCommercialRegister', 'headerTaxNumber'] : []), ...((draft.layout?.contentVersion === 2 || draft.layout?.contentVersion === 3 || draft.layout?.contentVersion === 4) ? ['headerRecipientName', 'recipientAddress', 'recipientPhone', 'recipientEmail', 'recipientTaxNumber', 'recipientCommercialReg', 'recipientNationalId', 'recipientContactPerson', 'recipientContactRole', 'recipientContactPhone', 'recipientContactEmail'] : []), 'topRule', ...((draft.layout?.contentVersion === 2 || draft.layout?.contentVersion === 3 || draft.layout?.contentVersion === 4) ? [] : ['bottomRule', 'identityAddress', 'identityPhone', 'identityEmail', 'identityPoBox', 'identityWebsite', 'identityCommercialRegister', 'identityTaxNumber'])]
@@ -486,8 +497,8 @@ export function LettersPage() {
         <div className="letters-number-help"><span>{automaticNumber ? 'رقم مقترح حسب سنة التاريخ؛ يُثبّت عند الحفظ وقد يتغير إذا حُفظ خطاب آخر قبله.' : 'رقم يدوي أو محفوظ؛ يمكنك تعديله كما تشاء.'}</span><button type="button" className="letters-button" onClick={() => { try { const reference = useRawDataStore.getState().suggestLetterReference(draft.date, basis ? draft.id : undefined); setAutomaticNumber(true); patch({ reference }) } catch (error) { toast.show(error instanceof Error ? error.message : 'تعذر اقتراح رقم الخطاب', 'error') } }}>اقتراح ترقيم تلقائي</button></div>
         <label>التحية<input value={draft.salutation} onFocus={() => setFormatTarget('salutation')} onChange={e => patch({ salutation: e.target.value })} /></label>
         <div style={{ borderTop: '1px solid #e9eff3', paddingTop: 14 }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}><b>نص الخطاب</b><button className="letters-button" onClick={addParagraph}><Plus size={14} /> فقرة</button></div>
-          <label>بداية من قالب<select defaultValue="" onChange={e => { if (selected && e.target.value && window.confirm('استبدال نص الفقرة الحالية بالقالب؟')) patchParagraph({ text: paragraphPresets[e.target.value] }); e.target.value = '' }}><option value="">اختر نصاً جاهزاً</option><option value="official">خطاب رسمي عام</option><option value="request">طلب رسمي</option><option value="certificate">إفادة</option></select></label>
-          {draft.paragraphs.map((p, index) => <div key={p.id} style={{ marginBottom: 10 }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}><span style={{ fontSize: 12, color: '#607286' }}>فقرة {index + 1} {selected?.id === p.id ? '· محددة' : ''}</span><div className="letters-toolbar">{draft.layout && <button type="button" className="letters-button" aria-label={`توزيع فقرة ${index + 1} على الصفحات`} onClick={() => distributeParagraph(p)}>توزيع الفقرة</button>}{draft.layout && <button type="button" className="letters-button" aria-label={`تقسيم فقرة ${index + 1} عند المؤشر`} onClick={() => splitParagraph(p)}>تقسيم للصفحة التالية</button>}{draft.paragraphs.length > 1 && <button className="letters-button" aria-label={`حذف فقرة ${index + 1}`} onClick={() => { const paragraphs = draft.paragraphs.filter(row => row.id !== p.id); const boxes = { ...draft.layout?.boxes }; delete boxes[letterParagraphKey(p.id)]; patch({ paragraphs, ...(draft.layout ? { layout: { ...draft.layout, boxes } } : {}) }); setSelectedId(paragraphs[0].id); if (layoutTarget === letterParagraphKey(p.id)) setLayoutTarget('reference') }}><Trash2 size={13}/></button>}</div></div><textarea ref={node => { paragraphRefs.current[p.id] = node }} aria-label={`نص فقرة ${index + 1}`} value={p.text} onFocus={() => { setSelectedId(p.id); setFormatTarget('paragraph'); setLayoutTarget(letterParagraphKey(p.id)) }} onChange={e => { patch({ paragraphs: draft.paragraphs.map(row => row.id === p.id ? { ...row, text: e.target.value } : row) }); setSelectedId(p.id); setFormatTarget('paragraph') }} style={{ borderColor: selected?.id === p.id ? '#29929e' : undefined }} /></div>)}
+          <label>بداية من قالب<select defaultValue="" onChange={async e => { const preset = e.target.value; e.target.value = ''; if (selected && preset && await confirmCurrent('استبدال نص الفقرة الحالية بالقالب؟')) patchParagraph({ text: paragraphPresets[preset] }) }}><option value="">اختر نصاً جاهزاً</option><option value="official">خطاب رسمي عام</option><option value="request">طلب رسمي</option><option value="certificate">إفادة</option></select></label>
+          {draft.paragraphs.map((p, index) => <div key={p.id} style={{ marginBottom: 10 }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}><span style={{ fontSize: 12, color: '#607286' }}>فقرة {index + 1} {selected?.id === p.id ? '· محددة' : ''}</span><div className="letters-toolbar">{draft.layout && <button type="button" className="letters-button" aria-label={`توزيع فقرة ${index + 1} على الصفحات`} onClick={() => void distributeParagraph(p)}>توزيع الفقرة</button>}{draft.layout && <button type="button" className="letters-button" aria-label={`تقسيم فقرة ${index + 1} عند المؤشر`} onClick={() => splitParagraph(p)}>تقسيم للصفحة التالية</button>}{draft.paragraphs.length > 1 && <button className="letters-button" aria-label={`حذف فقرة ${index + 1}`} onClick={() => { const paragraphs = draft.paragraphs.filter(row => row.id !== p.id); const boxes = { ...draft.layout?.boxes }; delete boxes[letterParagraphKey(p.id)]; patch({ paragraphs, ...(draft.layout ? { layout: { ...draft.layout, boxes } } : {}) }); setSelectedId(paragraphs[0].id); if (layoutTarget === letterParagraphKey(p.id)) setLayoutTarget('reference') }}><Trash2 size={13}/></button>}</div></div><textarea ref={node => { paragraphRefs.current[p.id] = node }} aria-label={`نص فقرة ${index + 1}`} value={p.text} onFocus={() => { setSelectedId(p.id); setFormatTarget('paragraph'); setLayoutTarget(letterParagraphKey(p.id)) }} onChange={e => { patch({ paragraphs: draft.paragraphs.map(row => row.id === p.id ? { ...row, text: e.target.value } : row) }); setSelectedId(p.id); setFormatTarget('paragraph') }} style={{ borderColor: selected?.id === p.id ? '#29929e' : undefined }} /></div>)}
         </div>
         <label>عبارة الختام<input value={draft.closing} onFocus={() => setFormatTarget('closing')} onChange={e => patch({ closing: e.target.value })} /></label><div className="letters-pair"><label>اسم الموقّع<input value={draft.signer} onFocus={() => setFormatTarget('signer')} onChange={e => patch({ signer: e.target.value })} /></label><label>المسمى الوظيفي<input value={draft.position} onFocus={() => setFormatTarget('position')} onChange={e => patch({ position: e.target.value })} /></label></div><label>نص التوقيع والختم<input value={draft.signatureText ?? 'التوقيع والختم: ........................'} onFocus={() => setFormatTarget('signature')} onChange={e => patch({ signatureText: e.target.value })} /></label>
         <div className="letters-signature-images"><strong>التوقيع والختم</strong>

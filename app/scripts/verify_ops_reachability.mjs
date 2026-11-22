@@ -89,6 +89,7 @@ const UNWIRED = new Map([
   ['deleteControlledDispense', 'حذف صرف دواء مراقب — لا واجهة'],
   ['reverseFxTransfer', 'عكس تحويل عملة — لا واجهة (التصحيح عبر قيود يدوية)'],
   ['getCustodySummary', 'ملخص عهدة مشروع — تُحسب داخل الشاشة من المستندات'],
+  ['setLetterDefaultDesign', 'واجهة بديلة مختبرة لتصميم افتراضي محفوظ خاص؛ الشاشة تستخدم حفظ القالب المسمى وتثبيته في عملية واحدة'],
   // ── خطّافات اعتماد المستندات: داخلية بطبيعتها ──
   ['markDocApprovalPosted', 'يُضبط postedDocumentId آلياً داخل decideDocApproval عند الترحيل؛ الخطّاف متاح لإصلاح سجل قديم بلا شاشة مستقلة'],
   ['assertApproved', 'حارس داخلي يُستدعى ضمن مسار الترحيل نفسه عبر planApprovalConsumption (تحويل عرض، مستخلص، شهادة، إذن صرف) لا من شاشة'],

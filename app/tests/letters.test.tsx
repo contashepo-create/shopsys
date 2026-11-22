@@ -2,12 +2,16 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { unzipSync, strFromU8 } from 'fflate'
 import { LettersPage } from '../src/ui/pages/LettersPage.tsx'
+import { LetterCanvas } from '../src/ui/pages/LetterCanvas.tsx'
+import { LetterSignaturePad } from '../src/ui/pages/LetterSignaturePad.tsx'
+import { ConfirmHost } from '../src/ui/components/ConfirmDialog.tsx'
 import { useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { createLetterWord } from '../src/core/letterWord.ts'
 import { applySavedLetterTemplate, captureLetterTemplate, createLetterLayout, getLetterBoxes, letterLayoutItems, LETTER_TEMPLATES } from '../src/core/letterLayout.ts'
 import { newLetterParagraph, validateLetter, type Letter } from '../src/core/letters.ts'
 import { mergeConcurrentSnapshots } from '../src/data/persistentStorage.ts'
+import * as confirmStore from '../src/ui/components/confirmStore.ts'
 import { guardNavigation } from '../src/ui/components/navigationGuard.ts'
 
 vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
@@ -27,7 +31,7 @@ afterEach(() => { cleanup(); useRawDataStore.setState(data); useAppStore.setStat
 
 it('يحفظ ويعدّل ويعاين ويحذف خطاباً دون تغيير دفتر اليومية', async () => {
  const before = useRawDataStore.getState().journal
- vi.spyOn(window, 'confirm').mockReturnValue(true)
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
  render(<LettersPage />)
  fireEvent.click(screen.getByText('إنشاء خطاب جديد'))
  fireEvent.change(screen.getByLabelText('الجهة الموجه إليها'), { target: { value: 'شركة النور' } })
@@ -283,7 +287,7 @@ it('يمنع تصدير رقم مقترح قبل تثبيته ويعيد احت�
 
 it('يغير القالب ويحرك العناصر ويحفظ مواضعها ويعيد فتحها مع صندوق البريد', async () => {
  useAppStore.setState({ setup: { ...app.setup, shopName: 'شركة المثال', city: 'الرياض', phone: '123', email: 'a@example.com', poBox: '999' } })
- vi.spyOn(window, 'confirm').mockReturnValue(true)
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
  render(<LettersPage />); fireEvent.click(screen.getByText('إنشاء خطاب جديد'))
  fireEvent.change(screen.getByLabelText('الجهة الموجه إليها'), { target: { value: 'جهة' } })
  fireEvent.change(screen.getByLabelText('موضوع الخطاب'), { target: { value: 'خطاب' } })
@@ -291,7 +295,7 @@ it('يغير القالب ويحرك العناصر ويحفظ مواضعها و
  expect(dateBox.style.left).toBe(`${15 / 210 * 100}%`)
  expect(document.querySelector('[data-letter-box="footerBlock"]')?.textContent).toContain('999')
  fireEvent.change(screen.getByLabelText('قالب شكل الخطاب'), { target: { value: 'modern' } })
- expect(dateBox.style.left).toBe(`${18 / 210 * 100}%`)
+ await waitFor(() => expect(dateBox.style.left).toBe(`${18 / 210 * 100}%`))
  fireEvent.click(screen.getByLabelText('تحريك التاريخ'))
  fireEvent.change(screen.getByLabelText('الموضع الأفقي بالملليمتر'), { target: { value: '55' } })
  fireEvent.change(screen.getByLabelText('الموضع الرأسي بالملليمتر'), { target: { value: '88.5' } })
@@ -333,7 +337,7 @@ it('يتحقق من إحداثيات التخطيط ويزيل موضع الفق
 })
 
 it('يحافظ على المواضع عند إلغاء تغيير القالب ويثبت التذييل', () => {
- vi.spyOn(window, 'confirm').mockReturnValue(false)
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(false)
  render(<LettersPage />); fireEvent.click(screen.getByText('إنشاء خطاب جديد'))
  expect(screen.queryByLabelText('تحريك خط التذييل')).toBeNull()
  expect((screen.getByLabelText('العنصر المراد تحريكه') as HTMLSelectElement).querySelector('option[value="footerBlock"]')).toBeNull()
@@ -348,7 +352,7 @@ it('يحافظ على المواضع عند إلغاء تغيير القالب �
 it('يضيف صفحات وينقل الفقرة ويكرر التذييل ويحفظ توزيعها دون حذف صفحة مأهولة', async () => {
  const { createLetterLayout } = await import('../src/core/letterLayout.ts')
  useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic') }] })
- vi.spyOn(window, 'confirm').mockReturnValue(true)
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
  render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
  fireEvent.click(screen.getByText('+ صفحة'))
  expect(document.querySelectorAll('.letters-canvas')).toHaveLength(2)
@@ -412,7 +416,7 @@ it('يوزع الفقرة بعد التأكيد فقط ويحفظ النص كم�
  const content = 'نص عربي للتجربة دون فقد مسافات. '.repeat(60)
  const value = { ...letter, paragraphs: [{ ...letter.paragraphs[0], text: content }] }
  useRawDataStore.setState({ letters: [{ ...value, layout: createLetterLayout(value, 'classic') }] })
- const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+ const confirm = vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(false)
  const rect = (width: number, height: number) => ({ x: 0, y: 0, left: 0, top: 0, right: width, bottom: height, width, height, toJSON: () => ({}) }) as DOMRect
  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
    if (this.style.left === '-10000px') return rect(680, Math.max(32, Math.ceil((this.textContent?.length ?? 0) / 40) * 32))
@@ -423,7 +427,9 @@ it('يوزع الفقرة بعد التأكيد فقط ويحفظ النص كم�
  fireEvent.click(screen.getByLabelText('توزيع فقرة 1 على الصفحات'))
  expect(screen.queryByLabelText('نص فقرة 2')).toBeNull()
  expect([...document.body.querySelectorAll('div')].some(el => el.style.left === '-10000px')).toBe(false)
- confirm.mockReturnValue(true); fireEvent.click(screen.getByLabelText('توزيع فقرة 1 على الصفحات'))
+ await act(async () => {})
+ confirm.mockResolvedValue(true); fireEvent.click(screen.getByLabelText('توزيع فقرة 1 على الصفحات'))
+ await waitFor(() => expect(screen.getAllByLabelText(/^نص فقرة/).length).toBeGreaterThan(1))
  expect(screen.getAllByLabelText(/^نص فقرة/).map(el => (el as HTMLTextAreaElement).value).join('')).toBe(content)
  expect(screen.getAllByLabelText(/^نص فقرة/).length).toBeGreaterThan(1)
  expect([...document.body.querySelectorAll('div')].some(el => el.style.left === '-10000px')).toBe(false)
@@ -439,7 +445,7 @@ it('لا يوزع فقرة مكررة ولا يغير بياناتها', async (
  const layout = createLetterLayout(letter, 'classic'), key = `paragraph:${letter.paragraphs[0].id}`
  layout.boxes[key] = { ...layout.boxes[key], repeat: true }; layout.pageCount = 2
  const value = { ...letter, layout }; useRawDataStore.setState({ letters: [value] })
- const confirm = vi.spyOn(window, 'confirm')
+ const confirm = vi.spyOn(confirmStore, 'confirmDialog')
  render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
  fireEvent.click(screen.getByLabelText('توزيع فقرة 1 على الصفحات'))
  expect(confirm).not.toHaveBeenCalled(); expect(useRawDataStore.getState().letters[0]).toEqual(value)
@@ -460,7 +466,7 @@ it('يحدد تقرير التداخل صفحة العناصر ويتيح اخت
    if (this.dataset.letterBox === 'subject') return rectangle(overlap ? 20 : 100, 10, 50, 20)
    return rectangle(0, 0, 0, 0)
  })
- const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+ const confirm = vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(false)
  render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
  const report = document.querySelector('.letters-layout-warning') as HTMLElement
  expect(report.textContent).toContain('صفحة 2: تداخل: التاريخ و الموضوع')
@@ -468,7 +474,7 @@ it('يحدد تقرير التداخل صفحة العناصر ويتيح اخت
  expect((screen.getByLabelText('العنصر المراد تحريكه') as HTMLSelectElement).value).toBe('subject')
  expect(document.activeElement?.getAttribute('data-letter-box')).toBe('subject')
  fireEvent.click(screen.getByText('PDF'))
- expect(confirm).toHaveBeenCalledWith(expect.stringContaining('تتداخل'))
+ expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('تتداخل') }))
  expect(pdf.save).not.toHaveBeenCalled()
  overlap = false
  fireEvent.change(screen.getByLabelText('الموضع الأفقي بالملليمتر'), { target: { value: '16' } })
@@ -488,12 +494,12 @@ it('يعرض أحد عشر قالباً ويوفر خلفيات منفصلة و�
 })
 
 it('يتحكم في القالب والخلفية ويخزن قالباً لإعادة تطبيق المواضع بلا نسخ نص المستلم', async () => {
- vi.spyOn(window, 'confirm').mockReturnValue(true)
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
  render(<LettersPage />)
  fireEvent.click(screen.getByText('إنشاء خطاب جديد')); fireEvent.click(screen.getByRole('button', { name: /التحكم في القوالب والخلفية/ }))
  expect(screen.getByLabelText('خلفية الصفحة')).toBeTruthy()
  fireEvent.change(screen.getByLabelText('قالب شكل الخطاب'), { target: { value: 'executive' } })
- expect((screen.getByLabelText('قالب شكل الخطاب') as HTMLSelectElement).value).toBe('executive')
+ await waitFor(() => expect((screen.getByLabelText('قالب شكل الخطاب') as HTMLSelectElement).value).toBe('executive'))
  expect((document.querySelector('[data-letter-background]') as HTMLImageElement).style.opacity).toBe('0.55')
  fireEvent.change(screen.getByLabelText('خلفية الصفحة'), { target: { value: 'formal' } })
  fireEvent.change(screen.getByLabelText('درجة شفافية الخلفية'), { target: { value: '72' } })
@@ -508,7 +514,9 @@ it('يتحكم في القالب والخلفية ويخزن قالباً لإع
  expect(preset).toMatchObject({ name: 'قالب شركتي', background: { source: 'formal', opacity: 28 }, boxes: { date: { x: 55 } } })
  expect(JSON.stringify(preset)).not.toContain('السلام عليكم')
  fireEvent.change(screen.getByLabelText('قالب شكل الخطاب'), { target: { value: 'geometric' } })
+ await waitFor(() => expect((screen.getByLabelText('قالب شكل الخطاب') as HTMLSelectElement).value).toBe('geometric'))
  fireEvent.click(screen.getByRole('button', { name: /^تطبيق$/ }))
+ await waitFor(() => expect((document.querySelector('[data-letter-box="date"]') as HTMLElement).style.left).toBe(`${55 / 210 * 100}%`))
  expect((document.querySelector('[data-letter-box="date"]') as HTMLElement).style.left).toBe(`${55 / 210 * 100}%`)
  expect((document.querySelector('[data-letter-background]') as HTMLImageElement).style.opacity).toBe('0.28')
  fireEvent.change(screen.getByLabelText('الجهة الموجه إليها'), { target: { value: 'جهة خاصة' } })
@@ -621,16 +629,16 @@ it('يرتب اسم الجهة وبياناتها أعلى الخط، والمو
  }
 })
 
-it('يبقي الخطاب والقالب السابقين على مواضعهما حتى يطلب المستخدم إعادة الترتيب', () => {
+it('يبقي الخطاب والقالب السابقين على مواضعهما حتى يطلب المستخدم إعادة الترتيب', async () => {
  const old = { ...letter, layout: { template: 'classic' as const, boxes: {}, contentVersion: 1 as const } }
  const before = getLetterBoxes(old)
  expect(before.recipient.y).toBeLessThan(before.topRule.y)
  expect(letterLayoutItems(old).some(item => item.key === 'footerBlock')).toBe(false)
- useRawDataStore.setState({ letters: [old] }); vi.spyOn(window, 'confirm').mockReturnValue(true)
+ useRawDataStore.setState({ letters: [old] }); vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
  render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
  expect(screen.getByText(/هذا الخطاب يستخدم تخطيطاً محفوظاً سابقاً/)).toBeTruthy()
  fireEvent.click(screen.getByText('إعادة ترتيب عناصر القالب'))
- expect(document.querySelector('[data-letter-box="headerRecipientName"]')?.textContent).toBe(letter.recipient)
+ await waitFor(() => expect(document.querySelector('[data-letter-box="headerRecipientName"]')?.textContent).toBe(letter.recipient))
  expect(document.querySelector('[data-letter-box="footerBlock"]')).not.toBeNull()
  expect(useRawDataStore.getState().letters[0].layout?.contentVersion).toBe(1)
 })
@@ -652,26 +660,26 @@ it('يقرب بيانات الجهتين في القوالب دون تداخل �
  layout.boxes.recipientPhone = { x: 30, y: 30, width: 45 }
  layout.boxes.subject = { x: 98, y: 85, width: 90 }
  useRawDataStore.setState({ letters: [{ ...letter, layout }] })
- const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+ const confirm = vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(false)
  render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
  fireEvent.click(screen.getByText('تقريب بيانات الترويسة'))
  expect((document.querySelector('[data-letter-page="2"] [data-letter-box="headerAddress"]') as HTMLElement).style.top).toBe(`${31 / 297 * 100}%`)
- confirm.mockReturnValue(true); fireEvent.click(screen.getByText('تقريب بيانات الترويسة'))
- expect((document.querySelector('[data-letter-page="2"] [data-letter-box="headerAddress"]') as HTMLElement).style.top).toBe(`${19 / 297 * 100}%`)
+ confirm.mockResolvedValue(true); fireEvent.click(screen.getByText('تقريب بيانات الترويسة'))
+ await waitFor(() => expect((document.querySelector('[data-letter-page="2"] [data-letter-box="headerAddress"]') as HTMLElement).style.top).toBe(`${19 / 297 * 100}%`))
  expect((document.querySelector('[data-letter-box="subject"]') as HTMLElement).style.top).toBe(`${85 / 297 * 100}%`)
  fireEvent.click(screen.getByText('حفظ'))
  await waitFor(() => expect(useRawDataStore.getState().letters[0].layout?.boxes.headerAddress).toMatchObject({ y: 19, page: 2, repeat: false }))
  expect(useRawDataStore.getState().letters[0].layout?.boxes.subject).toEqual({ x: 98, y: 85, width: 90 })
 })
 
-it('يحافظ على مباعدة الإصدار السابق حتى يطلب تقريبها، بما فيها الصناديق الافتراضية غير المخزنة', () => {
+it('يحافظ على مباعدة الإصدار السابق حتى يطلب تقريبها، بما فيها الصناديق الافتراضية غير المخزنة', async () => {
  const value = { ...letter, layout: { template: 'classic' as const, boxes: {}, contentVersion: 2 as const } }
  const previous = getLetterBoxes(value)
  expect(previous.topRule.y).toBe(76); expect(previous.headerAddress.y).toBe(31)
- useRawDataStore.setState({ letters: [value] }); vi.spyOn(window, 'confirm').mockReturnValue(true)
+ useRawDataStore.setState({ letters: [value] }); vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
  render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
  fireEvent.click(screen.getByText('تقريب بيانات الترويسة'))
- expect((document.querySelector('[data-letter-box="headerAddress"]') as HTMLElement).style.top).toBe(`${19 / 297 * 100}%`)
+ await waitFor(() => expect((document.querySelector('[data-letter-box="headerAddress"]') as HTMLElement).style.top).toBe(`${19 / 297 * 100}%`))
  expect((document.querySelector('[data-letter-box="topRule"]') as HTMLElement).style.top).toBe(`${76 / 297 * 100}%`)
  expect(useRawDataStore.getState().letters[0].layout?.boxes).toEqual({})
 })
@@ -718,7 +726,7 @@ it('يطبع كل صفحة بالتموضع الثابت نفسه للتذييل
 })
 
 it('يثبت تصميم الخطاب الحالي مع الخطوط فقط، وينشئ خطاباً جديداً دون نسخ المحتوى', async () => {
- vi.spyOn(window, 'confirm').mockReturnValue(true)
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
  render(<LettersPage />); fireEvent.click(screen.getByText('إنشاء خطاب جديد')); fireEvent.click(screen.getByRole('button', { name: /التحكم في القوالب والخلفية/ }))
  fireEvent.change(screen.getByLabelText('الجهة الموجه إليها'), { target: { value: 'جهة سرية' } })
  fireEvent.change(screen.getByLabelText('نص فقرة 1'), { target: { value: 'نص سري' } })
@@ -738,7 +746,7 @@ it('يثبت تصميم الخطاب الحالي مع الخطوط فقط، و�
  await waitFor(() => expect(useRawDataStore.getState().getLetterDefaultTemplate()).toBe(`saved:${preset.id}`))
  expect(JSON.stringify(preset)).not.toContain('جهة سرية'); expect(JSON.stringify(preset)).not.toContain('نص سري'); expect(JSON.stringify(preset)).not.toContain('فقرة خاصة')
  expect(preset.formatting?.paragraphs[0].size).toBe(18); expect(preset.boxes.date.x).toBe(55)
- fireEvent.click(screen.getByText('السجل')); fireEvent.click(screen.getByText('إنشاء خطاب جديد'))
+ fireEvent.click(screen.getByText('السجل')); fireEvent.click(await screen.findByText('إنشاء خطاب جديد'))
  expect((screen.getByLabelText('الجهة الموجه إليها') as HTMLInputElement).value).toBe('')
  expect((screen.getByLabelText('نص فقرة 1') as HTMLTextAreaElement).value).not.toBe('نص سري')
  expect((screen.getByLabelText('حجم خط الفقرة') as HTMLSelectElement).value).toBe('18')
@@ -786,7 +794,7 @@ it('يخفي ويظهر كل عنصر ترويسة دون حذف بياناته 
 })
 
 it('يحفظ القالب المسمى ويحدثه مع كامل التنسيق والإخفاء ويطبقه كافتراضي مع المحتوى عند اختياره', async () => {
- vi.spyOn(window, 'confirm').mockReturnValue(true)
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
  render(<LettersPage />); fireEvent.click(screen.getByText('إنشاء خطاب جديد')); fireEvent.click(screen.getByRole('button', { name: /التحكم في القوالب والخلفية/ }))
  fireEvent.click(screen.getByLabelText('إظهار اسم المنشأة'))
  fireEvent.click(screen.getByLabelText('إظهار خط الترويسة'))
@@ -809,7 +817,7 @@ it('يحفظ القالب المسمى ويحدثه مع كامل التنسيق
  await waitFor(() => expect(useRawDataStore.getState().letterTemplates[0].boxes.date.x).toBe(60))
  expect(useRawDataStore.getState().letterTemplates[0]).toMatchObject({ hiddenHeader: ['topRule'], background: { source: 'formal', opacity: 34 }, content: { paragraphs: ['نص القالب المشترك'] }, formatting: { paragraphs: [{ size: 19, italic: true }] } })
  expect(JSON.stringify(useRawDataStore.getState().letterTemplates[0])).not.toContain('عميل خاص')
- fireEvent.click(screen.getByText('السجل')); fireEvent.click(screen.getByText('إنشاء خطاب جديد'))
+ fireEvent.click(screen.getByText('السجل')); fireEvent.click(await screen.findByText('إنشاء خطاب جديد'))
  expect((screen.getByLabelText('نص فقرة 1') as HTMLTextAreaElement).value).toBe('نص القالب المشترك')
  expect((screen.getByLabelText('الجهة الموجه إليها') as HTMLInputElement).value).toBe('')
  expect((screen.getByLabelText('حجم خط الفقرة') as HTMLSelectElement).value).toBe('19')
@@ -852,7 +860,7 @@ it('يتحقق من خيارات إخفاء الترويسة ويحتفظ بصو
 })
 
 it('يحفظ التصميم ويجعله افتراضياً بضغطة واحدة مع هوية المنشأة ويستعيده للخطاب الجديد', async () => {
- vi.spyOn(window, 'confirm').mockReturnValue(true)
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
  render(<LettersPage />); fireEvent.click(screen.getByText('إنشاء خطاب جديد')); fireEvent.click(screen.getByRole('button', { name: /التحكم في القوالب والخلفية/ }))
  fireEvent.change(screen.getByRole('textbox', { name: 'اسم المنشأة', hidden: true }), { target: { value: 'هوية معدلة في القالب' } })
  fireEvent.click(screen.getByLabelText('إظهار اسم المنشأة'))
@@ -867,7 +875,7 @@ it('يحفظ التصميم ويجعله افتراضياً بضغطة واحد�
  expect((screen.getByLabelText('تثبيت القالب المحفوظ افتراضياً') as HTMLInputElement).checked).toBe(true)
  fireEvent.click(screen.getByText('حفظ التصميم كقالب'))
  await waitFor(() => expect(useRawDataStore.getState().getLetterDefaultTemplate()).toBe(`saved:${useRawDataStore.getState().letterTemplates[0]?.id}`))
- fireEvent.click(screen.getByText('السجل')); fireEvent.click(screen.getByText('إنشاء خطاب جديد'))
+ fireEvent.click(screen.getByText('السجل')); fireEvent.click(await screen.findByText('إنشاء خطاب جديد'))
  expect((screen.getByRole('textbox', { name: 'اسم المنشأة', hidden: true }) as HTMLInputElement).value).toBe('هوية معدلة في القالب')
  expect((screen.getByLabelText('نص فقرة 1') as HTMLTextAreaElement).value).toBe('نص ثابت في القالب')
  expect((screen.getByLabelText('الجهة الموجه إليها') as HTMLInputElement).value).toBe('')
@@ -888,17 +896,17 @@ it('اختيار حفظ قالب دون تثبيته لا يغيّر الافت�
  expect(useRawDataStore.getState().getLetterDefaultTemplate()).toBe('builtin:modern')
 })
 
-it('لا يستبدل الافتراضي غير المتاح بصمت، ويمكن اختيار بديل عن قصد', () => {
+it('لا يستبدل الافتراضي غير المتاح بصمت، ويمكن اختيار بديل عن قصد', async () => {
  const { getByText, queryByLabelText } = render(<LettersPage />)
  useRawDataStore.setState({ letterDefaultTemplates: { company: 'saved:missing' } })
- const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
- fireEvent.click(getByText('إنشاء خطاب جديد')); expect(queryByLabelText('موضوع الخطاب')).toBeNull()
- fireEvent.click(getByText('إنشاء خطاب جديد')); expect(queryByLabelText('موضوع الخطاب')).not.toBeNull()
+ const confirm = vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+ fireEvent.click(getByText('إنشاء خطاب جديد')); await act(async () => {}); expect(queryByLabelText('موضوع الخطاب')).toBeNull()
+ fireEvent.click(getByText('إنشاء خطاب جديد')); await waitFor(() => expect(queryByLabelText('موضوع الخطاب')).not.toBeNull())
  expect(confirm).toHaveBeenCalledTimes(2)
  fireEvent.click(screen.getByRole('button', { name: /التحكم في القوالب والخلفية/ }))
  expect((screen.getByLabelText('القالب الافتراضي للخطابات الجديدة') as HTMLSelectElement).value).toBe('')
  fireEvent.change(screen.getByLabelText('القالب الافتراضي للخطابات الجديدة'), { target: { value: 'builtin:classic' } })
- expect(useRawDataStore.getState().getLetterDefaultTemplate()).toBe('builtin:classic')
+ await waitFor(() => expect(useRawDataStore.getState().getLetterDefaultTemplate()).toBe('builtin:classic'))
 })
 
 it('ينتظر تحميل البيانات قبل إنشاء خطاب ويمنع استعمال افتراضي مؤقت', () => {
@@ -938,4 +946,39 @@ it('لا يثبت قالباً في فرع آخر إذا تغير الفرع ا�
  const template = captureLetterTemplate({ ...letter, layout: createLetterLayout(letter, 'classic') }, 'تصميم', 'new', true)
  expect(() => useRawDataStore.getState().saveLetterTemplate(template, basis)).toThrow(/تغير القالب الافتراضي/)
  expect(useRawDataStore.getState().letterTemplates).toEqual([])
+})
+
+
+it('تأكيد مغادرة الخطاب الداخلي يرفض الإلغاء ويحمي تعديلاً حدث أثناء انتظار الموافقة', async () => {
+ render(<><LettersPage /><ConfirmHost /></>)
+ fireEvent.click(screen.getByText('إنشاء خطاب جديد'))
+ fireEvent.change(screen.getByLabelText('موضوع الخطاب'), { target: { value: 'نسخة أولى' } })
+ fireEvent.click(screen.getByText('السجل'))
+ expect(screen.getByText(/لديك تعديلات غير محفوظة/)).toBeTruthy()
+ fireEvent.click(document.querySelector('[data-confirm-cancel]') as HTMLElement)
+ expect(screen.getByLabelText('موضوع الخطاب')).toBeTruthy()
+ fireEvent.click(screen.getByText('السجل'))
+ fireEvent.change(screen.getByLabelText('موضوع الخطاب'), { target: { value: 'تعديل أحدث' } })
+ fireEvent.click(document.querySelector('[data-confirm-accept]') as HTMLElement)
+ await waitFor(() => expect((screen.getByLabelText('موضوع الخطاب') as HTMLInputElement).value).toBe('تعديل أحدث'))
+ fireEvent.click(screen.getByText('السجل'))
+ fireEvent.click(document.querySelector('[data-confirm-accept]') as HTMLElement)
+ expect(await screen.findByText('إنشاء خطاب جديد')).toBeTruthy()
+})
+
+it('معاينة اللوحة تستخدم مواضع الصفحة وتستجيب لاختيار التاريخ', () => {
+ const value = { ...letter, layout: createLetterLayout(letter, 'classic') }
+ const select = vi.fn()
+ render(<LetterCanvas letter={value} pageNumber={1} selected="" onSelect={select} onMove={vi.fn()} />)
+ fireEvent.click(screen.getByLabelText('تحريك التاريخ'))
+ expect(select).toHaveBeenCalledWith('date')
+ expect((document.querySelector('[data-letter-box="date"]') as HTMLElement).style.left).toBe(`${15 / 210 * 100}%`)
+})
+
+it('لوحة التوقيع لا تسمح باستخدام رسم فارغ وتسمح بالإلغاء', () => {
+ const onUse = vi.fn(), onClose = vi.fn()
+ render(<LetterSignaturePad onUse={onUse} onClose={onClose} />)
+ expect((screen.getByText('استخدام التوقيع') as HTMLButtonElement).disabled).toBe(true)
+ fireEvent.click(screen.getByText('إلغاء الرسم'))
+ expect(onUse).not.toHaveBeenCalled(); expect(onClose).toHaveBeenCalledOnce()
 })
