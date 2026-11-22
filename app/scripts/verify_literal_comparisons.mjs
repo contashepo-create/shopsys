@@ -83,6 +83,9 @@ for (const f of files) {
   const lines = src.split('\n')
   const check = (field, value, idx) => {
     if (!WATCHED_FIELDS.includes(field)) return
+    // استثناء محدد لواجهات DOM لا لقيم حقول النشاط: MIME الصورة وحالة تحميل الخطوط.
+    if (f.endsWith('/src/core/letterBackgrounds.ts') && field === 'type' && value === 'image/png' && lines[idx].includes('file.type')) return
+    if (f.endsWith('/src/ui/pages/LettersPage.tsx') && field === 'status' && value === 'loading' && lines[idx].includes('document.fonts?.status')) return
     comparisons++
     if (!legal.has(value)) violations.push(`${f.replace(root + '/', '')}:${idx + 1} — .${field} === '${value}' (قيمة غير معلنة في أي union)`)
   }

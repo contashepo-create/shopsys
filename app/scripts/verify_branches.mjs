@@ -539,7 +539,7 @@ console.log('\n═══ 8) تخصيص الأقسام والأنشطة لكل ف
   assert.throws(() => st().addCustomRole('دور بلا صلاحية', 'accountant'), /تتطلب صلاحية «المستخدمون والصلاحيات»/)
   st().logout()
   await st().login(null, 'owner-123')
-  st().setUserPermExceptions(b2User.id, ['set.users'], [])
+  st().setUserPermExceptions(b2User.id, ['set.users', 'party.employee.manage'], [])
   st().setActiveBranchId(logisticsBranch.id)
   await st().login(b2User.id, 'branch-123')
   scoped = getBranchScopedDataState(st())
@@ -569,7 +569,7 @@ console.log('\n═══ 8) تخصيص الأقسام والأنشطة لكل ف
   const payrollRunCountBefore = st().payrollRuns.length
   assert.throws(() => st().openCustodyFile({
     employeeId: mainEmployeeId, projectId: null, reason: 'ربط موظف من فرع آخر', notes: '',
-  }), /فرع آخر/)
+  }), /الفرع الحالي/)
   assert.throws(() => st().postPayroll({
     month: '2026-11', payMode: 'cash', treasury: logisticsBranch.treasuryCode, notes: 'اختبار عزل الموظف',
     lines: [{ employeeId: mainEmployeeId, baseMinor: 500000, allowancesMinor: 0, overtimeMinor: 0, deductionsMinor: 0, advancesMinor: 0 }],
@@ -579,11 +579,11 @@ console.log('\n═══ 8) تخصيص الأقسام والأنشطة لكل ف
   }), /فرع آخر/)
   assert.throws(() => st().fundCustodyFile({
     fileId: mainCustodyFile.id, amountMinor: 1000, treasury: hqBranch.treasuryCode, description: 'محاولة تعزيز عابرة للفروع',
-  }), /فرع آخر/)
+  }), /الفرع الحالي/)
   assert.throws(() => st().addProjectCost({
     projectId: proj2.id, kind: 'other', amountMinor: 1000, payment: 'cash', paidMinor: 1000,
     custodyFileId: mainCustodyFile.id, description: 'ربط عهدة من فرع آخر',
-  }), /فرع آخر|غير موجود في هذا الفرع/)
+  }), /فرع آخر|غير موجود في هذا الفرع|الفرع الحالي/)
   assert.equal(st().custodyTxs.length, custodyTxCountBefore, 'رفض علاقة الأب لا يترك حركة عهدة جزئية')
   assert.equal(st().projectExtracts.length, projectExtractCountBefore, 'رفض المشروع الأجنبي لا ينشئ مستخلصاً')
   assert.equal(st().payrollRuns.length, payrollRunCountBefore, 'رفض الموظف الأجنبي لا ينشئ مسيراً')
@@ -632,7 +632,8 @@ console.log('\n═══ 8) تخصيص الأقسام والأنشطة لكل ف
   assert.ok((await listConflictSnapshots()).some((snapshot) => snapshot.at === testSnapshotAt))
   assert.equal(await getConflictSnapshotData(testSnapshotAt), '{}')
   const ownerRestore = await restoreConflictSnapshot(testSnapshotAt)
-  assert.equal(ownerRestore.ok, true, 'استعادة لقطة المتجر تبقى متاحة للمالك')
+  assert.equal(ownerRestore.ok, false, 'لقطة بلا يومية لا تسقط دفتر المالك الحالي')
+  assert.match(ownerRestore.message, /دفتر اليومية المحلي/, 'الرفض يوضح سبب حماية الدفتر')
   st().logout()
   assert.equal(canManageConflictSnapshots(), false, 'لا تُتاح اللقطة بعد تسجيل خروج المالك')
   await st().login(null, 'owner-123')

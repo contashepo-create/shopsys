@@ -31,6 +31,7 @@ it('قيد كمي قبل تحصيل المحتجز يعكس الأعمال وض�
   expect(() => S().assertProjectExtractRefunds(project.id)).not.toThrow()
   expect(() => S().releaseRetention(project.id, '1101', undefined, '2026-11-04')).toThrow(/إشعار|تسلسل/)
   expect(S().releaseRetention(project.id).amount).toBe(600)
+  expect(S().retentionReleases[0].allocationEvidence).toEqual({ version: 1, allocations: [{ extractId: extract.id, journalEntryId: extract.journalEntryId, amountMinor: 600 }] })
   expect(S().getRemainingRetention(project.id)).toBe(0)
 })
 it('يرفض إشعاراً بعد تحصيل محتجز غير موزع على المستخلصات ولا يغير القيد', () => {

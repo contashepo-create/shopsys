@@ -27,6 +27,8 @@ interface Props {
   toolbar?: ReactNode
   /** هل تُعرض التوقيعات؟ (افتراضياً من إعدادات الطباعة) */
   showSignatures?: boolean
+  /** فحص أساس النموذج قبل التصدير وكل إعادة بناء لمعاينة الطباعة. */
+  assertCurrent?: () => void
 }
 
 /** نص الخلية كما يظهر في الطباعة: القيمة + قيمتها الثانوية (اسم المورد…) */
@@ -44,7 +46,7 @@ function cell(node: string | FormalReportCell, numeric: boolean) {
   return <td className={cls}>{value}{sub && <span className="fr-cell-sub">{sub}</span>}</td>
 }
 
-export function FormalReport({ model, filename = 'report', allowExport = true, allowPrint = true, toolbar, showSignatures }: Props) {
+export function FormalReport({ model, filename = 'report', allowExport = true, allowPrint = true, toolbar, showSignatures, assertCurrent }: Props) {
   const { setup, receipt, reportPrint } = useAppStore()
   const toast = useToast()
   /* توحيد الترويسة: نفس بيانات الشاشة تُرسل للطباعة/المعاينة. كان الشعار
@@ -58,6 +60,7 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
     printedBy: model.printedBy ?? (setup?.ownerName || undefined),
   }
   const buildHtml = () => {
+    assertCurrent?.()
     /* `rebuild` يُستدعى لاحقاً من نافذة المعاينة بعد تغيير الإعدادات؛ قراءة
        المتجر وقت الاستدعاء (لا وقت فتح المعاينة) هي ما يجعلها معاينة حيّة فعلية. */
     const live = useAppStore.getState()
@@ -83,15 +86,18 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
     /* طلب المالك: «عند طلب طباعة أي تقرير أعطني معاينة لها وبها زر طباعة»
        ⇒ openPrintPreview يعرض النافذة الحرة التي تحمل زر طباعة فعلي،
        وrebuild يقرأ إعدادات الطباعة لحظة التغيير (معاينة حيّة). */
-    openPrintPreview({
-      html: buildHtmlRef.current(),
-      wide: true,
-      title: `معاينة ${model.title} قبل الطباعة`,
-      rebuild: () => buildHtmlRef.current(),
-    })
+    try {
+      openPrintPreview({
+        html: buildHtmlRef.current(),
+        wide: true,
+        title: `معاينة ${model.title} قبل الطباعة`,
+        rebuild: () => buildHtmlRef.current(),
+      })
+    } catch { toast.show('تغيّر أساس التقرير أو يحتاج مراجعة — أعد فتحه', 'error') }
   }
 
   const exportCsv = () => {
+    try { assertCurrent?.() } catch { toast.show('تغيّر أساس التقرير أو يحتاج مراجعة — أعد فتحه', 'error'); return }
     /* الجولة السادسة: كان التصدير يُخرج سطور الأقسام وحدها — فيفقد الملف
        بيانات المستند والملخص المالي والتسوية والملاحظات وصفوف الإجمالي،
        أي أن «تصدير Excel» كان ناقصاً مقارنة بالتقرير الرسمي المعروض.

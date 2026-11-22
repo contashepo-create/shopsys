@@ -1,3 +1,4 @@
+import { WhatsappIcon } from '../components/WhatsappIcon.tsx'
 /**
  * فواتير الشراء — مع مصاريف الشراء الموزعة (Landed Cost)
  * (ملاحظة المالك المعتمدة):
@@ -5,7 +6,7 @@
  * - الترحيل يحدّث تكلفة الأصناف بالمتوسط المرجح ويزيد المخزون
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer, MoreHorizontal, MessageCircle } from 'lucide-react'
+import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer, MoreHorizontal } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, useRawDataStore, type PurchaseInvoice, type PurchaseExpense } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
@@ -163,7 +164,7 @@ export function PurchasesPage() {
     const party = purchaseWaParty(inv.supplierId, suppliers)
     if (!party?.phone) return toast.show('لا يوجد رقم مسجّل لهذا المورد في بطاقته', 'error')
     const documentSettings = resolveDocumentPrintSettings(inv)
-    shareDocPdfViaWhatsapp({ model: buildPurchaseModel(inv), cur, settings: documentSettings.receipt, template: 'a4', docLabel: 'فاتورة شراء', docNumber: inv.invoiceNumber, partyPhone: party.phone, shopName: documentSettings.setup.shopName, toast })
+    shareDocPdfViaWhatsapp({ model: buildPurchaseModel(inv), cur, settings: documentSettings.receipt, template: 'a4', docLabel: 'فاتورة شراء', docNumber: inv.invoiceNumber, partyPhone: party.phone, countryCode: documentSettings.setup.countryCode, shopName: documentSettings.setup.shopName, toast })
   }
   const [supplierId, setSupplierId] = useState(0)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
@@ -600,7 +601,7 @@ export function PurchasesPage() {
                       const party = purchaseWaParty(p.supplierId, suppliers)
                       return (
                         <button onClick={() => sendPurchaseWhatsapp(p)} disabled={!party?.phone} title={party?.phone ? `إرسال الفاتورة إلى ${party.name} على واتساب (${party.phone})` : 'لا يوجد رقم مسجّل لهذا المورد في بطاقته'} className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all duration-200 hover:scale-110 disabled:cursor-not-allowed disabled:opacity-35">
-                          <MessageCircle size={15} />
+                          <WhatsappIcon size={15} />
                         </button>
                       )
                     })()}

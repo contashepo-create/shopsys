@@ -1,3 +1,4 @@
+import { WhatsappIcon } from '../components/WhatsappIcon.tsx'
 import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * المغسلة (وحدة مستقلة — طلب المالك): أوامر غسيل بقطع مفصلة وخدمة لكل قطعة،
@@ -5,7 +6,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * حالات: مستلَم ← جاري التجهيز ← جاهز ← مُسلَّم / ملغي (يرد العربون).
  */
 import { useMemo, useState } from 'react'
-import { Plus, Shirt, TrendingUp, Trash2, Printer, BookOpenText, MessageCircle } from 'lucide-react'
+import { Plus, Shirt, TrendingUp, Trash2, Printer, BookOpenText } from 'lucide-react'
 import { useDataStore, type LaundryOrder } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
@@ -339,7 +340,7 @@ export function LaundryPage() {
                     title="إبلاغ العميل بحالة أمر الغسيل عبر واتساب — يُسجَّل في سجل الأمر أنه أُرسل"
                     className="px-3 py-1.5 rounded-lg text-[12px] font-bold bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 transition-all flex items-center gap-1.5"
                   >
-                    <MessageCircle size={13} /> إبلاغ العميل واتساب
+                    <WhatsappIcon size={13} /> إبلاغ العميل واتساب
                   </button>
                 )}
                 <button onClick={() => printTicket(viewing)} className="px-3 py-1.5 rounded-lg text-[12px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-sky-600 transition-all flex items-center gap-1.5">

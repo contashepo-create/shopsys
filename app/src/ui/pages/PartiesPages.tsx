@@ -1,3 +1,5 @@
+import { CustomerProfileFields } from '../components/CustomerProfileFields.tsx'
+import type { CustomerProfile } from '../../core/customerProfile.ts'
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * شاشتا العملاء والموردين — نمط موحّد
@@ -153,6 +155,7 @@ export function CustomersPage() {
       setRedeeming(null)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
+  const [profile, setProfile] = useState<CustomerProfile>({})
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [creditLimit, setCreditLimit] = useState('')
@@ -166,9 +169,9 @@ export function CustomersPage() {
     [customers, query],
   )
 
-  const openNew = () => { setEditing(null); setName(''); setPhone(''); setCreditLimit(''); setNotes(''); setPriceListId(null); setExt(EMPTY_EXTENDED); setOpen(true) }
+  const openNew = () => { setEditing(null); setProfile({}); setName(''); setPhone(''); setCreditLimit(''); setNotes(''); setPriceListId(null); setExt(EMPTY_EXTENDED); setOpen(true) }
   const openEdit = (c: Customer) => {
-    setEditing(c); setName(c.nameAr); setPhone(c.phone)
+    setEditing(c); setProfile({ customerType: c.customerType, contactPerson: c.contactPerson, contactRole: c.contactRole, contactPhone: c.contactPhone, contactEmail: c.contactEmail }); setName(c.nameAr); setPhone(c.phone)
     setCreditLimit(c.creditLimitMinor ? String(c.creditLimitMinor / 10 ** cur.decimals) : '')
     setNotes(c.notes)
     setPriceListId(c.priceListId ?? null)
@@ -185,6 +188,7 @@ export function CustomersPage() {
       creditLimitMinor: creditLimit ? toMinor(creditLimit, cur.decimals) : 0,
       notes: notes.trim(),
       priceListId,
+      ...profile,
       ...ext,
     }
     try {
@@ -344,6 +348,7 @@ export function CustomersPage() {
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? 'تعديل عميل' : 'عميل جديد'} wide>
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <CustomerProfileFields profile={profile} onChange={setProfile} />
             <Field label="اسم العميل *"><input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} autoFocus /></Field>
             <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} /></Field>
             <Field label={`حد الائتمان (${cur.symbol})`} hint="أقصى مديونية مسموحة للبيع الآجل — 0 = بلا حد">

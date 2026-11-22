@@ -125,6 +125,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'trs.payment.approve', nameAr: 'اعتماد خروج نقدية (سند صرف / تحويل خزائن / تسوية درج)', section: 'accounting', sensitive: true },
   { id: 'acc.fiscal.close', nameAr: 'إقفال السنة المالية', section: 'accounting', sensitive: true },
   // التقارير
+  { id: 'rep.letters', nameAr: 'عرض وإدارة الخطابات الرسمية', section: 'reports', sensitive: true },
   { id: 'rep.sales', nameAr: 'تقارير المبيعات', section: 'reports' },
   { id: 'rep.fleet', nameAr: 'تقارير الأسطول ومراكز تكلفة السيارات', section: 'reports' },
   { id: 'rep.profit', nameAr: 'تقارير الربحية', section: 'reports', sensitive: true },
@@ -281,6 +282,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/accounting/trial-balance', perm: 'acc.journal.view' },
   { prefix: '/accounting', perm: 'acc.vouchers' },
   { prefix: '/branches', perm: 'set.branches' },
+  { prefix: '/reports/letters', perm: 'rep.letters' },
   { prefix: '/reports/statements', perm: 'party.customer.statement' },
   { prefix: '/reports', perm: 'rep.sales' },
   { prefix: '/settings/permissions', perm: 'set.users' },

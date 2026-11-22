@@ -1,3 +1,5 @@
+import { CustomerProfileSummary, DocumentContactSummary } from '../components/CustomerProfileFields.tsx'
+import { projectClosureIndicators, projectSystemStatusLabel } from '../../core/projectClosureReview.ts'
 import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
@@ -8,9 +10,10 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins, Pencil, Trash2, ShoppingCart, Truck, Users2, FileText } from 'lucide-react'
-import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { getEffectiveActiveBranch, useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { projectExtractFingerprint, ProjectCommitUnconfirmedError, withProjectExtractCommit } from '../../data/projectExtractCommit.ts'
+import { projectCreditFingerprint, withProjectCreditCommit } from '../../data/projectCreditCommit.ts'
 import type { Project } from '../../core/contracting.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -42,6 +45,22 @@ import { renderProjectHtml } from '../print/printProject.ts'
 import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrint.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 import { todayLocalIso } from '../../core/time.ts'
+
+function ProjectClosureReview({ project, date, extracts, drafts, orders }: {
+  project: Project
+  date: string
+  extracts: readonly { projectId: number; isFinal?: boolean }[]
+  drafts: readonly { projectId: number }[]
+  orders: readonly { projectId: number; status: string }[]
+}) {
+  const indicators = projectClosureIndicators(project, date, extracts, drafts, orders)
+  return <section aria-label="مراجعة حالة إقفال المشروع" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs space-y-2">
+    <p className="font-bold text-amber-700 dark:text-amber-300">مراجعة استرشادية — ليست موافقة أو إثباتاً للإقفال</p>
+    <p>حالة «مكتمل» في النظام لا تثبت وحدها التسليم أو الختامي أو استحقاق المحتجز أو تسوية الذمم والمقدمات والالتزامات والتكاليف. راجع المستندات والقيود يدوياً.</p>
+    <ul className="list-disc list-inside space-y-1">{indicators.map((text, index) => <li key={index}>{text}</li>)}</ul>
+    <p>هذه مؤشرات محدودة من البيانات الظاهرة، وليست فحصاً شاملاً أو منعاً للتحصيل.</p>
+  </section>
+}
 
 /** عنوان القسم للعرض فقط؛ هوية البند وقيمته لا تتغيران. */
 function sectionedBoqDescription(project: Project | null | undefined, items: readonly { id: number; sectionId?: string | null }[], itemId: number, description: string): string {
@@ -275,7 +294,7 @@ export function ProjectsPage() {
   const [exDate, setExDate] = useState(todayLocalIso())
   const [exDesc, setExDesc] = useState('')
   const [exPayment, setExPayment] = useState<'cash' | 'credit'>('credit')
-  const [exTreasury, setExTreasury] = useState('1101')
+  const [exTreasury, setExTreasury] = useState(() => getEffectiveActiveBranch(useRawDataStore.getState())?.treasuryCode ?? '1101')
   const [exTerminal, setExTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [exVat, setExVat] = useState(true)
   const [exRecovery, setExRecovery] = useState('')
@@ -343,7 +362,8 @@ export function ProjectsPage() {
       setExLines(next)
       setExFinal(slicePct >= 100)
     } else {
-      const pr = getProjectProfit(extractFor.id)
+      const pr = reviewedProfit(extractFor.id)
+      if (!pr) { toast.show('يلزم مراجعة المستخلصات وتكاليف المشروع ومرتجعات الشراء وتوزيعات الرواتب قبل حساب النسبة', 'error'); return }
       const remaining = Math.max(0, extractFor.contractValueMinor - pr.extractedMinor)
       const base = remaining > 0 ? remaining : extractFor.contractValueMinor
       const sliceMinor = slicePct >= 100 ? base : Math.round(( extractFor.contractValueMinor * slicePct) / 100)
@@ -362,7 +382,7 @@ export function ProjectsPage() {
     setExtractFor(prj)
     setExDesc(ex.description)
     setExPayment(ex.payment)
-    setExTreasury('1101')
+    setExTreasury(getEffectiveActiveBranch(useRawDataStore.getState())?.treasuryCode ?? '1101')
     setExVat(ex.totals.vatMinor > 0)
     setExRecovery(ex.advanceRecoveryMinor ? formatMinor(ex.advanceRecoveryMinor, cur, false) : '')
     setExFinal(!!ex.isFinal)
@@ -523,6 +543,16 @@ export function ProjectsPage() {
   /* عرض */
   const [viewing, setViewing] = useState<Project | null>(null)
   const [refundingExtract, setRefundingExtract] = useState<(typeof projectExtracts)[number] | null>(null)
+  const [refundBasis, setRefundBasis] = useState('')
+  const openRefund = (extract: (typeof projectExtracts)[number]) => {
+    const current = useDataStore.getState().projectExtracts.filter(row => row.id === extract.id)
+    if (current.length !== 1 || JSON.stringify(current[0]) !== JSON.stringify(extract)) {
+      toast.show('تغير المستخلص منذ عرضه — أغلق المراجعة وافتحه مجدداً قبل الإشعار', 'error')
+      return
+    }
+    setRefundBasis(projectCreditFingerprint(extract.projectId))
+    setRefundingExtract(extract)
+  }
   // عمولة موظف عن المشروع (تعميم — أمر المالك): مهندس مبيعات جلب العقد مثلاً
   const [commFor, setCommFor] = useState<Project | null>(null)
   /* §94-مراجعة (بلاغ المالك: «راجع كل شئ»): تعديل بيانات المشروع — قيمة العقد قبل أول مستخلص فقط */
@@ -682,8 +712,10 @@ export function ProjectsPage() {
   const [releaseSaving, setReleaseSaving] = useState(false)
   const releasePending = useRef(false)
   const releaseFingerprint = (projectId: number) => {
-    const state = useDataStore.getState(), raw = useRawDataStore.getState()
-    return JSON.stringify({ project: projectExtractFingerprint(state, projectId), releases: state.retentionReleases.filter(r => r.projectId === projectId), journal: state.journal.filter(j => state.projectExtracts.some(e => e.projectId === projectId && (e.journalEntryId === j.id || e.refunds?.some(r => r.journalEntryId === j.id))) || state.retentionReleases.some(r => r.projectId === projectId && r.journalEntryId === j.id)), user: raw.currentUserId })
+    const raw = useRawDataStore.getState(), app = useAppStore.getState()
+    // القرار يعتمد أيضاً على الأدلة المخفية ونطاق الفرع والصلاحية والخزينة
+    // والفترات. مقارنة محافظة قبل الترحيل وليست قفلاً على مخزن الإعدادات.
+    return JSON.stringify({ project: projectExtractFingerprint(raw, projectId), releases: raw.retentionReleases.filter(r => r.projectId === projectId), journal: raw.journal, customers: raw.customers, treasuries: raw.treasuries, terminals: raw.paymentTerminals, terminalTransactions: raw.paymentTerminalTransactions, branches: raw.branches, activeBranch: raw.activeBranchId, users: raw.appUsers, user: raw.currentUserId, loggedOut: raw.loggedOut, roles: raw.roleOverrides, branchRoles: raw.branchRoleOverrides, customRoles: raw.customRoles, fiscalYears: app.fiscalYears, setup: app.setup })
   }
   const openRelease = (project: Project) => {
     if (releasePending.current) return
@@ -774,7 +806,7 @@ export function ProjectsPage() {
         committed = true
         return released
       })
-      toast.show(`أُفرج عن محتجزات ${fmt(result.amount)} ${cur.symbol} وأُقفل المشروع 🎉`)
+      toast.show(`سُجل تحصيل المحتجز ${fmt(result.amount)} ${cur.symbol} وتحولت حالة المشروع إلى مكتمل — راجع التسويات والتسليم`)
       setReleaseFor(null)
     } catch (e) {
       if (committed) { setReleaseFor(null); toast.show('سُجل التحصيل محلياً لكن تعذر تأكيد الحفظ — راجع المشروع والدفتر قبل إعادة المحاولة', 'error') }
@@ -848,6 +880,7 @@ export function ProjectsPage() {
             <div className="invoice-doc-partymeta">
               <span>النوع: <b>{valueMode === 'boq' ? '📐 جدول كميات' : '💵 مقطوعية'}</b></span>
               <span>العميل: <b>{clientName.trim() || 'غير محدد'}</b></span>
+              <CustomerProfileSummary profile={customers.find(customer => customer.id === Number(clientId))} />
               <span>قيمة العقد: <b className="text-emerald-600">{fmt(effectiveContractMinor)} {cur.symbol}</b></span>
               <span>البنود: <b>{validBoqLines.length}</b></span>
               {expectedEnd && <span>التسليم: <b>{expectedEnd}</b></span>}
@@ -1194,7 +1227,7 @@ export function ProjectsPage() {
                     <td className={`px-3 py-2.5 font-black ${pr && pr.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{pr ? fmt(pr.profitMinor) : '—'}</td>
                     <td className="px-3 py-2.5">
                       <span className={`px-2 py-1 rounded-lg text-[11px] font-bold ${p.status === 'active' ? 'bg-sky-500/10 text-sky-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
-                        {p.status === 'active' ? 'جارٍ' : 'مُسلَّم'}
+                        {projectSystemStatusLabel(p.status)}
                       </span>
                     </td>
                     <td className="px-3 py-2.5">
@@ -1241,9 +1274,12 @@ export function ProjectsPage() {
         </div>}
       </Modal>
       <Modal open={!!viewingLive} onClose={() => setViewing(null)} title={viewingLive ? `${viewingLive.code} — ${viewingLive.nameAr}` : ''} wide>
-        {viewingLive && !profit && <p role="alert" className="text-amber-700">يلزم مراجعة المستخلصات وتحصيلات المحتجز وقيودها قبل عرض الربحية.</p>}
+        {viewingLive && <div className="text-xs text-slate-500 space-y-1"><p><CustomerProfileSummary profile={customers.find(customer => customer.id === viewingLive.clientId)} /></p><p><DocumentContactSummary history={viewingLive.customerContactHistory} customerId={viewingLive.clientId} /></p></div>}
+        {viewingLive && <ProjectClosureReview project={viewingLive} date={todayLocalIso()} extracts={projectExtracts} drafts={projectExtractDrafts} orders={changeOrders} />}
+        {viewingLive && !profit && <p role="alert" className="text-amber-700">يلزم مراجعة المستخلصات وتحصيلات المحتجز وتكاليف المشروع ومرتجعات الشراء أو توزيعات الرواتب وقيودها قبل عرض الربحية.</p>}
         {viewingLive && profit && (
           <div className="space-y-4 text-sm">
+            <p className="text-amber-700 text-xs">الربحية تشمل توزيعات قسائم 5102 المثبتة فقط؛ لا تشمل المسير المجمّع أو القسائم بلا توزيع. راجع اكتمال الرواتب قبل الاعتماد.</p>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" data-project-customer-preview onClick={() => previewProject(viewingLive.id)}><Printer size={14} /> معاينة وطباعة بيان المشروع</Btn>
               <Btn variant="ghost" data-project-new-invoice onClick={() => {
@@ -1269,6 +1305,26 @@ export function ProjectsPage() {
               <div className="rounded-xl bg-orange-500/10 p-3"><div className="text-[11px] text-slate-500">الربح ({profit.marginPercent}٪)</div><div className={`font-black ${profit.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(profit.profitMinor)}</div></div>
               <div className="rounded-xl bg-amber-500/10 p-3"><div className="text-[11px] text-slate-500">محتجز قائم</div><div className="font-black text-amber-600">{fmt(profit.retentionHeldMinor)}</div></div>
             </div>
+
+            {retentionReleases.some(row => row.projectId === viewingLive.id) && (
+              <section data-project-retention-allocations className="rounded-xl border border-amber-500/20 p-3 space-y-2">
+                <h3 className="font-bold">تحصيلات المحتجز وتوزيعها على المستخلصات</h3>
+                <p className="text-xs text-slate-500">الدليل للتخصيص المحفوظ فقط؛ لا يثبت استحقاق الضمان أو التسوية البنكية، ولا يتيح عكس التحصيل.</p>
+                {retentionReleases.filter(row => row.projectId === viewingLive.id).map(release => (
+                  <div key={release.id} className="rounded-lg bg-slate-500/5 p-2">
+                    <p>التحصيل #{release.id} · {release.date} · {fmt(release.amountMinor)} {cur.symbol} · قيد #{release.journalEntryId}</p>
+                    {release.allocationEvidence ? (
+                      <ul className="mt-1 list-disc list-inside text-xs">
+                        {release.allocationEvidence.allocations.map(part => {
+                          const extract = viewExtracts.find(row => row.id === part.extractId)
+                          return <li key={part.extractId}>{extract?.extractNumber ?? `#${part.extractId}`} · قيد المستخلص #{part.journalEntryId} · {fmt(part.amountMinor)} {cur.symbol}</li>
+                        })}
+                      </ul>
+                    ) : <p className="text-xs text-amber-700">تحصيل تاريخي بلا تخصيص محفوظ على المستخلصات — راجع الأدلة قبل أي تسوية.</p>}
+                  </div>
+                ))}
+              </section>
+            )}
 
             <div>
               <div className="font-bold text-[12px] text-slate-500 mb-1 flex items-center gap-1"><TrendingUp className="w-4 h-4" /> توزيع التكاليف</div>
@@ -1341,7 +1397,7 @@ export function ProjectsPage() {
                           <button onClick={() => openExtractEditor(e)} data-extract-edit title="تعديل المستخلص — قيد عاكس وإعادة بناء بنفس الرقم" className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all"><Pencil size={13} /></button>
                           <button onClick={() => printExtractClientInvoice(e)} data-extract-client-invoice-print title="طباعة فاتورة احترافية للعميل (فاتورة مستخلص)" className="px-2 py-1 rounded-lg text-[11px] font-bold bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 transition-all flex items-center gap-1"><FileText size={12} /> فاتورة للعميل</button>
                           <button onClick={() => printExtract(e)} title="طباعة المستخلص للجهة المالكة" className="p-1.5 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all"><Printer size={13} /></button>
-                          <button onClick={() => setRefundingExtract(e)} title="إشعار دائن (رفض جزء من الأعمال بعد الاعتماد)" className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all text-[12px] font-black">↩️</button>
+                          <button onClick={() => openRefund(e)} title="إشعار دائن (رفض جزء من الأعمال بعد الاعتماد)" className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all text-[12px] font-black">↩️</button>
                         </td>
                       </tr>
                     ))}
@@ -1526,6 +1582,7 @@ export function ProjectsPage() {
               <Field label="اسم المشروع *"><input className={inputCls} value={epName} onChange={(e) => setEpName(e.target.value)} aria-label="اسم المشروع" /></Field>
               <Field label="الجهة المالكة (العميل) *"><input className={inputCls} value={epClient} onChange={(e) => setEpClient(e.target.value)} aria-label="الجهة المالكة" /></Field>
               <Field label="ربط سجل العميل" hint={clientLocked ? '🔒 لا يُغيّر الربط بعد مستخلص أو دفعة مقدمة — راجع المحاسب' : 'تُنسب مستخلصات المشروع إلى العميل المرتبط'}>{clientLocked ? <input className={inputCls} disabled value={epClientId} aria-label="ربط العميل" /> : <PartyQuickPicker parties={customers} value={epClientId ? Number(epClientId) : 0} onChange={id => { setEpClientId(id ? String(id) : ''); const customer = customers.find(row => row.id === id); if (customer && !epClient.trim()) setEpClient(customer.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />}</Field>
+              <div className="col-span-2 text-xs text-slate-500"><CustomerProfileSummary profile={customers.find(customer => customer.id === Number(epClientId))} /><br />{(editPrj.clientId ?? null) === (epClientId ? Number(epClientId) : null) ? <DocumentContactSummary history={editPrj.customerContactHistory} customerId={editPrj.clientId} /> : <span>تُسجل بيانات التواصل عند حفظ الربط الجديد.</span>}</div>
               <Field label={`قيمة العقد — بدون ضريبة (${cur.code})`} hint={locked ? '🔒 صدرت مستخلصات — تعديل القيمة بأمر تغيير فقط' : epLines.length ? 'تُحسب من بنود جدول الكميات عند تغييرها' : 'صافية بلا ض.ق.م · قبل أول مستخلص فقط'}>
                 <input className={inputCls} type="number" disabled={locked || epLines.length > 0} value={locked || epLines.length ? String(editPrj.contractValueMinor / 10 ** cur.decimals) : epValue} onChange={(e) => setEpValue(e.target.value)} aria-label="قيمة العقد" />
               </Field>
@@ -1630,12 +1687,13 @@ export function ProjectsPage() {
         )}
       </Modal>
 
-      <Modal open={!!releaseFor} onClose={() => { if (!releasePending.current) setReleaseFor(null) }} title={releaseFor ? `الإفراج عن محتجزات ${releaseFor.nameAr}` : ''} subtitle="مستند إفراج: تحصيل ضمان انتهى أجله">
+      <Modal open={!!releaseFor} onClose={() => { if (!releasePending.current) setReleaseFor(null) }} title={releaseFor ? `الإفراج عن محتجزات ${releaseFor.nameAr}` : ''} subtitle="تحصيل المحتجز وتغيير حالة المشروع — راجع الاستحقاق قبل التحصيل">
         {releaseFor && (
           <div className="space-y-4">
             <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[13px] font-bold text-amber-700 dark:text-amber-300">
-              سيُحصَّل المحتجز المتبقي {fmt(getProjectProfit(releaseFor.id).retentionHeldMinor)} {cur.symbol} ويُقفل المشروع نهائياً.
+              {reviewedProfit(releaseFor.id) ? <>سيُحصَّل المحتجز المتبقي {fmt(reviewedProfit(releaseFor.id)!.retentionHeldMinor)} {cur.symbol} وتتحول حالة المشروع في النظام إلى مكتمل.</> : <span role="alert">يلزم مراجعة المستخلصات وتكاليف المشروع ومرتجعات الشراء وتوزيع الرواتب وقيودها قبل عرض المؤشر.</span>}
             </div>
+            {projects.find(project => project.id === releaseFor.id) ? <ProjectClosureReview project={projects.find(project => project.id === releaseFor.id)!} date={releaseDate} extracts={projectExtracts} drafts={projectExtractDrafts} orders={changeOrders} /> : <p role="alert">لم يعد المشروع متاحاً — أغلق النافذة وراجع البيانات.</p>}
             <Field label="تاريخ تحصيل المحتجز" hint="تاريخ القيد والتحصيل؛ لا يسبق المستخلصات، والماكينة بتاريخ اليوم فقط. إقفال المشروع يُسجّل وقتياً عند الحفظ."><input aria-label="تاريخ تحصيل المحتجز" type="date" max={todayLocalIso()} disabled={releaseSaving} value={releaseDate} onChange={event => setReleaseDate(event.target.value)} className={inputCls} /></Field>
             <Field label="طريقة التحصيل"><fieldset disabled={releaseSaving} className="space-y-2"><PaymentMethodPicker value={{treasury:releaseTreasury,terminalPayment:releaseTerminal}} onChange={value=>{setReleaseTreasury(value.treasury);setReleaseTerminal(value.terminalPayment)}} operation="receipt"/></fieldset></Field>
             <DocOutcome>الأثر: <b>الخزينة</b> أو حساب تسوية الماكينة مديناً بقيمة المحتجز المُفرج عنه · <b>1105 محتجزات ضمان أعمال</b> دائناً بإقفال الأصل — تحصيل حق قائم لا إيراد جديد.</DocOutcome>
@@ -1727,7 +1785,7 @@ export function ProjectsPage() {
               <div className="flex flex-wrap justify-end gap-2 pb-1">
                 <Btn variant="ghost" onClick={() => printExtractClientInvoice(viewExtract)} data-extract-client-invoice-print><FileText size={14} /> طباعة فاتورة للعميل</Btn>
                 <Btn variant="ghost" onClick={() => printExtract(viewExtract)}><Printer size={14} /> طباعة المستخلص</Btn>
-                <Btn variant="ghost" onClick={() => setRefundingExtract(viewExtract)}>إشعار دائن</Btn>
+                <Btn variant="ghost" onClick={() => openRefund(viewExtract)}>إشعار دائن</Btn>
                 <Btn onClick={() => openExtractEditor(viewExtract)} data-extract-view-edit><Pencil size={14} /> تعديل المستخلص</Btn>
               </div>
             </div>
@@ -1752,7 +1810,11 @@ export function ProjectsPage() {
               try {
                 const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
                 const treasury = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
-                const u = await withProjectExtractCommit(refundingExtract.projectId, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, refundingExtract.projectId), () => refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury }))
+                const { isCurrent, ...input } = a
+                const u = await withProjectCreditCommit(refundingExtract.projectId, refundBasis, () => {
+                  if (!isCurrent()) throw new Error('تغيرت مسودة الإشعار أو أُغلقت قبل الترحيل — راجعها واطلب الموافقة مجدداً')
+                  return refundProjectExtract({ extractId: refundingExtract.id, ...input, treasury })
+                })
                 setRefundingExtract(null)
                 toast.show(`سُجل إشعار دائن على ${u.extractNumber} وتولد القيد العاكس ✅`)
               } catch (err) {
@@ -2182,7 +2244,7 @@ export function ProjectExtractsPage() {
   const [exDate, setExDate] = useState(todayLocalIso())
   const [exVat, setExVat] = useState(vatEnabled)
   const [exPayment, setExPayment] = useState<'cash' | 'credit'>('credit')
-  const [exTreasury, setExTreasury] = useState('1101')
+  const [exTreasury, setExTreasury] = useState(() => getEffectiveActiveBranch(useRawDataStore.getState())?.treasuryCode ?? '1101')
   const [exTerminal, setExTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [exDesc, setExDesc] = useState('')
   const [exRecovery, setExRecovery] = useState('')
@@ -2190,6 +2252,16 @@ export function ProjectExtractsPage() {
   const [exReason, setExReason] = useState('')
   const [viewExtractId, setViewExtractId] = useState<number | null>(null)
   const [refundExtractId, setRefundExtractId] = useState<number | null>(null)
+  const [refundBasis, setRefundBasis] = useState('')
+  const openRefund = (extract: (typeof projectExtracts)[number]) => {
+    const current = useDataStore.getState().projectExtracts.filter(row => row.id === extract.id)
+    if (current.length !== 1 || JSON.stringify(current[0]) !== JSON.stringify(extract)) {
+      toast.show('تغير المستخلص منذ عرضه — أغلق المراجعة وافتحه مجدداً قبل الإشعار', 'error')
+      return
+    }
+    setRefundBasis(projectCreditFingerprint(extract.projectId))
+    setRefundExtractId(extract.id)
+  }
 
   const selectedProject = projects.find((p) => p.id === Number(selectedProjectId)) ?? null
   const editingExtract = editingExtractId != null ? projectExtracts.find((e) => e.id === editingExtractId) ?? null : null
@@ -2249,6 +2321,7 @@ export function ProjectExtractsPage() {
     setExRecovery('')
     setExVat(vatEnabled)
     setExPayment('credit')
+    setExTreasury(getEffectiveActiveBranch(useRawDataStore.getState())?.treasuryCode ?? '1101')
     const active = projects.filter((p) => p.status === 'active')
     const initialProjId = preselectProjectId ?? (filterProjectId ? Number(filterProjectId) : active[0]?.id ?? 0)
     if (initialProjId) {
@@ -2308,6 +2381,7 @@ export function ProjectExtractsPage() {
     setExGross(String(ex.totals.grossMinor / 10 ** cur.decimals))
     setExVat(ex.totals.vatMinor > 0)
     setExPayment(ex.payment)
+    setExTreasury(getEffectiveActiveBranch(useRawDataStore.getState())?.treasuryCode ?? '1101')
     setExDesc(ex.description)
     setExRecovery(ex.advanceRecoveryMinor ? String(ex.advanceRecoveryMinor / 10 ** cur.decimals) : '')
     setExFinal(!!ex.isFinal)
@@ -2914,7 +2988,7 @@ export function ProjectExtractsPage() {
                 <Btn variant="ghost" onClick={() => printExtractDoc(viewingExtract)}>
                   <Printer size={14} /> طباعة المستخلص الهندسي
                 </Btn>
-                <Btn variant="ghost" onClick={() => setRefundExtractId(viewingExtract.id)}>
+                <Btn variant="ghost" onClick={() => openRefund(viewingExtract)}>
                   إشعار دائن
                 </Btn>
                 <Btn variant="ghost" onClick={() => openEditExtractModal(viewingExtract)} data-extract-view-edit>
@@ -2948,7 +3022,11 @@ export function ProjectExtractsPage() {
               try {
                 const original = a.terminalRefund ? paymentTerminalTransactions.find(row => row.id === a.terminalRefund!.originalTransactionId) : undefined
                 const treasury = original ? paymentTerminals.find(row => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
-                const u = await withProjectExtractCommit(refundingExtract.projectId, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, refundingExtract.projectId), () => refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury }))
+                const { isCurrent, ...input } = a
+                const u = await withProjectCreditCommit(refundingExtract.projectId, refundBasis, () => {
+                  if (!isCurrent()) throw new Error('تغيرت مسودة الإشعار أو أُغلقت قبل الترحيل — راجعها واطلب الموافقة مجدداً')
+                  return refundProjectExtract({ extractId: refundingExtract.id, ...input, treasury })
+                })
                 setRefundExtractId(null)
                 toast.show(`سُجل إشعار دائن على ${u.extractNumber} وتولد القيد العاكس ✅`)
               } catch (err) {

@@ -330,7 +330,7 @@ export function SaleReturnsPage() {
     const orig = sales.find((s) => s.id === r.saleId)
     const phone = orig?.customerId ? customers.find((c) => c.id === orig.customerId)?.phone ?? '' : ''
     const documentSettings = resolveDocumentPrintSettings(orig ?? r)
-    shareDocPdfViaWhatsapp({ model: buildReturnModel(r), cur, settings: documentSettings.receipt, template, docLabel: 'مرتجع مبيعات', docNumber: r.returnNumber, partyPhone: phone, shopName: documentSettings.setup.shopName, toast })
+    shareDocPdfViaWhatsapp({ model: buildReturnModel(r), cur, settings: documentSettings.receipt, template, docLabel: 'مرتجع مبيعات', docNumber: r.returnNumber, partyPhone: phone, countryCode: documentSettings.setup.countryCode, shopName: documentSettings.setup.shopName, toast })
   }
 
   const canNext =

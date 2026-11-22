@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { ProjectExtract } from '../../data/repo.ts'
 import { planProjectCreditAmounts, projectCreditEvidence } from '../../core/projectCreditAllocation.ts'
 import type { ProjectRefundQuantity } from '../../core/projectRefundQuantities.ts'
@@ -14,7 +14,7 @@ export function ProjectExtractCreditBox({ extract, currencySymbol, fmt, terminal
   terminalOriginal?: { transactionId: string; terminalName: string }
   hasRetentionRelease: boolean
   hasDocumentationInvoice: boolean
-  onSubmit: (args: { amountMinor: number; quantities: ProjectRefundQuantity[]; restoredAdvanceMinor?: number; mode: 'cash' | 'customer_credit'; treasury: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => void
+  onSubmit: (args: { amountMinor: number; quantities: ProjectRefundQuantity[]; restoredAdvanceMinor?: number; mode: 'cash' | 'customer_credit'; treasury: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string }; isCurrent: () => boolean }) => void
 }) {
   const [quantities, setQuantities] = useState<Record<number, string>>({})
   const [mode, setMode] = useState<'cash' | 'customer_credit'>('cash')
@@ -22,6 +22,12 @@ export function ProjectExtractCreditBox({ extract, currencySymbol, fmt, terminal
   const [reason, setReason] = useState('')
   const [reference, setReference] = useState('')
   const [confirmZeroAdvance, setConfirmZeroAdvance] = useState(false)
+  const [approvalError, setApprovalError] = useState('')
+  const mounted = useRef(false)
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const signature = JSON.stringify({ extract, quantities, mode, treasury, reason, reference, confirmZeroAdvance, terminalOriginal, hasRetentionRelease, hasDocumentationInvoice })
+  const latestSignature = useRef(signature)
+  useLayoutEffect(() => { latestSignature.current = signature }, [signature])
   const approval = useSupervisorApproval()
   const lines = extract.lines ?? []
   const selected = lines.filter(line => (quantities[line.boqItemId] ?? '').trim() !== '').map(line => ({ boqItemId: line.boqItemId, qty: Number(quantities[line.boqItemId]) }))
@@ -40,7 +46,15 @@ export function ProjectExtractCreditBox({ extract, currencySymbol, fmt, terminal
   const submit = () => {
     if (!preview || error || !reason.trim() || ((extract.advanceRecoveryMinor ?? 0) > 0 && !confirmZeroAdvance)) return
     const amountMinor = preview.amountMinor
-    approval.request(approvedBy => onSubmit({ amountMinor, quantities: selected, ...((extract.advanceRecoveryMinor ?? 0) > 0 ? { restoredAdvanceMinor: 0 } : {}), mode, treasury, reason: reason.trim(), approvedBy, ...(mode === 'cash' && terminalOriginal ? { terminalRefund: { originalTransactionId: terminalOriginal.transactionId, providerReference: reference.trim() } } : {}) }))
+    setApprovalError('')
+    approval.request(approvedBy => {
+      if (!mounted.current) return
+      if (latestSignature.current !== signature) {
+        setApprovalError('تغيرت بيانات الإشعار أثناء انتظار الاعتماد — راجعها واطلب الموافقة مجدداً')
+        return
+      }
+      onSubmit({ amountMinor, quantities: selected, ...((extract.advanceRecoveryMinor ?? 0) > 0 ? { restoredAdvanceMinor: 0 } : {}), mode, treasury, reason: reason.trim(), approvedBy, isCurrent: () => mounted.current && latestSignature.current === signature, ...(mode === 'cash' && terminalOriginal ? { terminalRefund: { originalTransactionId: terminalOriginal.transactionId, providerReference: reference.trim() } } : {}) })
+    })
   }
   return <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.04] p-4 space-y-3" data-project-quantity-refund>
     <p className="text-xs text-slate-500">اختر كمية البند المردودة من شريحة هذا المستخلص. لا تتغير كمية الحصر الفعلي تلقائياً، وتُراجع تسوية الختامي مستقلة.</p>
@@ -49,6 +63,7 @@ export function ProjectExtractCreditBox({ extract, currencySymbol, fmt, terminal
       <span className="text-xs text-slate-500">شريحة المستخلص: {line.prevExecutedQty != null && line.newExecutedQty != null ? (Math.round(line.newExecutedQty * 1000) - Math.round(line.prevExecutedQty * 1000)) / 1000 : 'غير مثبتة'} {line.unit ?? ''}</span>
     </Field>)}
     {error && <p role="alert" className="text-xs text-rose-700">{error}</p>}
+    {approvalError && <p role="alert" className="text-xs text-rose-700">{approvalError}</p>}
     {preview && !error && <p className="text-sm font-bold" data-project-refund-amount>قيمة الأعمال {fmt(preview.grossMinor)} · الضريبة {fmt(preview.taxShareMinor)} · عكس المحتجز {fmt(preview.retentionMinor)} · المبلغ {fmt(preview.amountMinor)} {currencySymbol}</p>}
     {(extract.advanceRecoveryMinor ?? 0) > 0 && <label className="flex items-start gap-2 text-xs text-amber-700"><input type="checkbox" checked={confirmZeroAdvance} onChange={e => setConfirmZeroAdvance(e.target.checked)} /> <span>أختار صفرًا للمقدمة المعادة: تبقى المقدمة المستردة كما هي، ويُرد مبلغ الإشعار للعميل. إعادة مبلغ موجب إلى المقدمة غير متاحة بعد.</span></label>}
     <Field label="سبب الإشعار"><input aria-label="سبب الإشعار" value={reason} onChange={e => setReason(e.target.value)} className={inputCls} /></Field>

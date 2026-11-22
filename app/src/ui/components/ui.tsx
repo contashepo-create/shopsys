@@ -417,14 +417,20 @@ interface ToastState {
   show: (msg: string, kind?: 'success' | 'error') => void
   clear: () => void
 }
+let toastTimer: ReturnType<typeof setTimeout> | undefined
 export const useToast = create<ToastState>((set) => ({
   msg: null,
   kind: 'success',
   show: (msg, kind = 'success') => {
+    if (toastTimer !== undefined) clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => { toastTimer = undefined; set({ msg: null }) }, 2600)
     set({ msg, kind })
-    setTimeout(() => set({ msg: null }), 2600)
   },
-  clear: () => set({ msg: null }),
+  clear: () => {
+    if (toastTimer !== undefined) clearTimeout(toastTimer)
+    toastTimer = undefined
+    set({ msg: null })
+  },
 }))
 
 export function ToastHost() {

@@ -59,6 +59,8 @@ it('تحصيل الماكينة في يومه يسجل مرجع العملية �
  S().releaseRetention(S().projects[0].id, '1101', { terminalId: 't1', providerReference: 'PAY-123' })
  expect(S().paymentTerminalTransactions[0]).toMatchObject({ terminalId: 't1', documentId: 'retention:1', amountMinor: 100, providerReference: 'PAY-123' })
  expect(S().paymentTerminalTransactions[0].occurredAt.slice(0, 10)).toBe('2026-11-05')
+ expect(S().retentionReleases[0].paymentEvidence).toEqual({ version: 1, treasuryCode: '1101', terminalCharge: S().paymentTerminalTransactions[0] })
+ expect(S().getRemainingRetention(S().projects[0].id)).toBe(0)
 })
 it('يرفض تحصيل محتجز مسجلاً لفرع مختلف بدلاً من خلط الأرصدة', () => {
  const p = S().projects[0], ex = S().projectExtracts[0]

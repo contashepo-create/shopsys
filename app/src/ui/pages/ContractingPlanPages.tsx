@@ -13,6 +13,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, PROJECT_TASK_STATUS_LABELS, type CostKind } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
 const KINDS = Object.keys(COST_KIND_LABELS) as CostKind[]
@@ -29,7 +30,7 @@ function useCur() {
 
 /* ─────────────────────────── موازنة المشروع والانحرافات ─────────────────────────── */
 export function ProjectBudgetPage() {
-  const { projects, projectBudgets, projectCosts, setProjectBudget, getProjectBudgetVariance } = useDataStore()
+  const { projects, projectBudgets, projectCosts, purchases, purchaseReturns, payrollSlips, payrollRuns, journal, setProjectBudget, getProjectBudgetVariance } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
   const open = projects.filter((p) => p.status === 'active')
@@ -40,13 +41,14 @@ export function ProjectBudgetPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [draft, setDraft] = useState<Record<CostKind, string>>({ materials: '', labor: '', equipment: '', subcontract: '', other: '' })
 
-  // projectCosts في التبعيات ضرورية: أي تكلفة جديدة يجب أن تحدّث تقرير الانحراف فوراً
-  const report = useMemo(() => {
-    // These reads intentionally invalidate the report when a budget or cost is changed.
-    void projectBudgets
-    void projectCosts
-    return project ? getProjectBudgetVariance(project.id) : null
-  }, [project, getProjectBudgetVariance, projectBudgets, projectCosts])
+  // يشترك التقرير في أساس 5110 و5102؛ كل تغيّر في الدليل يعيد فحصه.
+  const review = useMemo(() => {
+    void projectBudgets; void projectCosts; void purchases; void purchaseReturns
+    void payrollSlips; void payrollRuns; void journal
+    try { return { report: project ? getProjectBudgetVariance(project.id) : null, failed: false } }
+    catch (error) { if (error instanceof FinancialDataReviewError) return { report: null, failed: true }; throw error }
+  }, [project, getProjectBudgetVariance, projectBudgets, projectCosts, purchases, purchaseReturns, payrollSlips, payrollRuns, journal])
+  const report = review.report
 
   const startEdit = () => {
     if (!project) return
@@ -87,7 +89,8 @@ export function ProjectBudgetPage() {
         </div>
       </div>
 
-      {!project ? (
+      <p role="note" className="text-amber-700 text-xs">المقارنة تشمل مستندات تكلفة المشروع وتوزيع قسائم 5102 المثبت فقط؛ لا تخصم مرتجعات الشراء ولا تشمل المسير المجمّع أو القسائم بلا توزيع. راجع اكتمال التكاليف قبل الاعتماد.</p>
+      {review.failed ? <p role="alert" className="text-red-700">يلزم مراجعة تكاليف المشروع ومرتجعات الشراء وتوزيع الرواتب وقيودها قبل عرض الموازنة والانحرافات.</p> : !project ? (
         <EmptyState icon="⚖️" title="لا مشروعات مفتوحة" sub="أنشئ مشروعاً أولاً ثم اضبط موازنته بالفئات" />
       ) : !report || report.rows.length === 0 ? (
         <EmptyState icon="⚖️" title="لا موازنة ولا تكاليف بعد" sub="اضغط «ضبط الموازنة» لإدخال المبالغ التقديرية لكل فئة — ستُقارن تلقائياً بكل تكلفة تُسجل" />

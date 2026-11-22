@@ -100,6 +100,22 @@ describe('§99 مطبوعات تقارير المقاولات (PDF)', () => {
     expect(/مستخلصات العميل \(/.test(html) || /لا مستخلصات/.test(html)).toBe(true)
   })
 
+  it('طباعة لوحة المشاريع لا تحول حالة مكتمل إلى دليل تسليم', async () => {
+    const { useDataStore } = await import('../src/data/repo.ts')
+    const { ContractingReportsPage } = await import('../src/ui/pages/ContractingReportsPage.tsx')
+    const previous = useDataStore.getState().projects
+    expect(previous.length).toBeGreaterThan(0)
+    useDataStore.setState({ projects: previous.map((project, i) => i === 0 ? { ...project, status: 'completed' as const } : project) })
+    try {
+      render(<ContractingReportsPage />)
+      fireEvent.click(screen.getAllByText('لوحة المشاريع')[0])
+      expect(screen.getAllByText('مكتمل بالنظام').length).toBeGreaterThan(0)
+      fireEvent.click(document.querySelector('[data-print="projects"]')!)
+      expect(printed()).toContain('مكتمل بالنظام')
+      expect(printed()).not.toContain('مُسلَّم')
+    } finally { useDataStore.setState({ projects: previous }) }
+  })
+
   it('ذمم العملاء: مطبوعة متابعة التحصيل بإجمالي مصفوف', async () => {
     const { ContractingReportsPage } = await import('../src/ui/pages/ContractingReportsPage.tsx')
     render(<ContractingReportsPage />)

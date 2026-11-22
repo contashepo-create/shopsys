@@ -52,7 +52,7 @@ check('⑤ مرتجع المبيعات: زر داخل مودال القوالب 
 const preturns = read('src/ui/pages/PurchaseReturnsPage.tsx')
 check('⑤ مرتجع المشتريات: زر داخل مودال القوالب بهاتف المورد', preturns.includes('whatsappPurchaseReturn(printTarget, t)') && preturns.includes('suppliers.find((s) => s.id === orig.supplierId)?.phone ?? \'\''))
 const quotes = read('src/ui/pages/QuotationsPage.tsx')
-check('⑤ عرض السعر: زر واتساب PDF — بلا رقم محفوظ يفتح قائمة اختيار الجهة', quotes.includes('onWhatsappPdf={() =>') && quotes.includes("partyPhone: ''"))
+check('⑤ عرض السعر: زر واتساب PDF بهاتف العميل المرتبط، وبلا رقم يفتح اختيار الجهة', quotes.includes('onWhatsappPdf={() =>') && quotes.includes("partyPhone: selectedClient?.phone ?? ''") && share.includes('documentWaPhone(partyPhone, args.countryCode)'))
 
 const frame = read('src/ui/components/InvoicePOSFrame.tsx')
 check('الإطار: زر «واتساب PDF» بجوار تصدير PDF (prop اختياري لا يكسر بقية الشاشات)', frame.includes('onWhatsappPdf?: () => void') && frame.includes('واتساب PDF'))

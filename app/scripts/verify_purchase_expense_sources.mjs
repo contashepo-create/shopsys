@@ -80,7 +80,7 @@ console.log('\n3️⃣ مصروف مدفوع من عهدة موظف')
 const custodyBefore = bal('1108')
 const supBefore3 = bal('2101')
 S().postPurchase({
-  supplierId: supplier.id, date: '2026-09-15',
+  supplierId: supplier.id, date: file.openedAt,
   lines: [{ itemId: rice.id, qty: 10, unitPriceMinor: 10000 }],
   expenses: [{ nameAr: 'تحميل وتنزيل', amountMinor: 20000, method: 'qty', paidBy: 'custody', custodyFileId: file.id }],
   paidMinor: 0, notes: '',
@@ -89,13 +89,13 @@ ok('العهدة نقصت 20,000 (1108 دائن)', bal('1108') - custodyBefore =
 ok('دين المورد بالبضاعة فقط (100,000)', bal('2101') - supBefore3 === -100000)
 ok('حركة العهدة سُجلت في ملف الموظف', S().custodyTxs.some((t) => t.fileId === file.id && t.type === 'expense' && t.amountMinor === 20000 && t.description.includes('تحميل')))
 throws('يرفض مصروف عهدة أكبر من متبقيها', () => S().postPurchase({
-  supplierId: supplier.id, date: '2026-09-15',
+  supplierId: supplier.id, date: file.openedAt,
   lines: [{ itemId: rice.id, qty: 1, unitPriceMinor: 1000 }],
   expenses: [{ nameAr: 'نولون', amountMinor: 99999999, method: 'qty', paidBy: 'custody', custodyFileId: file.id }],
   paidMinor: 0, notes: '',
 }), 'أكبر من متبقيها')
 throws('يرفض مصروف عهدة بلا ملف', () => S().postPurchase({
-  supplierId: supplier.id, date: '2026-09-15',
+  supplierId: supplier.id, date: file.openedAt,
   lines: [{ itemId: rice.id, qty: 1, unitPriceMinor: 1000 }],
   expenses: [{ nameAr: 'نولون', amountMinor: 1000, method: 'qty', paidBy: 'custody' }],
   paidMinor: 0, notes: '',
@@ -104,7 +104,7 @@ throws('يرفض مصروف عهدة بلا ملف', () => S().postPurchase({
 console.log('\n4️⃣ مصادر مختلطة في فاتورة واحدة + سقف الدفع بمستحق المورد')
 const supBefore4 = bal('2101')
 S().postPurchase({
-  supplierId: supplier.id, date: '2026-09-15',
+  supplierId: supplier.id, date: file.openedAt,
   lines: [{ itemId: rice.id, qty: 50, unitPriceMinor: 10000 }],
   expenses: [
     { nameAr: 'جمارك', amountMinor: 30000, method: 'value' }, // على المورد
@@ -118,7 +118,7 @@ ok('مستحق المورد = 530,000 (بضاعة + جماركه فقط)', inv4.
 ok('الإجمالي = 580,000 (كل المصاريف تدخل التكلفة)', inv4.grandTotalMinor === 580000)
 ok('دفع 530,000 صفّى المورد تماماً', bal('2101') - supBefore4 === 0, bal('2101') - supBefore4)
 throws('يرفض دفعاً يتجاوز مستحق المورد', () => S().postPurchase({
-  supplierId: supplier.id, date: '2026-09-15',
+  supplierId: supplier.id, date: file.openedAt,
   lines: [{ itemId: rice.id, qty: 10, unitPriceMinor: 10000 }],
   expenses: [{ nameAr: 'نولون', amountMinor: 20000, method: 'qty', paidBy: 'treasury', payAccount: '1101' }],
   paidMinor: 110000, notes: '', // البضاعة 100k فقط مستحقة للمورد

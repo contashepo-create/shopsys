@@ -107,15 +107,108 @@ export function isFiscalCloseArtifactValid(entry: JournalEntry, year: FiscalYear
   return Number.isSafeInteger(debit) && Number.isSafeInteger(credit) && debit > 0 && debit === credit
 }
 
+// أي قيد يدّعي عكس الإقفال، حتى لو أغفل أحد الرابطين، يجعل الأصل غير آمن
+// للاستعادة حتى يتطابق الرابطان ويثبت عدم وجود عاكس آخر.
+export function fiscalCloseReversalClaims(journal: readonly JournalEntry[], closing: JournalEntry): JournalEntry[] {
+  return journal.filter(row => row && (row.reversesEntryId === closing.id || (row.sourceType === 'reversal' && row.sourceId === closing.id)))
+}
+
 export function isFiscalCloseReversalValid(journal: readonly JournalEntry[], closing: JournalEntry, mainBranchId?: number): boolean {
-  if (closing.reversedByEntryId == null) return false
-  const rows = journal.filter(row => row.id === closing.reversedByEntryId)
-  if (rows.length !== 1) return false
+  if (closing.reversedByEntryId == null || closing.reversesEntryId != null || !Array.isArray(closing.lines)) return false
+  const rows = journal.filter(row => row && row.id === closing.reversedByEntryId)
+  const claims = fiscalCloseReversalClaims(journal, closing)
+  if (rows.length !== 1 || claims.length !== 1 || rows[0] !== claims[0]) return false
   const reversed = rows[0]
+  if (journal.indexOf(reversed) <= journal.indexOf(closing) || journal.indexOf(closing) < 0) return false
   return reversed.sourceType === 'reversal' && reversed.sourceId === closing.id && reversed.reversesEntryId === closing.id && reversed.reversedByEntryId == null && reversed.date === closing.date && (reversed.branchId ?? mainBranchId) === (closing.branchId ?? mainBranchId) && Array.isArray(reversed.lines) && reversed.lines.length === closing.lines.length && reversed.lines.every((line, index) => {
     const original = closing.lines[index]
-    return line.accountCode === original.accountCode && line.debit === original.credit && line.credit === original.debit
+    return !!line && !!original && line.accountCode === original.accountCode && line.debit === original.credit && line.credit === original.debit
+      && (line.costCenterId ?? null) === (original.costCenterId ?? null)
+      && (line.partyKind ?? null) === (original.partyKind ?? null)
+      && (line.partyId ?? null) === (original.partyId ?? null)
+      && (line.relatedBranchId ?? null) === (original.relatedBranchId ?? null)
   })
+}
+
+/**
+ * تسلسل اليومية المحفوظ دليل محافظ لا توقيع زمني: أي حركة لاحقة لقيد
+ * إقفال نشط داخل الفترة نفسها تعني أن أساس الإقفال قد تغير. لا نخمن
+ * ترتيب التزامن ولا نصلح الحالة آلياً. تاريخ تالف لنفس الفرع مبهم أيضاً.
+ */
+export function hasActivityAfterFiscalClose(
+  journal: readonly JournalEntry[], year: FiscalYear, closing: JournalEntry, mainBranchId?: number,
+): boolean {
+  const index = journal.indexOf(closing)
+  if (index < 0) return true
+  const branchId = year.branchId ?? mainBranchId
+  return journal.slice(index + 1).some(entry => {
+    if (!entry || typeof entry !== 'object') return true
+    if ((entry.branchId ?? mainBranchId) !== branchId) return false
+    const date = typeof entry.date === 'string' ? entry.date.slice(0, 10) : ''
+    if (!isValidFiscalDate(date)) return true
+    return date >= year.startDate && date <= year.endDate
+  })
+}
+
+/**
+ * يراجع أساس قيد إقفال تاريخي مقابل بادئة الدفتر في وقت القيد، لا مجرد
+ * توازنه. مقارنته تحفظية ولا تثبت اكتمال البيانات أو صحة مصدرها؛ لا نختلق
+ * قيوداً مفقودة ولا نصلح تاريخاً مستورداً مخالفاً آلياً.
+ */
+export function isFiscalCloseBasisValid(journal: readonly JournalEntry[], year: FiscalYear, closing: JournalEntry, mainBranchId?: number): boolean {
+  if (!Array.isArray(journal) || !year || typeof year.nameAr !== 'string' || typeof year.startDate !== 'string' || typeof year.endDate !== 'string' || validateFiscalYear(year, []).length) return false
+  const index = journal.indexOf(closing)
+  if (index < 0 || !isFiscalCloseArtifactValid(closing, year, year.branchId ?? mainBranchId, mainBranchId)) return false
+  const branchId = year.branchId ?? mainBranchId
+  const prefix: JournalEntry[] = []
+  const ids = new Set<number>()
+  let totalDebit = 0, totalCredit = 0
+  for (const entry of journal.slice(0, index)) {
+    if (!entry || typeof entry !== 'object' || (entry.branchId != null && (!Number.isSafeInteger(entry.branchId) || entry.branchId <= 0))) return false
+    // عند عدم وجود فروع أو إسناد للفترة، الإقفال القديم استعمل كامل الدفتر.
+    if (branchId != null && (entry.branchId ?? mainBranchId) !== branchId) continue
+    if (typeof entry.date !== 'string' || !isValidFiscalDate(entry.date)) return false
+    if (entry.date < year.startDate || entry.date > year.endDate) continue
+    if (entry.sourceType === 'year_closing' && entry.sourceId !== year.id) return false
+    if (!Number.isSafeInteger(entry.id) || entry.id <= 0 || ids.has(entry.id) || !Array.isArray(entry.lines) || (entry.memoOnly != null && typeof entry.memoOnly !== 'boolean')) return false
+    ids.add(entry.id)
+    if (entry.memoOnly === true && entry.lines.length === 0) { prefix.push(entry); continue }
+    if (entry.memoOnly || entry.lines.length < 2) return false
+    let debit = 0, credit = 0
+    for (const line of entry.lines) {
+      if (!line || typeof line.accountCode !== 'string' || !line.accountCode || !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0 || (line.debit > 0 && line.credit > 0)) return false
+      debit += line.debit; credit += line.credit
+    }
+    if (!Number.isSafeInteger(debit) || !Number.isSafeInteger(credit) || debit <= 0 || debit !== credit) return false
+    totalDebit += debit; totalCredit += credit
+    if (!Number.isSafeInteger(totalDebit) || !Number.isSafeInteger(totalCredit)) return false
+    prefix.push(entry)
+  }
+  if (ids.has(closing.id)) return false
+  try {
+    const mechanism = closingMechanismIds(prefix)
+    const expected = buildYearClosingLines(prefix.filter(entry => !mechanism.has(entry.id)), year).lines
+    if (!expected.length) return false
+    const amounts = (lines: readonly { accountCode: string; debit: number; credit: number }[]) => {
+      const map = new Map<string, { debit: number; credit: number }>()
+      for (const line of lines) {
+        const current = map.get(line.accountCode) ?? { debit: 0, credit: 0 }
+        current.debit += line.debit; current.credit += line.credit
+        if (!Number.isSafeInteger(current.debit) || !Number.isSafeInteger(current.credit)) throw new Error('unsafe')
+        map.set(line.accountCode, current)
+      }
+      return map
+    }
+    const wanted = amounts(expected), actual = amounts(closing.lines)
+    return wanted.size === actual.size && [...wanted].every(([code, line]) => actual.get(code)?.debit === line.debit && actual.get(code)?.credit === line.credit)
+  } catch { return false }
+}
+
+// يجب أن يكون عكس الإقفال هو الحدث التالي في الفترة قبل السماح باستعادته.
+export function isFiscalCloseReversalSequenceValid(journal: readonly JournalEntry[], year: FiscalYear, closing: JournalEntry, mainBranchId?: number): boolean {
+  if (!isFiscalCloseReversalValid(journal, closing, mainBranchId)) return false
+  const reversalIndex = journal.findIndex(entry => entry && entry.id === closing.reversedByEntryId)
+  return !hasActivityAfterFiscalClose(journal.slice(0, reversalIndex), year, closing, mainBranchId)
 }
 
 export function fiscalCloseStateRepairs(
@@ -125,17 +218,22 @@ export function fiscalCloseStateRepairs(
 ): { closeIds: number[]; reopenIds: number[] } {
   const closeIds: number[] = []
   const reopenIds: number[] = []
+  if (!Array.isArray(years) || !Array.isArray(journal) || years.some(row => !row || typeof row !== 'object') || journal.some(row => !row || typeof row !== 'object')) return { closeIds, reopenIds }
   for (const year of years) {
     if (years.filter(row => row.id === year.id).length !== 1 || typeof year.nameAr !== 'string' || validateFiscalYear(year, []).length > 0 || (year.status !== 'closed' && year.status !== 'open')) continue
     const entries = journal.filter(entry => entry.sourceType === 'year_closing' && entry.sourceId === year.id)
     const branchId = year.branchId ?? mainBranchId
-    if (!entries.length || entries.some(entry => !isFiscalCloseArtifactValid(entry, year, branchId, mainBranchId) || journal.filter(row => row.id === entry.id).length !== 1 || (entry.reversedByEntryId != null && !isFiscalCloseReversalValid(journal, entry, mainBranchId)))) continue
+    if (!entries.length || entries.some(entry => !isFiscalCloseArtifactValid(entry, year, branchId, mainBranchId) || !isFiscalCloseBasisValid(journal, year, entry, mainBranchId) || entry.reversesEntryId != null || journal.filter(row => row.id === entry.id).length !== 1 || (entry.reversedByEntryId != null ? !isFiscalCloseReversalSequenceValid(journal, year, entry, mainBranchId) : fiscalCloseReversalClaims(journal, entry).length > 0))) continue
     const active = entries.filter(entry => entry.reversedByEntryId == null)
-    if (active.length > 1) continue
+    if (active.length > 1 || (active.length === 1 && hasActivityAfterFiscalClose(journal, year, active[0], mainBranchId))) continue
     const peers = years.filter(row => row.id !== year.id && (row.branchId ?? mainBranchId) === branchId)
     if (peers.some(row => typeof row.startDate !== 'string' || typeof row.endDate !== 'string' || validateFiscalYear(row, []).length > 0 || (row.status !== 'open' && row.status !== 'closed') || (year.startDate <= row.endDate && year.endDate >= row.startDate))) continue
     if (active.length === 1 && year.status === 'open' && !peers.some(row => row.status === 'open' && row.endDate < year.startDate)) closeIds.push(year.id)
-    else if (active.length === 0 && year.status === 'closed' && !peers.some(row => row.status === 'closed' && row.startDate > year.endDate)) reopenIds.push(year.id)
+    else if (active.length === 0 && year.status === 'closed' && !peers.some(row => row.status === 'closed' && row.startDate > year.endDate)) {
+      const last = entries.at(-1)!
+      const reversal = journal.find(row => row.id === last.reversedByEntryId)
+      if (reversal && !hasActivityAfterFiscalClose(journal, year, reversal, mainBranchId)) reopenIds.push(year.id)
+    }
   }
   return { closeIds, reopenIds }
 }

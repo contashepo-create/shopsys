@@ -106,7 +106,7 @@ export function PurchaseReturnsPage() {
     const orig = purchases.find((pv) => pv.id === r.purchaseId)
     const phone = orig?.supplierId ? suppliers.find((s) => s.id === orig.supplierId)?.phone ?? '' : ''
     const documentSettings = resolveDocumentPrintSettings(orig ?? r)
-    shareDocPdfViaWhatsapp({ model: buildPurchaseReturnModel(r), cur, settings: documentSettings.receipt, template, docLabel: 'مرتجع مشتريات', docNumber: r.returnNumber, partyPhone: phone, shopName: documentSettings.setup.shopName, toast })
+    shareDocPdfViaWhatsapp({ model: buildPurchaseReturnModel(r), cur, settings: documentSettings.receipt, template, docLabel: 'مرتجع مشتريات', docNumber: r.returnNumber, partyPhone: phone, countryCode: documentSettings.setup.countryCode, shopName: documentSettings.setup.shopName, toast })
   }
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null

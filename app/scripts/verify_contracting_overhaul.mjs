@@ -362,7 +362,7 @@ console.log('⑦ محاذاة pro-acc: العقد صافٍ · سقف المست�
   ok('مودال التحويل يعلن القيمة الصافية وضريبة العرض', quotesPage.includes('صافية بدون الضريبة') && quotesPage.includes('تُحصَّل مع المستخلصات'))
   ok('سند القبض: حقل مشروع اختياري بيانياً (data-voucher-project)', vouchersPage.includes('data-voucher-project') && vouchersPage.includes('بدون مشروع'))
   ok('تحصيلات العملاء: سندات القبض الموسومة بمشاريع تظهر بقسم خاص', opsPages.includes('data-project-receipt-vouchers'))
-  ok('تقارير المقاولات: بطاقة «مصادر التكاليف» تُطابق صافي 5110', reportsPage.includes('data-cost-sources') && reportsPage.includes('تُطابق صافي 5110'))
+  ok('تقارير المقاولات: بطاقة المصادر تفصل مستندات 5110 عن تخصيص قسائم 5102', reportsPage.includes('data-cost-sources') && reportsPage.includes('مستندات 5110 وتخصيص 5102') && reportsPage.includes('getProjectPayrollCosts') && reportsPage.includes('selected.payrollTotal') && reportsPage.includes('selected.card.costsMinor'))
 }
 
 console.log('─'.repeat(60))

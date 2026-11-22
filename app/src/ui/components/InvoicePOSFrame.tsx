@@ -1,5 +1,6 @@
+import { WhatsappIcon } from './WhatsappIcon.tsx'
 import { useEffect, useState, type ReactNode } from 'react'
-import { CheckCheck, ChevronLeft, ChevronRight, Columns3, Eye, FileClock, FileDown, FileText, MessageCircle, MessageSquare, Minus, PackageCheck, RotateCcw, Save, Settings, Square, UserRound, X, Printer , Settings2 } from 'lucide-react'
+import { CheckCheck, ChevronLeft, ChevronRight, Columns3, Eye, FileClock, FileDown, FileText, MessageSquare, Minus, PackageCheck, RotateCcw, Save, Settings, Square, UserRound, X, Printer , Settings2 } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
@@ -266,7 +267,7 @@ export function InvoicePOSFrame({
           <PrintSwitches compact/>
           <Btn variant="ghost" onClick={() => onNavigate('/settings/printing')} title="قوالب الطباعة وإعداد إذن الاستلام والحرارية"><Settings size={13} /> إعدادات الطباعة</Btn>
           {onExportPdf && <Btn variant="ghost" onClick={onExportPdf} title="يفتح حوار الطباعة — اختر وجهة «حفظ كـ PDF»"><FileDown size={13} /> تصدير PDF</Btn>}
-          {onWhatsappPdf && <Btn variant="ghost" onClick={onWhatsappPdf} title="يولّد PDF ويفتح مجلد الملف ومحادثة واتساب — اسحب الملف للمحادثة"><MessageCircle size={13} className="text-emerald-600" /> واتساب PDF</Btn>}
+          {onWhatsappPdf && <Btn variant="ghost" onClick={onWhatsappPdf} title="يولّد PDF ويفتح مجلد الملف ومحادثة واتساب — اسحب الملف للمحادثة"><WhatsappIcon size={13} className="text-emerald-600" /> واتساب PDF</Btn>}
         </div>
       </footer>
       {posting && <div className="invoice-posting-overlay" role="status" aria-live="polite">جارٍ تأمين الترحيل وحفظ الفاتورة — لا تغلق النافذة…</div>}

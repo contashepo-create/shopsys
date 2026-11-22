@@ -204,8 +204,8 @@ export function SettlementsPage() {
         <Btn variant="ghost" onClick={() => { offsetSession.current++; setOffsetDate(todayLocalIso()); offsetBasis.current = fingerprint(); setOffsetOpen(true) }}><ArrowLeftRight size={14} /> مقاصة عميل/مورد</Btn>
       </div>
 
-      <div className="anim-up grid lg:grid-cols-2 gap-4">
-        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-3">
+      <div className="anim-up grid items-start lg:grid-cols-2 gap-4">
+        <div data-settlement-form className="min-w-0 rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-3">
           <Field label={meta.nameAr}>
             {section === 'treasury' ? <QuickSelect value={refId} onChange={(e) => { setRefId(e.target.value); setActual('') }} className={inputCls}>
               <option value="">— اختر الخزينة/البنك —</option>

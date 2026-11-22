@@ -30,6 +30,8 @@ import {
 } from './dbLocation.ts'
 import { isInAppNavigation, isExternalOpenable, isWhatsAppChatLink } from './navigationPolicy.ts'
 import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
+import { cleanStagedProbeFiles, discardStagedBackup, replaceWithStagedBackup, stageFileRestore } from './fileRestoreStage.ts'
+import { assertFileRestoreHistory } from './fileRestoreHistory.ts'
 import { gracefulShutdown } from './shutdown.ts'
 import { isUnsafeDatabaseLocation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity, assertSafeUpdateLocation, changedDrivePaths } from './databaseSafety.ts'
 import { freshStartCutoffAt, freshStartEligibleFilesAt, isCurrentFreshStartDataAt, readFreshStartMarkerAt, startFreshDatabaseAt, startFreshWithoutDatabaseAt } from './freshStart.ts'
@@ -596,10 +598,6 @@ function probeDatabase(dbPath: string): DbProbe {
   } finally {
     try { probe.close() } catch { /* لا شيء */ }
   }
-}
-
-function quickCheck(dbPath: string): boolean {
-  return probeDatabase(dbPath) === 'ok'
 }
 
 /** كل ملفات النسخ: المكانان (يدوي/تلقائي) + الأجيال الساعية/اليومية/قبل التحديث في المكان الافتراضي — الأحدث أولاً */
@@ -1791,17 +1789,24 @@ function wireIpc(): void {
     const target = typeof args?.path === 'string' ? args.path : ''
     // أمن المسار: الاستعادة من ملفات النسخ المعروفة فقط — لا مسارات خارجية
     if (!candidateBackups(resolveDbPath().dbPath).includes(target)) throw new Error('مسار نسخة غير معروف')
-    if (!quickCheck(target)) throw new Error('النسخة المحددة غير سليمة (فشل فحص السلامة) — اختر نسخة أخرى')
     const { dbPath } = resolveDbPath()
+    if (!activeDatabasePath || activeDatabasePath !== dbPath) throw new Error('تغير مسار قاعدة التشغيل — أعد تشغيل التطبيق قبل الاستعادة')
+    let staged: string | null = null
     try {
+      // التهيئة والفحص قبل إغلاق القاعدة الحية؛ فشل النسخ لا يقطع الملف الحي.
+      staged = stageFileRestore(target, dbPath)
+      const keyCheck = probeSnapshotKey(staged, deviceEncryptionKey)
+      if (keyCheck.status === 'mismatch' || keyCheck.status === 'unreadable' || keyCheck.status === 'missing') throw new Error('تعذّر التحقق من مفتاح لقطات النسخة أو قراءة بياناتها — لم تُستبدل القاعدة')
+      // رفض إسقاط أدلة محلية مثبتة؛ لا يغطي هذا كتابات النوافذ المعلقة أو كل الأدلة.
+      assertFileRestoreHistory(database.raw, staged, deviceEncryptionKey)
+      cleanStagedProbeFiles(staged)
       database.close()
       database = null
-      // نسخة أمان من الحالية قبل الاستبدال — الاحتمال المرجوح لا يُفقد بيانات
       const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-      copyFileSync(dbPath, `${dbPath}.before-restore-${stamp}`)
-      for (const ext of ['-wal', '-shm']) { try { unlinkSync(dbPath + ext) } catch { /* غير موجود */ } }
-      copyFileSync(target, dbPath)
-      logLine('db-restore', `استعادة نسخة ملفية: ${target} — إعادة تشغيل`)
+      const before = `${dbPath}.before-restore-${stamp}-${randomBytes(8).toString('hex')}`
+      replaceWithStagedBackup(dbPath, staged, before)
+      staged = null
+      logLine('db-restore', `استعادة نسخة ملفية: ${target} — إعادة تشغيل؛ نسخة سابقة: ${before}`)
       setTimeout(() => { app.relaunch(); app.exit(0) }, 600)
       return { ok: true as const, restarting: true as const }
     } catch (error) {
@@ -1815,6 +1820,10 @@ function wireIpc(): void {
         }
       }
       throw new Error(`فشل الاستعادة: ${message}`)
+    } finally {
+      if (staged) {
+        try { discardStagedBackup(staged) } catch (error) { logLine('db-restore', `تعذّر حذف الملف المؤقت: ${(error as Error).message}`) }
+      }
     }
   })
 

@@ -26,6 +26,8 @@ export interface MaterialIssueLine {
   unitFactor: number
   /** الكمية بالوحدة الأساسية بعد التحويل = qty × unitFactor */
   baseQty: number
+  /** المخزن الفعلي وقت الصرف؛ غيابه في الأذون القديمة لا يعني المخزن الرئيسي. */
+  warehouseId?: number | null
   /** تكلفة الوحدة الأساسية وقت الصرف (متوسط مرجح) */
   unitCostMinor: Minor
   /** تكلفة السطر الفعلية عند الترحيل؛ قد تختلف عن حاصل ضرب متوسط الوحدة بسبب التقريب. */
@@ -82,14 +84,18 @@ export function buildIssueLine(
   item: { id: number; nameAr: string; baseUnit: string; stockQty: number; costMinor: Minor; extraUnits: { nameAr: string; factor: number }[] },
   alreadyPlannedBaseQty: number,
 ): MaterialIssueLine {
+  if (input.itemId !== item.id) throw new Error('الصنف لا يطابق سطر صرف المواد')
+  const validQty = (value: number) => Number.isFinite(value) && value >= 0 && Number.isSafeInteger(Math.round(value * 1000)) && Math.abs(value - Math.round(value * 1000) / 1000) <= 1e-7
+  if (!validQty(item.stockQty) || !validQty(alreadyPlannedBaseQty) || alreadyPlannedBaseQty > item.stockQty + 1e-9) throw new Error(`رصيد الصنف «${item.nameAr}» أو الكمية المخططة غير صالحة`)
+  if (!Number.isSafeInteger(item.costMinor) || item.costMinor < 0) throw new Error(`تكلفة الصنف «${item.nameAr}» غير صالحة`)
   if (!Number.isFinite(input.qty) || !(input.qty > 0)) throw new Error(`كمية «${item.nameAr}» يجب أن تكون موجبة وصالحة`)
   let factor = 1
   let unitAr = item.baseUnit
   if (input.unitAr && input.unitAr !== item.baseUnit) {
-    const extra = item.extraUnits.find((u) => u.nameAr === input.unitAr)
-    if (!extra) throw new Error(`الوحدة «${input.unitAr}» غير معرفة على الصنف «${item.nameAr}»`)
-    factor = extra.factor
-    unitAr = extra.nameAr
+    const matches = item.extraUnits.filter((u) => u.nameAr === input.unitAr)
+    if (matches.length !== 1) throw new Error(`الوحدة «${input.unitAr}» غير معرفة أو مكررة على الصنف «${item.nameAr}» — راجع معامل التحويل`)
+    factor = matches[0].factor
+    unitAr = matches[0].nameAr
   }
   if (!Number.isFinite(factor) || factor <= 0) throw new Error(`معامل وحدة «${item.nameAr}» غير صالح`)
   const rawBaseQty = input.qty * factor
@@ -99,8 +105,9 @@ export function buildIssueLine(
   if (baseQty > available) {
     throw new Error(`رصيد «${item.nameAr}» لا يكفي — المتاح ${available} ${item.baseUnit} والمطلوب ${baseQty}`)
   }
-  const unitCost = Number.isInteger(item.costMinor) && item.costMinor >= 0 ? item.costMinor : 0
+  const unitCost = item.costMinor
   const costMinor = Math.round(baseQty * unitCost)
+  if (!Number.isSafeInteger(costMinor)) throw new Error('تكلفة سطر صرف المواد خارج الحدود الآمنة')
   return { itemId: item.id, nameAr: item.nameAr, qty: input.qty, unitAr, unitFactor: factor, baseQty, unitCostMinor: unitCost, costMinor }
 }
 

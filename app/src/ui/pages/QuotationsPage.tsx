@@ -1,3 +1,6 @@
+import { CustomerProfileSummary, DocumentContactSummary } from '../components/CustomerProfileFields.tsx'
+import { currentDocumentContact, documentContactLabel } from '../../core/customerProfile.ts'
+import { WhatsappIcon } from '../components/WhatsappIcon.tsx'
 import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * عروض الأسعار والمناقصات + عُهد المشاريع (طلب المالك — مرجعية pro-acc).
@@ -236,7 +239,9 @@ export function QuotationsPage() {
       invoiceNumber: editingQuote?.quoteNumber ?? 'مسودة',
       refCode: editingQuote ? 'QT' : 'DRAFT',
       dateIso: editingQuote?.date ?? todayLocalIso(),
-      partyLabel: clientName.trim() || 'عميل غير محدد',
+      partyLabel: editingQuote && (editingQuote.clientId ?? null) === (clientId ? Number(clientId) : null)
+        ? `${clientName.trim() || 'عميل غير محدد'} — ${documentContactLabel(currentDocumentContact(editingQuote.customerContactHistory, editingQuote.clientId))}`
+        : `${clientName.trim() || 'عميل غير محدد'} — بيانات التواصل لم تُحفظ بعد`,
       paymentLabel: `ساري حتى ${validUntil || '—'}`,
       rows: parsedLines.map((l) => ({ nameAr: `${l.nameAr} — ${l.descriptionAr}`, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
       totalMinor: draftTax.grossMinor,
@@ -270,7 +275,7 @@ export function QuotationsPage() {
       invoiceNumber: q.quoteNumber,
       refCode: 'QT',
       dateIso: q.date,
-      partyLabel: q.clientName,
+      partyLabel: `${q.clientName} — ${documentContactLabel(currentDocumentContact(q.customerContactHistory, q.clientId))}`,
       paymentLabel: `ساري حتى ${q.validUntil || '—'}`,
       rows: q.lines.map((l) => ({ nameAr: `${l.nameAr} — ${l.descriptionAr}`, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
       totalMinor: t.grossMinor,
@@ -353,7 +358,7 @@ export function QuotationsPage() {
           onRestoreDraft={() => setDraftsOpen(true)}
           onPrint={() => printDraft('a4', true)}
           onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); printDraft('a4') }}
-          onWhatsappPdf={() => { if (!parsedLines.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); const ds = resolveDocumentPrintSettings(currentQuotePrintRecord()); shareDocPdfViaWhatsapp({ model: buildPrintModel(), cur, settings: ds.receipt, docLabel: kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر', docNumber: editingQuote?.quoteNumber ?? 'مسودة', partyPhone: '', shopName: ds.setup.shopName, toast }) }}
+          onWhatsappPdf={() => { if (!parsedLines.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); const ds = resolveDocumentPrintSettings(currentQuotePrintRecord()); shareDocPdfViaWhatsapp({ model: buildPrintModel(), cur, settings: ds.receipt, docLabel: kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر', docNumber: editingQuote?.quoteNumber ?? 'مسودة', partyPhone: selectedClient?.phone ?? '', countryCode: ds.setup.countryCode, shopName: ds.setup.shopName, toast }) }}
           onPost={save}
           headerFields={
             <>
@@ -390,6 +395,8 @@ export function QuotationsPage() {
               <span>النوع: <b>{kind === 'tender' ? '🏛️ مناقصة' : '📄 عرض سعر'}</b></span>
               <span>العميل: <b>{clientName.trim() || 'غير محدد'}</b></span>
               <span>الربط: <b>{selectedClient ? `${selectedClient.nameAr} — عميل مسجَّل ✓` : '⚠️ اختر عميلاً مسجلاً قبل الاعتماد'}</b></span>
+              <CustomerProfileSummary profile={selectedClient} />
+              {editingQuote && (editingQuote.clientId ?? null) === (clientId ? Number(clientId) : null) ? <DocumentContactSummary history={editingQuote.customerContactHistory} customerId={editingQuote.clientId} /> : <span>بيانات التواصل التاريخية تُسجل عند حفظ الربط الجديد.</span>}
               <span>الصلاحية: <b>{validUntil || '—'}</b></span>
               <span>البنود: <b>{parsedLines.length}</b></span>
             </div>
@@ -592,7 +599,7 @@ export function QuotationsPage() {
                             <span title="العرض تحوّل لمشروع — بنوده جدول كميات المشروع؛ التعديل من المشروع" className="text-[10px] text-slate-400 px-1">🔒 مشروع</span>
                           )}
                           <button onClick={() => printQuotation(q)} title="طباعة العرض (A4)" data-quotation-print className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Printer size={15} /></button>
-                          <button onClick={() => { const ds = resolveDocumentPrintSettings(q); shareDocPdfViaWhatsapp({ model: quotationModel(q), cur, settings: ds.receipt, docLabel: q.kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر', docNumber: q.quoteNumber, partyPhone: customers.find((c) => c.id === q.clientId)?.phone ?? '', shopName: ds.setup.shopName, toast }) }} title="إرسال PDF واتساب" data-quotation-whatsapp className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Send size={15} /></button>
+                          <button onClick={() => { const ds = resolveDocumentPrintSettings(q); shareDocPdfViaWhatsapp({ model: quotationModel(q), cur, settings: ds.receipt, docLabel: q.kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر', docNumber: q.quoteNumber, partyPhone: customers.find((c) => c.id === q.clientId)?.phone ?? '', countryCode: ds.setup.countryCode, shopName: ds.setup.shopName, toast }) }} title="إرسال PDF واتساب" data-quotation-whatsapp className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><WhatsappIcon size={15} /></button>
                           {q.status === 'draft' && (
                             <button onClick={() => transition(q, 'submitted')} title="تقديم العرض" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Send size={15} /></button>
                           )}

@@ -63,3 +63,20 @@ describe('الرابط الناتج من الرقم المسجّل', () => {
     expect(waChatLink(party.phone, 'مرحبا')).toBe(`https://wa.me/201012345678?text=${encodeURIComponent('مرحبا')}`)
   })
 })
+
+describe('جهة مشاركة المستند حسب البلد وليس مصر دائماً', async () => {
+  const { documentWaPhone } = await import('../src/core/whatsapp.ts')
+  it.each([
+    ['0501234567', 'SA', '966501234567'], ['٠٥٠١٢٣٤٥٦٧', 'SA', '966501234567'],
+    ['0501234567', 'AE', '971501234567'], ['01012345678', 'EG', '201012345678'],
+    ['51234567', 'KW', '96551234567'], ['+966 50 123 4567', 'EG', '966501234567'],
+    ['00971501234567', 'SA', '971501234567'], ['966501234567', 'SA', '966501234567'],
+  ])('يحوّل %s لبلد %s إلى %s', (phone, country, result) => expect(documentWaPhone(phone, country)).toBe(result))
+  it('يرفض بلد مجهول أو رقم محلي غير مطابق بدلاً من توجيهه لجهة متخيلة', () => {
+    expect(() => documentWaPhone('0501234567', null)).toThrow(/الدولي/)
+    expect(() => documentWaPhone('050123', 'SA')).toThrow(/طول الرقم/)
+    expect(() => documentWaPhone('+12', 'SA')).toThrow(/غير صالح/)
+    expect(() => documentWaPhone('++966501234567', 'SA')).toThrow(/غير صالح/)
+    expect(documentWaPhone('', null)).toBe('')
+  })
+})

@@ -267,7 +267,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'reports', nameAr: 'التقارير', icon: BarChart3, color: 'sky',
     children: [
       { id: 'all', nameAr: 'مركز التقارير', icon: BarChart3, path: '/reports' },
-      { id: 'nasq', nameAr: 'نَسَق | NASQ', icon: Calculator, path: '/reports/nasq' },
+      { id: 'letters', nameAr: 'الخطابات', icon: FileText, path: '/reports/letters' },
       { id: 'statements', nameAr: 'كشوف الحساب', icon: FileSpreadsheet, path: '/reports/statements' },
       // الفروع الحقيقية (سد فجوة التدقيق): إدارة + لوحة مقارنة أداء للمالك
       { id: 'branches', nameAr: 'الفروع ومقارنة الأداء', icon: GitBranch, path: '/branches' },

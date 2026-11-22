@@ -12,10 +12,11 @@
  * - إفراج محتجز: 1101 ← 1105
  */
 import { addCalendarMonths } from './time.ts'
-import type { Minor } from './money.ts'
+import { addMinor, type Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 import { creditedProjectRetention } from './projectExtractNet.ts'
 import { FinancialDataReviewError } from './financialDataReview.ts'
+import type { CustomerContactEvent } from './customerProfile.ts'
 
 export type ProjectStatus = 'active' | 'completed'
 
@@ -39,6 +40,8 @@ export interface Project {
   clientName: string
   /** المستخلصات تُنسب لكشف هذا العميل؛ null يعني أن المشروع بلا ربط. */
   clientId: number | null
+  /** لقطات بيانات التواصل عند إنشاء الربط أو تغييره؛ لا تُستنتج للمشاريع القديمة. */
+  customerContactHistory?: CustomerContactEvent[]
   /** مراجعة صريحة لربط ذمة تاريخية يتيمة؛ لا تُنشئ قيداً ولا تحصيلاً. */
   legacyCustomerResolution?: { customerId: number; previousCustomerId?: number | null; dueMinor: Minor; extractIds: number[]; at: string; by: string; reason: string; balanceBeforeMinor?: Minor; balanceAfterMinor?: Minor; documents?: LegacyCustomerReviewDocument[]; evidence?: LegacyCustomerReviewEvidence[] }
   contractValueMinor: Minor // قيمة العقد (استرشادية للتقدم)
@@ -298,12 +301,21 @@ export function projectProfit(
   costs: readonly { kind: CostKind; amountMinor: Minor }[],
   releasedRetentionMinor: Minor,
 ): ProjectProfit {
-  const extracted = extracts.reduce((a, e) => a + e.grossMinor, 0)
-  const retained = extracts.reduce((a, e) => a + e.retentionMinor, 0)
+  let extracted: number, retained: number, total = 0, profit: number
   const byKind: Record<CostKind, Minor> = { materials: 0, labor: 0, equipment: 0, subcontract: 0, other: 0 }
-  let total = 0
-  for (const c of costs) { byKind[c.kind] += c.amountMinor; total += c.amountMinor }
-  const profit = extracted - total
+  try {
+    extracted = extracts.reduce((a, e) => addMinor(a, e.grossMinor), 0)
+    retained = extracts.reduce((a, e) => addMinor(a, e.retentionMinor), 0)
+    for (const c of costs) {
+      if (!(c.kind in byKind)) throw new Error('تصنيف تكلفة غير صالح')
+      byKind[c.kind] = addMinor(byKind[c.kind], c.amountMinor)
+      total = addMinor(total, c.amountMinor)
+    }
+    profit = addMinor(extracted, -total)
+    addMinor(retained, -releasedRetentionMinor)
+  } catch {
+    throw new FinancialDataReviewError('تكاليف وربحية المشروع', 'قيمة غير صحيحة أو مجموع خارج النطاق الآمن')
+  }
   return {
     extractedMinor: extracted,
     costsMinor: total,
@@ -439,6 +451,8 @@ export interface Quotation {
   clientName: string
   /** ربط إداري بسجل العميل — لا أثر محاسبياً (الذمة من الفاتورة فقط) */
   clientId: number | null
+  /** لقطات جهة التواصل وقت إنشاء الربط أو تغييره، وليست بطاقة العميل الحالية. */
+  customerContactHistory?: CustomerContactEvent[]
   titleAr: string
   date: string
   validUntil: string
@@ -615,27 +629,26 @@ export function budgetVarianceReport(
 ): { rows: BudgetVarianceRow[]; totalBudgetMinor: Minor; totalActualMinor: Minor } {
   const kinds: CostKind[] = ['materials', 'labor', 'equipment', 'subcontract', 'other']
   const rows: BudgetVarianceRow[] = []
-  for (const kind of kinds) {
-    const budget = budgets.filter((b) => b.kind === kind).reduce((a, b) => a + b.amountMinor, 0)
-    const actual = costs.filter((c) => c.kind === kind).reduce((a, c) => a + c.amountMinor, 0)
-    if (budget === 0 && actual === 0) continue
-    const usage = budget > 0 ? Math.round((actual / budget) * 100) : 0
-    rows.push({
-      kind, budgetMinor: budget, actualMinor: actual,
-      varianceMinor: budget - actual,
-      usagePercent: usage,
-      /*
-       * بلا موازنة مُدخلة (صفر) ⇒ لا مقارنة ولا تجاوز: المالك يريد ألا يظهر أي
-       * إشعار موازنة قبل أن يكتب رقماً. المقارنة تبدأ فقط عند كتابة رقم أكبر من صفر.
-       */
-      status: budget <= 0 ? 'no-budget' : actual > budget ? 'over' : usage >= 85 ? 'warning' : 'ok',
-    })
-  }
-  return {
-    rows,
-    totalBudgetMinor: rows.reduce((a, r) => a + r.budgetMinor, 0),
-    totalActualMinor: rows.reduce((a, r) => a + r.actualMinor, 0),
-  }
+  try {
+    if (budgets.some(b => !kinds.includes(b.kind) || !Number.isSafeInteger(b.amountMinor) || b.amountMinor < 0) || costs.some(c => !kinds.includes(c.kind) || !Number.isSafeInteger(c.amountMinor))) throw new Error('بند غير صالح')
+    for (const kind of kinds) {
+      const budget = budgets.filter((b) => b.kind === kind).reduce((a, b) => addMinor(a, b.amountMinor), 0)
+      const actual = costs.filter((c) => c.kind === kind).reduce((a, c) => addMinor(a, c.amountMinor), 0)
+      if (budget === 0 && actual === 0) continue
+      const usage = budget > 0 ? Math.round((actual / budget) * 100) : 0
+      rows.push({
+        kind, budgetMinor: budget, actualMinor: actual,
+        varianceMinor: addMinor(budget, -actual),
+        usagePercent: usage,
+        // بلا موازنة موجبة لا مقارنة ولا إشعار، وفق قرار المالك.
+        status: budget <= 0 ? 'no-budget' : actual > budget ? 'over' : usage >= 85 ? 'warning' : 'ok',
+      })
+    }
+    const totalBudgetMinor = rows.reduce((a, r) => addMinor(a, r.budgetMinor), 0)
+    const totalActualMinor = rows.reduce((a, r) => addMinor(a, r.actualMinor), 0)
+    addMinor(totalBudgetMinor, -totalActualMinor) // يستخدم الإجمالي في الواجهة لحساب الانحراف.
+    return { rows, totalBudgetMinor, totalActualMinor }
+  } catch { throw new FinancialDataReviewError('موازنة المشروع', 'المبالغ أو المجاميع غير صالحة') }
 }
 
 export type ChangeOrderStatus = 'draft' | 'approved' | 'invoiced' | 'rejected'

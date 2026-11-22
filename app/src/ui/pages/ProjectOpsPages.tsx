@@ -20,6 +20,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
 
@@ -82,7 +83,8 @@ export function MaterialIssuesPage() {
     try {
       const req = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
         if (currentSignature.current !== expectedSignature || fingerprint() !== basis.current) throw new Error('تغير نموذج الإذن أو بيانات المشروع والمخزون — أغلق النافذة وراجع البيانات')
-        const parsed: IssueLineInput[] = lines.filter(l => l.itemId).map(l => ({ itemId: Number(l.itemId), qty: Number(l.qty), unitAr: l.unitAr }))
+        if (lines.some(l => !l.itemId || !Number.isSafeInteger(Number(l.itemId)) || Number(l.itemId) <= 0)) throw new Error('اختر صنفاً لكل سطر أو احذف السطر الفارغ قبل صرف المواد')
+        const parsed: IssueLineInput[] = lines.map(l => ({ itemId: Number(l.itemId), qty: Number(l.qty), unitAr: l.unitAr }))
         const result = useRawDataStore.getState().issueMaterials({
           projectId: Number(projectId), issuedByEmployeeId: Number(issuedBy), receivedByEmployeeId: Number(receivedBy),
           lines: parsed, notes: notes.trim(), date,
@@ -381,15 +383,19 @@ export function ClientCollectionsPage() {
 /* ═══════════════ لوحة القيمة المكتسبة EVM ═══════════════ */
 
 export function EvmDashboardPage() {
-  const { projects, boqItems, getProjectEvm } = useDataStore()
+  const { projects, boqItems, projectCosts, purchases, purchaseReturns, payrollSlips, payrollRuns, journal, getProjectEvm } = useDataStore()
   const cur = useCur()
   const fmt = (m: number) => formatMinor(m, cur, false)
   const [projectId, setProjectId] = useState('')
 
-  const evm = useMemo(() => {
-    if (!projectId) return null
-    try { return getProjectEvm(Number(projectId)) } catch { return null }
-  }, [projectId, getProjectEvm])
+  const review = useMemo(() => {
+    void boqItems; void projectCosts; void purchases; void purchaseReturns; void payrollSlips; void payrollRuns; void journal
+    if (!projectId) return { evm: null, failed: false }
+    if (!projects.some(project => project.id === Number(projectId))) return { evm: null, failed: true }
+    try { return { evm: getProjectEvm(Number(projectId)), failed: false } }
+    catch (error) { if (error instanceof FinancialDataReviewError) return { evm: null, failed: true }; throw error }
+  }, [projectId, getProjectEvm, projects, boqItems, projectCosts, purchases, purchaseReturns, payrollSlips, payrollRuns, journal])
+  const evm = review.evm
 
   const hasBoq = projectId ? boqItems.some((b) => b.projectId === Number(projectId)) : false
 
@@ -406,8 +412,9 @@ export function EvmDashboardPage() {
         مقارنة لحظية: الموازنة (التكلفة التقديرية للبنود) × الإنجاز مقابل التكلفة الفعلية المسجلة —
         مع مؤشر كفاءة التكلفة CPI وتنبيه فوري عند التجاوز.
       </div>
+      <p role="note" className="text-amber-700 text-xs">مؤشرات EVM استرشادية وتشمل توزيع قسائم 5102 المثبت؛ لا تخصم مرتجعات الشراء ولا تشمل المسير المجمّع أو القسائم بلا توزيع. راجع اكتمال التكلفة قبل الاعتماد.</p>
 
-      {!projectId ? (
+      {review.failed ? <p role="alert" className="text-red-700">يلزم مراجعة تكاليف المشروع ومرتجعات الشراء وتوزيع الرواتب وقيودها قبل عرض مؤشرات القيمة المكتسبة.</p> : !projectId ? (
         <div className={card}><EmptyState icon="📊" title="اختر مشروعاً" sub="تُبنى اللوحة من جدول كميات المشروع (بتكاليفه التقديرية) وتكاليفه الفعلية" /></div>
       ) : !hasBoq ? (
         <div className={card}><EmptyState icon="🧮" title="لا جدول كميات لهذا المشروع" sub="أضف بنود BOQ بتكاليفها التقديرية (أو حوّل عرض سعر ببنوده) لتفعيل التحليل" /></div>

@@ -80,18 +80,20 @@ export function computePayrollLine(input: PayrollLineInput): PayrollLineComputed
     driverDuesPaidMinor: input.driverDuesPaidMinor ?? 0,
   }
   for (const [k, v] of Object.entries(normalized)) {
-    if (k !== 'employeeId' && (!Number.isInteger(v) || (v as number) < 0)) {
-      throw new Error(`قيمة «${k}» يجب أن تكون رقماً صحيحاً موجباً`)
+    if (k !== 'employeeId' && (!Number.isSafeInteger(v) || (v as number) < 0)) {
+      throw new Error(`مبلغ «${k}» يجب أن يكون رقماً صحيحاً آمناً غير سالب`)
     }
   }
   const grossMinor = normalized.baseMinor + normalized.allowancesMinor + normalized.overtimeMinor
-  const netMinor = grossMinor - normalized.deductionsMinor - normalized.advancesMinor
+  const cuts = normalized.deductionsMinor + normalized.advancesMinor
+  const netMinor = grossMinor - cuts
+  if (!Number.isSafeInteger(grossMinor) || !Number.isSafeInteger(cuts) || !Number.isSafeInteger(netMinor)) throw new Error('مجموع الراتب أو الخصومات يتجاوز الحدود الآمنة')
   if (netMinor < 0) throw new Error('الخصومات والسلف أكبر من إجمالي الراتب — الصافي لا يكون سالباً')
   return { ...normalized, grossMinor, netMinor }
 }
 
 export function computePayrollTotals(lines: PayrollLineComputed[]): PayrollTotals {
-  return {
+  const totals = {
     employeeCount: lines.length,
     grossMinor: lines.reduce((a, l) => a + l.grossMinor, 0),
     deductionsMinor: lines.reduce((a, l) => a + l.deductionsMinor + l.advancesMinor, 0),
@@ -100,6 +102,8 @@ export function computePayrollTotals(lines: PayrollLineComputed[]): PayrollTotal
     commissionsPaidMinor: lines.reduce((a, l) => a + (l.commissionsPaidMinor ?? 0), 0),
     driverDuesPaidMinor: lines.reduce((a, l) => a + (l.driverDuesPaidMinor ?? 0), 0),
   }
+  if (Object.values(totals).some(amount => !Number.isSafeInteger(amount) || amount < 0)) throw new Error('إجمالي المسير يتجاوز الحدود الآمنة')
+  return totals
 }
 
 /** ملخص مسير مرحّل — شهره وموظفوه (لمنع تكرار صرف راتب الموظف نفسه في الشهر) */

@@ -51,6 +51,11 @@ beforeEach(() => {
       lines: [{ accountCode: '1104', debit: 720, credit: 0 }, { accountCode: '1105', debit: 80, credit: 0 }, { accountCode: '4107', debit: 0, credit: 800 }],
       createdBy: 'اختبار', createdAt: '2026-09-10T00:00:00', reversedByEntryId: null, reversesEntryId: null,
     }, {
+      id: 900, entryNumber: 900, date: '2026-09-01', description: 'تعزيز عهدة المصفوفة',
+      sourceType: 'payment_voucher', sourceCollection: 'custodyTxs', sourceId: 81,
+      lines: [{ accountCode: '1108', debit: 500, credit: 0 }, { accountCode: '1101', debit: 0, credit: 500 }],
+      createdBy: 'اختبار', createdAt: '2026-09-01T00:00:00', reversedByEntryId: null, reversesEntryId: null,
+    }, {
       id: 52, entryNumber: 52, date: '2026-09-28', description: 'استحقاق قسائم المصفوفة',
       sourceType: 'payroll', sourceId: 1,
       lines: [{ accountCode: '5102', debit: 9000, credit: 0 }, { accountCode: '2104', debit: 0, credit: 5000, note: `PS-0091 — ${employee.nameAr}` }, { accountCode: '2104', debit: 0, credit: 4000, note: `PS-0092 — ${employee2.nameAr}` }],
@@ -80,12 +85,13 @@ describe('مصفوفة سندات القبض/الصرف × الأطراف وال
   })
 
   it('الحارس القائم: 1104 بلا عميل و2101 بلا مورد مرفوضان — لا سند يفك دفتر الطرف عن الدفتر العام', () => {
+    const before = useDataStore.getState().journal
     expect(() => useDataStore.getState().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '1104', amountMinor: 100, description: 'بلا طرف' }))
       .toThrow(/يتطلب اختيار عميل مسجل/)
     expect(() => useDataStore.getState().postVoucher({ kind: 'payment', treasury: '1101', counterAccountCode: '2101', amountMinor: 100, description: 'بلا طرف' }))
       .toThrow(/يتطلب اختيار مورد مسجل/)
     /* لا قيد تسرب لأي من الرفضين */
-    expect(useDataStore.getState().journal.filter((e) => e.sourceType === 'payment_voucher')).toHaveLength(0)
+    expect(useDataStore.getState().journal).toEqual(before)
   })
 
   it('صرف مورد 2101: يطفئ فاتورة الشراء FIFO ويرفع ما فاض تحت الحساب — ورصيد كشفه ينزل بالضبط', () => {

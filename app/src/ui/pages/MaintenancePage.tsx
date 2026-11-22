@@ -1,3 +1,4 @@
+import { WhatsappIcon } from '../components/WhatsappIcon.tsx'
 import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * أوامر الصيانة (المرحلة 6 — القرار 13):
@@ -409,7 +410,7 @@ export function MaintenancePage() {
                           onClick={() => { window.open(ticketWhatsappLink(t.customerPhone, buildTicketStatusMessage(t, setup.shopName || 'تَحَكَّم')), '_blank', 'noopener'); try { logTicketNotificationSent(t.id, t.status) } catch { /* لا يمنع الإرسال */ } }}
                           title="إبلاغ العميل بحالة الجهاز عبر واتساب — يُسجَّل في سجل التذكرة أنه أُرسل"
                           className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all"
-                        >📹</button>
+                        ><WhatsappIcon size={14} /></button>
                       )}
                       <button onClick={() => (t.status === 'delivered' ? printTicketInvoice(t) : printTicketReceipt(t))} title={t.status === 'delivered' ? 'طباعة فاتورة الصيانة (بلا تكلفة/ربح)' : 'طباعة إيصال استلام الجهاز'} className="p-1.5 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all"><Printer size={14} /></button>
                       <button onClick={() => setViewing(t)} className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Eye size={14} /></button>

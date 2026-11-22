@@ -13,7 +13,7 @@ export type SnapshotKeyProbeResult =
   | { status: 'missing' | 'no-encrypted-snapshots' | 'verified' | 'unreadable'; stores: string[] }
   | { status: 'mismatch'; stores: string[] }
 
-function decryptSnapshot(stored: string, key: Buffer): string {
+export function decryptSnapshot(stored: string, key: Buffer): string {
   const parts = stored.split(':')
   if (parts.length !== 4 || `${parts[0]}:${parts[1]}:` !== 'enc:v1:') throw new Error('صيغة تشفير غير مدعومة')
   const iv = Buffer.from(parts[2], 'base64url')

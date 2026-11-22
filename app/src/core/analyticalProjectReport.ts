@@ -42,6 +42,8 @@ export interface AnalyticalProjectSource {
     refundedRetentionMinor?: Minor
     refunds?: readonly { date: string; amountMinor: Minor; taxShareMinor: Minor; mode: 'cash' | 'customer_credit'; journalEntryId: number }[]
   }[]
+  /** المصدر يشمل توزيع قسائم 5102 المثبتة فقط؛ ليس دليلاً على اكتمال الرواتب. */
+  payrollAllocationIncluded?: boolean
   /** مصروفات المشروع (سطر لكل مستند) */
   expenses: {
     date: string
@@ -407,6 +409,7 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
   }
 
   const notes: string[] = []
+  if (src.payrollAllocationIncluded) notes.push('تتضمن المصروفات توزيعات قسائم 5102 المثبتة فقط إضافة إلى 5110؛ المسير المجمّع والقسائم بلا توزيع غير مشمولين، ولا يُنشأ قيد إضافي. راجع اكتمال الرواتب قبل الاعتماد.')
   if (src.originalLedgerIncomplete) notes.push('تنبيه محاسبي: قيد مستخلص أصلي مفقود أو غير مطابق؛ لا تعتمد المستحق أو التحصيل أو النتيجة حتى مراجعة المستندات والدفتر.')
   else if (refunds.incomplete) notes.push('تنبيه محاسبي: سجلات إشعارات المستخلصات ناقصة أو غير متطابقة مع الإجماليات؛ لا تعتمد المستحق أو التحصيل أو النتيجة حتى مراجعة المستندات.')
   else if (refunds.amount > 0) notes.push('خُصمت إشعارات المستخلصات من الإيراد والضريبة والمستحق حسب قيودها؛ الرد النقدي حركة خارجة، والدائن ليس تحصيلاً. المتبقي بعد العمليات محسوب من المستحق الحالي بعد الإشعارات، لا كرصد تاريخي لكل تاريخ.')

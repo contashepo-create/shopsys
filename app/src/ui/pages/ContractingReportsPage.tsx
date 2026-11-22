@@ -1,3 +1,4 @@
+import { projectSystemStatusLabel } from '../../core/projectClosureReview.ts'
 import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 import { projectExtractSettlement, projectOpenBalances } from '../../core/projectReportBalances.ts'
 import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
@@ -12,7 +13,7 @@ import { FileSpreadsheet, BarChart3, Users, Receipt, Calculator, Printer } from 
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
-import { formatMinor } from '../../core/money.ts'
+import { addMinor, formatMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, type CostKind, projectReportCard, clientContractingCard, type ClientProjectRow } from '../../core/contracting.ts'
 import { netProjectExtractTotals } from '../../core/projectExtractRefundIntegrity.ts'
 import { creditedProjectRetention } from '../../core/projectExtractNet.ts'
@@ -20,11 +21,12 @@ import { toCsv } from '../../core/security.ts'
 import { buildProjectExpenseLedger } from '../../core/projectExpenseLedger.ts'
 import { ProjectExpenseLedgerCard } from '../contracting/ProjectExpenseLedgerCard.tsx'
 import { AnalyticalProjectReportView } from '../contracting/AnalyticalProjectReportView.tsx'
+import { projectReportBasis } from '../contracting/projectReportBasis.ts'
 import type { ExportSheet } from '../../core/fullExport.ts'
 import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrint.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
-import { EmptyState } from '../components/ui.tsx'
+import { EmptyState, useToast } from '../components/ui.tsx'
 import { todayLocalIso } from '../../core/time.ts'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700'
@@ -40,15 +42,21 @@ function downloadCsv(rows: readonly Record<string, unknown>[], filename: string)
 }
 
 export function ContractingReportsPage() {
-  const { projects, getRemainingRetention } = useDataStore()
+  const { projects, getRemainingRetention, getProjectProfit } = useDataStore()
   const failed: string[] = []
+  let costs = 0, profits = 0
   for (const project of projects) {
-    try { getRemainingRetention(project.id) } catch (error) {
+    try {
+      getRemainingRetention(project.id)
+      const result = getProjectProfit(project.id)
+      try { costs = addMinor(costs, result.costsMinor); profits = addMinor(profits, result.profitMinor) }
+      catch { throw new FinancialDataReviewError('إجماليات المشاريع', 'المجموع خارج النطاق الآمن') }
+    } catch (error) {
       if (!(error instanceof FinancialDataReviewError)) throw error
       failed.push(project.nameAr)
     }
   }
-  if (failed.length) return <section role="alert" className="rounded-xl border border-amber-400 p-4 text-amber-700">يلزم مراجعة المستخلصات وتحصيلات المحتجز وقيودها قبل عرض أو تصدير تقارير المقاولات: {failed.join('، ')}.</section>
+  if (failed.length) return <section role="alert" className="rounded-xl border border-amber-400 p-4 text-amber-700">يلزم مراجعة المستخلصات والمحتجز وتكاليف المشروع أو مرتجعات الشراء وتوزيعات الرواتب وقيودها قبل عرض أو تصدير تقارير المقاولات: {failed.join('، ')}.</section>
   return <ReviewedContractingReportsPage />
 }
 
@@ -56,9 +64,11 @@ function ReviewedContractingReportsPage() {
   const {
     projects, projectExtracts, projectCosts, retentionReleases, changeOrders, customers, clientAdvances,
     suppliers, treasuries, custodyFiles, boqItems, journal,
-    getOpenClientInvoices, getProjectCostBreakdown, assertProjectExtractRefunds, assertProjectExtractOriginals,
+    getOpenClientInvoices, getProjectCostBreakdown, getProjectPayrollCosts, assertProjectExtractRefunds, assertProjectExtractOriginals,
   } = useDataStore()
   const { setup } = useAppStore()
+  const toast = useToast()
+  const reportBasis = projectReportBasis(useDataStore.getState())
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -66,14 +76,18 @@ function ReviewedContractingReportsPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   /* §99: مطبوعات الوحدة بالغلاف الموحد (تصدير PDF/Excel لكل تقارير الوحدات) */
   const printDoc = (title: string, subtitle: string, bodyHtml: string) => {
-    /* طلب المالك: معاينة قبل الطباعة بزر طباعة — بدل الطباعة الفورية */
+    /* لا تُطبع نسخة سبق بناؤها إذا تغير تخصيص الرواتب أو لم تعد أدلته سليمة. */
+    const payrollBasis = JSON.stringify(cards.map(row => [row.project.id, row.payroll]))
     const build = () => {
       const fresh = useDataStore.getState()
-      for (const project of fresh.projects) fresh.getRemainingRetention(project.id)
+      if (projectReportBasis(fresh) !== reportBasis) throw new Error('تغير أساس التقرير')
+      for (const project of fresh.projects) { fresh.getRemainingRetention(project.id); fresh.getProjectProfit(project.id) }
+      if (JSON.stringify(fresh.projects.map(project => [project.id, fresh.getProjectPayrollCosts(project.id)])) !== payrollBasis) throw new Error('تغيرت توزيعات الرواتب — أعد فتح التقرير')
       const { reportPrint, receipt } = useAppStore.getState()
-      return renderReportShell({ title, subtitle, companyName: setup.shopName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml, settings: reportPrint })
+      return renderReportShell({ title, subtitle, companyName: setup.shopName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml: `<p>التكاليف تشمل 5110 وتوزيع القسائم المثبت من 5102 فقط؛ المسير المجمّع والقسائم بلا توزيع غير مشمولين.</p>${bodyHtml}`, settings: reportPrint })
     }
-    printHtml(build(), { preview: { title: `معاينة ${title} قبل الطباعة`, rebuild: build } })
+    try { printHtml(build(), { preview: { title: `معاينة ${title} قبل الطباعة`, rebuild: build } }) }
+    catch { toast.show('تغيّرت بيانات التقرير أو تحتاج مراجعة — أعد فتحه', 'error') }
   }
   const sectionHtml = (label: string) => `<p class="sec" style="margin:12px 0 4px;padding:6px 10px">${escHtml(label)}</p>`
   const [tab, setTab] = usePersistedSectionView('contracting-reports', 'projects', ['projects', 'project', 'client', 'dues', 'formal'] as const)
@@ -89,16 +103,27 @@ function ReviewedContractingReportsPage() {
     const orders = changeOrders.filter((o) => o.projectId === p.id)
     const advances = clientAdvances.filter((a) => a.projectId === p.id)
     const flat = extracts.map((e) => ({ ...netProjectExtractTotals(e), retentionMinor: (e.totals.retentionMinor - creditedProjectRetention(e)), date: e.date }))
-    /* §95 (محاذاة pro-acc — طلب المالك): التكاليف = بنود projectCosts نفسها (بكل
-       مصادرها الموسومة: يدوي/شهادة باطن/أجور يومية/فاتورة شراء/إذن صرف) − مرتجعات
-       الشراء التي عكست 5110 — فتطابق البطاقة صافي 5110 بالدفتر بلا جمع مزدوج. */
+    /* بنود projectCosts بمصادرها المختلفة. أي مرتجع مرتبط بفاتورة المشروع
+       يتوقف للمراجعة في المستودع حتى يتوفر مسار يثبت عكس 5110. */
     const bd = getProjectCostBreakdown(p.id)
+    const payroll = getProjectPayrollCosts(p.id)
+    const payrollTotal = payroll.reduce((sum, row) => addMinor(sum, row.amountMinor), 0)
     const fullCosts = [
-      ...projectCosts.filter((c) => c.projectId === p.id).map((c) => ({ kind: c.kind, amountMinor: c.amountMinor })),
+      ...projectCosts.filter((c) => c.projectId === p.id).flatMap((c) => c.lines?.length ? c.lines.map(line => ({ kind: line.kind, amountMinor: line.netMinor })) : [{ kind: c.kind, amountMinor: c.amountMinor }]),
       ...bd.purchaseReturns.map((r) => ({ kind: 'materials' as CostKind, amountMinor: -r.totalMinor })),
+      ...payroll.map((row) => ({ kind: 'labor' as CostKind, amountMinor: row.amountMinor })),
     ]
-    return { project: p, card: projectReportCard(p, flat, fullCosts, released, orders, advances), breakdown: bd }
+    return { project: p, card: projectReportCard(p, flat, fullCosts, released, orders, advances), breakdown: bd, payroll, payrollTotal }
   })
+  const guardedDownloadCsv = (rows: readonly Record<string, unknown>[], filename: string) => {
+    try {
+      const fresh = useDataStore.getState()
+      if (projectReportBasis(fresh) !== reportBasis) throw new Error('تغير أساس التقرير')
+      if (JSON.stringify(fresh.projects.map(project => [project.id, fresh.getProjectPayrollCosts(project.id)])) !== JSON.stringify(cards.map(row => [row.project.id, row.payroll]))) throw new Error('تغيرت توزيعات الرواتب')
+      for (const project of fresh.projects) fresh.getProjectProfit(project.id)
+      downloadCsv(rows.map(row => ({ ...row, 'ملاحظة نطاق الرواتب': 'يشمل التوزيع المثبت للقسائم فقط، ولا يشمل المسير المجمّع أو القسائم بلا توزيع' })), filename)
+    } catch { toast.show('تغيّرت بيانات الرواتب أو تحتاج مراجعة — أعد فتح التقرير', 'error') }
+  }
 
   /** المفتوح من المستخلصات لكل مشروع: من دفتر التوزيع (docKey = extract:<id>) */
   // الدفتر الكامل يُظهر المستند المسدّد برصيد صفر بدلاً من استنتاجه من الغياب.
@@ -223,7 +248,7 @@ function ReviewedContractingReportsPage() {
       `${p.code} — ${p.nameAr}`, p.clientName || '—', fmt(c.contractEffectiveMinor), `${c.progressPercent}٪`,
       fmt(c.extractedMinor), fmt(c.costsMinor), `${fmt(c.profitMinor)} (${c.marginPercent}٪)`,
       fmt(c.retentionHeldMinor), fmt(c.advancesRemainingMinor), openProjectLabel(p.id),
-      p.status === 'active' ? 'جارٍ' : 'مُسلَّم',
+      projectSystemStatusLabel(p.status),
     ]),
     totalRow: ['الإجمالي', '', fmt(totals.contract), '', fmt(totals.extracted), fmt(totals.costs), fmt(totals.profit), fmt(totals.retention), fmt(totals.advances), totalOpenLabel, ''],
   }))
@@ -253,7 +278,7 @@ function ReviewedContractingReportsPage() {
     ]
     const body = [
       htmlTableHtml({ headers: ['مؤشرات البطاقة', 'القيمة'], numCols: [1], rows: kpiRows }),
-      sectionHtml('مصادر التكاليف — تُطابق صافي 5110 بالدفتر'),
+      sectionHtml('مصادر التكاليف — مستندات 5110 وتخصيص القسائم من 5102'),
       htmlTableHtml({
         headers: ['المصدر', 'المبلغ'], numCols: [1],
         rows: [
@@ -263,9 +288,14 @@ function ReviewedContractingReportsPage() {
           ['فواتير شراء مربوطة', fmt(bd.totals.purchasesMinor)],
           ['أذون صرف مواد من المخزن', fmt(bd.totals.materialIssuesMinor)],
           ['مرتجعات شراء (خافضة)', fmt(-bd.totals.returnsMinor)],
+          ['تخصيص قسائم الرواتب المثبت (5102)', fmt(selected.payrollTotal)],
         ],
-        totalRow: ['إجمالي تكاليف المشروع', fmt(bd.totals.allMinor)],
+        totalRow: ['إجمالي تكاليف المشروع', fmt(selected.card.costsMinor)],
       }),
+      ...(selected.payroll.length ? [sectionHtml('تفصيل التوزيع المثبت من 5102'), htmlTableHtml({
+        headers: ['التاريخ', 'القسيمة', 'قيد الاستحقاق', 'النسبة ٪', 'نصيب المشروع'], numCols: [2, 3, 4],
+        rows: selected.payroll.map(row => [row.date, row.slipNumber, row.journalEntryId, row.basisPoints / 100, fmt(row.amountMinor)]),
+      })] : []),
       ...(selectedExtracts.length ? [
         sectionHtml(`المستخلصات (${selectedExtracts.length})`),
         htmlTableHtml({
@@ -288,7 +318,7 @@ function ReviewedContractingReportsPage() {
         }),
       ] : []),
       ...(selectedLedger.rows.length ? [
-        sectionHtml(`كشف مصروفات المشروع التفصيلي (${selectedLedger.totals.docsCount} مستند · ${selectedLedger.totals.linesCount} بند)`),
+        sectionHtml(`كشف مستندات مصروف 5110 فقط، دون مرتجعات الشراء أو توزيع 5102 (${selectedLedger.totals.docsCount} مستند · ${selectedLedger.totals.linesCount} بند)`),
         htmlTableHtml({
           headers: ['التاريخ', 'المستند', 'مرجع المورد', 'المورد', 'بيان البند', 'التصنيف', 'كمية × سعر', 'الصافي', 'الضريبة', 'الإجمالي'],
           numCols: [6, 7, 8, 9],
@@ -328,7 +358,7 @@ function ReviewedContractingReportsPage() {
       sectionHtml(`مشاريع العميل (${clientRows.length})`),
       htmlTableHtml({
         headers: ['المشروع', 'العقد الفعلي', 'المستخلصات', 'محتجز قائم', 'مقدمة متبقية', 'مفتوح', 'الحالة'], numCols: [1, 2, 3, 4, 5],
-        rows: clientRows.map((r) => [`${r.projectCode} — ${r.projectName}`, fmt(r.contractEffectiveMinor), fmt(r.extractedMinor), fmt(r.retentionHeldMinor), fmt(r.advancesRemainingMinor), r.openExtractsMinor > 0 ? fmt(r.openExtractsMinor) : '✓ مسددة', r.status === 'active' ? 'جارٍ' : r.status === 'completed' ? 'مكتمل' : 'مُسلَّم']),
+        rows: clientRows.map((r) => [`${r.projectCode} — ${r.projectName}`, fmt(r.contractEffectiveMinor), fmt(r.extractedMinor), fmt(r.retentionHeldMinor), fmt(r.advancesRemainingMinor), r.openExtractsMinor > 0 ? fmt(r.openExtractsMinor) : '✓ مسددة', projectSystemStatusLabel(r.status)]),
         totalRow: ['الإجمالي', fmt(c.contractMinor), fmt(c.extractedMinor), fmt(c.retentionHeldMinor), fmt(c.advancesRemainingMinor), fmt(c.openDocsMinor), ''],
       }),
       ...(clientExtractRows.length ? [
@@ -351,6 +381,7 @@ function ReviewedContractingReportsPage() {
 
   return (
     <div className="space-y-4">
+      <p role="note" className="text-amber-700 text-sm">تشمل الربحية تكاليف 5110 وتوزيع القسائم المثبت من 5102 فقط، دون قيد إضافي. المسير المجمّع والقسائم بلا توزيع غير مشمولين؛ راجع اكتمال تكاليف الرواتب قبل الاعتماد.</p>
       {unlinkedReceivables.size > 0 && <p role="alert" className="text-amber-700 text-sm">توجد مستخلصات بعميل غير مرتبط أو مفقود؛ لا تُعتمد التحصيلات والذمم الإجمالية حتى مراجعتها، وقد تُستبعد من تقارير العملاء.</p>}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-black flex items-center gap-2"><BarChart3 className="w-6 h-6 text-orange-500" /> مركز تقارير المقاولات</h1>
@@ -382,13 +413,13 @@ function ReviewedContractingReportsPage() {
               <div className="flex justify-end gap-1.5">
                 <button onClick={printProjects} data-print="projects"
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
-                <button onClick={() => downloadCsv(cards.map((r) => ({
+                <button onClick={() => guardedDownloadCsv(cards.map((r) => ({
                   'الكود': r.project.code, 'المشروع': r.project.nameAr, 'العميل': r.project.clientName || '—',
                   'قيمة العقد الفعلية': fmt(r.card.contractEffectiveMinor), 'أوامر معلقة': fmt(r.card.changeOrdersPendingMinor),
                   'المستخلصات': fmt(r.card.extractedMinor), 'الإنجاز ٪': r.card.progressPercent,
                   'التكاليف': fmt(r.card.costsMinor), 'الربح': fmt(r.card.profitMinor), 'الهامش ٪': r.card.marginPercent,
                   'محتجز قائم': fmt(r.card.retentionHeldMinor), 'دفعات مقدمة متبقية': fmt(r.card.advancesRemainingMinor),
-                  'ذمم مفتوحة': openProjectLabel(r.project.id), 'الحالة': r.project.status === 'active' ? 'جارٍ' : 'مُسلَّم',
+                  'ذمم مفتوحة': openProjectLabel(r.project.id), 'الحالة': projectSystemStatusLabel(r.project.status),
                 })), `تقرير-مشاريع-المقاولات-${todayLocalIso()}.csv`)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير اللوحة CSV</button>
               </div>
@@ -414,7 +445,7 @@ function ReviewedContractingReportsPage() {
                         <td className={`px-3 py-2.5 font-black whitespace-nowrap ${c.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(c.profitMinor)}<span className="block text-[10px] font-bold opacity-70">{c.marginPercent}٪</span></td>
                         <td className="px-3 py-2.5 text-amber-600 font-bold whitespace-nowrap">{fmt(c.retentionHeldMinor)}</td>
                         <td className="px-3 py-2.5 font-bold whitespace-nowrap">{unlinkedReceivables.has(p.id) ? <span className="text-amber-700">{openProjectLabel(p.id)}</span> : openByProject.get(p.id) ? <span className="text-rose-600">{openProjectLabel(p.id)}</span> : <span className="text-emerald-600">✓</span>}</td>
-                        <td className="px-3 py-2.5"><span className={`px-2 py-1 rounded-lg text-[10.5px] font-bold ${p.status === 'active' ? 'bg-sky-500/10 text-sky-600' : 'bg-emerald-500/10 text-emerald-600'}`}>{p.status === 'active' ? 'جارٍ' : 'مُسلَّم'}</span></td>
+                        <td className="px-3 py-2.5"><span className={`px-2 py-1 rounded-lg text-[10.5px] font-bold ${p.status === 'active' ? 'bg-sky-500/10 text-sky-600' : 'bg-emerald-500/10 text-emerald-600'}`}>{projectSystemStatusLabel(p.status)}</span></td>
                       </tr>
                     ))}
                   </tbody>
@@ -440,7 +471,7 @@ function ReviewedContractingReportsPage() {
                     <div className="flex gap-1.5">
                     <button onClick={printProjectCard} data-print="project-card"
                       className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
-                    <button onClick={() => downloadCsv([
+                    <button onClick={() => guardedDownloadCsv([
                       { 'البند': 'قيمة العقد الأصلية', 'القيمة': fmt(selected.card.contractOriginalMinor) },
                       { 'البند': 'أوامر التغيير المعتمدة (عدد)', 'القيمة': selected.card.changeOrdersApprovedCount },
                       { 'البند': 'قيمة العقد الفعلية', 'القيمة': fmt(selected.card.contractEffectiveMinor) },
@@ -490,7 +521,7 @@ function ReviewedContractingReportsPage() {
                     ))}
                   </div>
 
-                  {/* §95: مصادر التكاليف — مطابقة صافي 5110 بالدفتر */}
+                  {/* مصادر التكاليف المسجلة؛ لا يثبت العرض مطابقة كل دفتر 5110. */}
                   {(() => {
                     const bd = selected.breakdown
                     const rows: [string, number][] = [
@@ -500,12 +531,13 @@ function ReviewedContractingReportsPage() {
                       ['فواتير شراء مربوطة', bd.totals.purchasesMinor],
                       ['أذون صرف مواد من المخزن', bd.totals.materialIssuesMinor],
                       ['مرتجعات شراء (خافضة)', -bd.totals.returnsMinor],
+                      ['تخصيص قسائم الرواتب المثبت (5102)', selected.payrollTotal],
                     ]
                     return (
                       <div className={`${card} overflow-hidden`} data-cost-sources>
                         <div className="px-4 py-2.5 text-[12px] font-black text-slate-500 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                          <span className="flex items-center gap-1"><Calculator size={13} /> مصادر التكاليف (تُطابق صافي 5110 بالدفتر)</span>
-                          <b className="text-rose-600">{fmt(bd.totals.allMinor)} {cur.symbol}</b>
+                          <span className="flex items-center gap-1"><Calculator size={13} /> مصادر التكاليف (مستندات 5110 وتخصيص 5102)</span>
+                          <b className="text-rose-600">{fmt(selected.card.costsMinor)} {cur.symbol}</b>
                         </div>
                         <table className="w-full text-[12px]">
                           <tbody>
@@ -515,14 +547,21 @@ function ReviewedContractingReportsPage() {
                                 <td className={`px-4 py-2 text-left font-bold ${value < 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(value)}</td>
                               </tr>
                             ))}
-                            <tr className="bg-slate-500/5 font-black"><td className="px-4 py-2">إجمالي تكاليف المشروع</td><td className="px-4 py-2 text-left text-rose-600">{fmt(bd.totals.allMinor)}</td></tr>
+                            <tr className="bg-slate-500/5 font-black"><td className="px-4 py-2">إجمالي تكاليف المشروع</td><td className="px-4 py-2 text-left text-rose-600">{fmt(selected.card.costsMinor)}</td></tr>
                           </tbody>
                         </table>
                       </div>
                     )
                   })()}
 
-                  {/* كشف المصروفات التفصيلي + الكشف الشامل للمشروع (Excel ثلاث أوراق) */}
+                  {selected.payroll.length > 0 && <div className={`${card} overflow-x-auto`} data-project-payroll-costs>
+                    <h3 className="px-4 py-2 font-black">تخصيص قسائم الرواتب المثبت من 5102</h3>
+                    <table className="w-full text-[12px]"><thead><tr>{['التاريخ', 'القسيمة', 'قيد الاستحقاق', 'النسبة ٪', 'نصيب المشروع'].map(label => <th key={label} className="px-4 py-2 text-right">{label}</th>)}</tr></thead>
+                      <tbody>{selected.payroll.map(row => <tr key={row.slipId}><td className="px-4 py-2">{row.date}</td><td className="px-4 py-2">{row.slipNumber}</td><td className="px-4 py-2">{row.journalEntryId}</td><td className="px-4 py-2">{row.basisPoints / 100}٪</td><td className="px-4 py-2">{fmt(row.amountMinor)}</td></tr>)}</tbody>
+                    </table>
+                  </div>}
+
+                  {/* كشف المصروفات التفصيلي + أوراق المشروع والرواتب */}
                   {(() => {
                     const mny = (m: number) => m / 10 ** cur.decimals
                     const openRemaining = selectedOpenDocs.reduce((a, inv) => a + Math.max(0, inv.dueMinor - inv.settledMinor), 0)
@@ -541,6 +580,8 @@ function ReviewedContractingReportsPage() {
                         ['الاحتفاظ المحتجَز لدى العميل', mny(selected.card.retentionHeldMinor)],
                         ['الدفعات المقدمة المتبقية', mny(selected.card.advancesRemainingMinor)],
                         ['ذمم مستخلصات مفتوحة', mny(openRemaining)],
+                        ['تخصيص قسائم الرواتب المثبت (5102)', mny(selected.payrollTotal)],
+                        ['تنبيه', 'لا تشمل الربحية المسير المجمّع أو القسائم بلا توزيع؛ راجع اكتمال الرواتب'],
                         ['إجمالي التكاليف', mny(selected.card.costsMinor)],
                         ['صافي ربح المشروع', mny(selected.card.profitMinor)],
                       ],
@@ -550,13 +591,24 @@ function ReviewedContractingReportsPage() {
                       headers: ['رقم المستخلص', 'التاريخ', 'الأعمال (شامل الضريبة)', 'الضريبة', 'الاحتفاظ', 'صافي المستحق', 'الحالة'],
                       rows: selectedExtracts.map((e) => [e.extractNumber, e.date.slice(0, 10), mny(netProjectExtractTotals(e).grossMinor), mny(netProjectExtractTotals(e).vatMinor), mny((e.totals.retentionMinor - creditedProjectRetention(e))), mny(e.totals.dueMinor - (e.refundedMinor ?? 0)), e.isFinal ? 'ختامي' : 'جاري']),
                     }
+                    const payrollSheet: ExportSheet = {
+                      nameAr: 'توزيع الرواتب 5102',
+                      headers: ['التاريخ', 'القسيمة', 'قيد الاستحقاق', 'النسبة ٪', 'نصيب المشروع'],
+                      rows: selected.payroll.map(row => [row.date, row.slipNumber, row.journalEntryId, row.basisPoints / 100, mny(row.amountMinor)]),
+                    }
                     return (
                       <ProjectExpenseLedgerCard
                         costs={selectedCosts}
                         projectCode={selected.project.code}
                         projectNameAr={selected.project.nameAr}
-                        preSheets={[cardSheet, extractsSheet]}
-                        title="كشف المصروفات التفصيلي — وزر Excel يُصدّر كشف المشروع الشامل (٣ أوراق)"
+                        preSheets={[cardSheet, extractsSheet, payrollSheet]}
+                        assertExportCurrent={() => {
+                          const fresh = useDataStore.getState()
+                          if (projectReportBasis(fresh) !== reportBasis) throw new Error('تغير أساس التقرير')
+                          if (JSON.stringify(fresh.getProjectPayrollCosts(selected.project.id)) !== JSON.stringify(selected.payroll)) throw new Error('تغيرت توزيعات الرواتب')
+                          fresh.getProjectProfit(selected.project.id)
+                        }}
+                        title="كشف مصروفات 5110 — Excel يشمل بطاقة المشروع وتوزيعات 5102"
                       />
                     )
                   })()}
@@ -655,8 +707,8 @@ function ReviewedContractingReportsPage() {
                   <div className="flex gap-1.5">
                     <button onClick={printClientCard} data-print="client-card"
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
-                    <button onClick={() => downloadCsv([
-                      ...clientRows.map((r) => ({ 'نوع الصف': 'مشروع', 'المشروع': `${r.projectCode} — ${r.projectName}`, 'العقد الفعلي': fmt(r.contractEffectiveMinor), 'المستخلصات': fmt(r.extractedMinor), 'محتجز قائم': fmt(r.retentionHeldMinor), 'مقدمة متبقية': fmt(r.advancesRemainingMinor), 'مفتوح': fmt(r.openExtractsMinor), 'محصّل': fmt(r.settledOnExtractsMinor), 'الحالة': r.status === 'active' ? 'جارٍ' : r.status === 'completed' ? 'مكتمل' : 'مُسلَّم' })),
+                    <button onClick={() => guardedDownloadCsv([
+                      ...clientRows.map((r) => ({ 'نوع الصف': 'مشروع', 'المشروع': `${r.projectCode} — ${r.projectName}`, 'العقد الفعلي': fmt(r.contractEffectiveMinor), 'المستخلصات': fmt(r.extractedMinor), 'محتجز قائم': fmt(r.retentionHeldMinor), 'مقدمة متبقية': fmt(r.advancesRemainingMinor), 'مفتوح': fmt(r.openExtractsMinor), 'محصّل': fmt(r.settledOnExtractsMinor), 'الحالة': projectSystemStatusLabel(r.status) })),
                       ...clientExtractRows.map(({ extract: e, projectName, settledMinor, remainingMinor }) => ({ 'نوع الصف': 'مستخلص', 'المشروع': projectName, 'العقد الفعلي': '', 'المستخلصات': fmt(netProjectExtractTotals(e).grossMinor), 'محتجز قائم': fmt((e.totals.retentionMinor - creditedProjectRetention(e))), 'مقدمة متبقية': '', 'مفتوح': fmt(remainingMinor), 'محصّل': fmt(settledMinor), 'الحالة': e.payment === 'cash' ? 'نقدي' : remainingMinor > 0 ? 'آجل مفتوح' : 'آجل مسدد' })),
                     ], `بطاقة-عميل-${clientName || clientId}-${todayLocalIso()}.csv`)}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير البطاقة CSV</button>
@@ -693,7 +745,7 @@ function ReviewedContractingReportsPage() {
                             <td className="px-3 py-2.5 text-amber-600">{fmt(r.retentionHeldMinor)}</td>
                             <td className="px-3 py-2.5 text-sky-600">{fmt(r.advancesRemainingMinor)}</td>
                             <td className={`px-3 py-2.5 font-bold ${r.openExtractsMinor > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{r.openExtractsMinor > 0 ? fmt(r.openExtractsMinor) : '✓ مسددة'}</td>
-                            <td className="px-3 py-2.5">{r.status === 'active' ? '🟢 جارٍ' : '✅ مُسلَّم'}</td>
+                            <td className="px-3 py-2.5">{projectSystemStatusLabel(r.status)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -739,7 +791,7 @@ function ReviewedContractingReportsPage() {
               <div className="flex justify-end gap-1.5">
                 <button onClick={printDues} data-print="dues"
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
-                <button onClick={() => downloadCsv([
+                <button onClick={() => guardedDownloadCsv([
                   ...clientDues.map((row) => ({
                     'العميل': row.nameAr, 'الأعمال المستخلصة': fmt(row.extractedMinor), 'المحتجز لدى العميل': fmt(row.retentionMinor),
                     'ذمم مفتوحة': fmt(row.openMinor), 'مستخلصات آجلة': row.openDocs,

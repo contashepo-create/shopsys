@@ -8,7 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, ChevronLeft, ChevronRight, FileCheck2 } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { getEffectiveActiveBranch, useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { projectExtractFingerprint, ProjectCommitUnconfirmedError, withProjectExtractCommit } from '../../data/projectExtractCommit.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -54,7 +54,7 @@ export function ExtractWizardWindowView() {
   const [desc, setDesc] = useState('')
   const [vatOn, setVatOn] = useState(setup.vatPercent > 0)
   const [payment, setPayment] = useState<'credit' | 'cash'>('credit')
-  const [treasury, setTreasury] = useState('1101')
+  const [treasury, setTreasury] = useState(() => getEffectiveActiveBranch(useRawDataStore.getState())?.treasuryCode ?? '1101')
   const [recovery, setRecovery] = useState('')
   const [isFinal, setIsFinal] = useState(false)
   const [posted, setPosted] = useState<{ id: number; extractNumber: string; dueMinor: number; retentionMinor: number; confirmed: boolean } | null>(null)

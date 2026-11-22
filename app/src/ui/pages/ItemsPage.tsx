@@ -23,7 +23,7 @@ import { UNIT_GROUPS } from '../../core/units.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
-import { buildItemLedger } from '../../core/itemLedger.ts'
+import { buildItemLedger, scopeItemLedgerWarehouse } from '../../core/itemLedger.ts'
 import { useItemLedgerInput } from '../hooks/useItemLedgerInput.ts'
 import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { renderItemLedgerHtml } from '../print/printItemLedger.ts'
@@ -153,17 +153,7 @@ export function ItemsPage() {
 
   const itemLedger = useMemo(() => {
     if (!cardFor || !ledgerInput) return null
-    const filterWarehouse = <T extends { warehouseId?: number | null }>(rows: T[]) => ledgerWarehouseId ? rows.filter((r) => (r.warehouseId ?? 0) === ledgerWarehouseId) : rows
-    const scopedInput = ledgerWarehouseId ? {
-      ...ledgerInput,
-      purchases: ledgerInput.purchases.map((p) => ({ ...p, lines: p.lines.filter((l) => (l.warehouseId ?? p.warehouseId ?? 0) === ledgerWarehouseId) })).filter((p) => p.lines.length),
-      purchaseReturns: filterWarehouse(ledgerInput.purchaseReturns),
-      sales: ledgerInput.sales.map((sale) => ({ ...sale, lines: sale.lines.filter((line) => (line.warehouseId ?? sale.warehouseId ?? 0) === ledgerWarehouseId) })).filter((sale) => sale.lines.length),
-      saleReturns: ledgerInput.saleReturns.map((ret) => ({ ...ret, lines: ret.lines.filter((line) => (line.warehouseId ?? ret.warehouseId ?? 0) === ledgerWarehouseId) })).filter((ret) => ret.lines.length),
-      stocktakes: filterWarehouse(ledgerInput.stocktakes),
-      materialRequisitions: filterWarehouse(ledgerInput.materialRequisitions),
-      transfers: (ledgerInput.transfers ?? []).filter((t) => t.fromWarehouseId === ledgerWarehouseId || t.toWarehouseId === ledgerWarehouseId),
-    } : ledgerInput
+    const scopedInput = scopeItemLedgerWarehouse(ledgerInput, ledgerWarehouseId)
     // الرصيد الافتتاحي يُشتق عكسياً من الرصيد الحالي في النطاق المختار (كل المخازن أو مخزن محدد)
     const currentQty = ledgerWarehouseId ? stockInWarehouse(ledgerWarehouseId, cardFor.id) : (cardFor.stockQty ?? 0)
     const all = buildItemLedger(scopedInput)
@@ -194,8 +184,8 @@ export function ItemsPage() {
       shopName: setup.shopName || 'تَحَكَّم',
       headerLines: [],
       itemName: cardFor.nameAr,
-      itemDetails: details,
-      ledger: itemLedger,
+      itemDetails: [...details, `المخزن: ${ledgerWarehouseId ? (warehouses.find(w => w.id === ledgerWarehouseId)?.nameAr ?? 'غير معروف') : 'كل المخازن'}`, ...(ledgerUser ? [`فلتر المستخدم: ${ledgerUser} (الإجماليات والأرصدة لكل المستخدمين)`] : [])],
+      ledger: { ...itemLedger, rows: shownLedgerRows },
       period: ledgerFrom || ledgerTo ? `من ${ledgerFrom || 'البداية'} إلى ${ledgerTo || 'اليوم'}` : undefined,
       cur,
     }), { preview: { title: `معاينة كارت صنف — ${cardFor.nameAr} قبل الطباعة` } })
@@ -963,6 +953,7 @@ export function ItemsPage() {
                 </Btn>
               </div>
 
+              <p className="text-[11px] text-amber-700">الرصيد الافتتاحي مشتق من الرصيد الحالي وقد يخفي حركات ناقصة. المخزن غير المثبت لا يُنسب لمخزن محدد؛ حركات الإنتاج والتجهيز بلا مخزن مثبت لا تظهر ضمن مخزن محدد. أذون قديمة بلا تحويل تعرض الكمية المسجلة للمراجعة. فلتر المستخدم يغير الصفوف فقط لا الإجماليات أو الأرصدة.</p>
               {/* دفتر الحركة برصيد جارٍ */}
               <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden overflow-x-auto">
                 <div className="px-4 py-2 flex flex-wrap gap-4 text-[11.5px] font-bold bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">

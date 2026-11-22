@@ -178,9 +178,9 @@ const commissions = read('pages/ExternalCommissionsPage.tsx')
     assert.ok(engine.includes(`'${code}'`), `حساب العهدة ${code} غير موجود في المحرك`)
     assert.ok(custody.includes(`(${code})`), `النافذة لا تُظهر الحساب ${code} الذي يرحّل عليه المحرك`)
   }
-  assert.ok(/disabled=\{amountMinor <= 0 \|\| !expDesc\.trim\(\) \|\| \(excess > 0 && !expAllowExcess\)\}/.test(custody),
+  assert.ok(/disabled=\{commitSaving \|\| amountMinor <= 0 \|\| !expDesc\.trim\(\) \|\| vatInvalid \|\| \(excess > 0 && !expAllowExcess\)\}/.test(custody),
     'نافذة مصروف العهدة تسمح بتجاوز الرصيد بلا إقرار صريح')
-  assert.ok(custody.includes('over = returned > viewSummary.remainingMinor') && /disabled=\{returnAmount\.trim\(\) === '' \|\| over\}/.test(custody),
+  assert.ok(custody.includes('over = returned > viewSummary.remainingMinor') && /disabled=\{commitSaving \|\| returnAmount\.trim\(\) === '' \|\| over\}/.test(custody),
     'نافذة التسوية تقبل مرتجعاً أكبر من العهدة')
   R.ok('نوافذ العهدة الثلاث بلغة المستند، وكل منها يعرض قيده بحسابات المحرك نفسها (1108/2107/1107) ويمنع التجاوز بلا إقرار')
 }

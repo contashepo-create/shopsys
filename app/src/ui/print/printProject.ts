@@ -1,4 +1,5 @@
 import { CHANGE_ORDER_STATUS_LABELS, effectiveContractValue, type BoqItem, type ChangeOrder, type Project } from '../../core/contracting.ts'
+import { currentDocumentContact, documentContactLabel } from '../../core/customerProfile.ts'
 import type { ProjectSurvey } from '../../core/projectSurvey.ts'
 import { assertSurveyIntegrity } from '../../core/projectSurvey.ts'
 import { assertQuantityChangeLinks, type QuantityHistoryExtract } from '../../core/projectExtractQuantity.ts'
@@ -53,6 +54,7 @@ export function renderProjectHtml(args: { shopName: string; project: Project; it
   @page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}body{font:12px Tahoma,Arial,sans-serif;color:#172033;line-height:1.55}header{display:flex;justify-content:space-between;gap:16px;border-bottom:3px solid #9a3412;padding:10px 0}h1{font-size:20px;margin:0}h2{font-size:15px;margin:12px 0 5px;color:#9a3412}.meta,.totals{display:flex;gap:18px;flex-wrap:wrap;margin:12px 0}.totals span{border:1px solid #cbd5e1;border-radius:5px;padding:7px}table{width:100%;border-collapse:collapse}thead{display:table-header-group}tr{break-inside:avoid}th,td{border:1px solid #cbd5e1;padding:6px;text-align:right;overflow-wrap:anywhere}th{background:#fff7ed;color:#7c2d12}small{display:block;color:#475569;margin:8px 0}.sign{display:flex;justify-content:space-around;margin-top:40px}</style></head><body>
   <header><div><h1>${esc(args.shopName)}</h1><h2>بيان المشروع وجدول الكميات</h2></div><div><b>${esc(project.code)}</b><br>${esc(project.contractNumber || 'دون رقم عقد مسجل')}</div></header>
   <div class="meta"><span><b>المشروع:</b> ${esc(project.nameAr)}</span><span><b>الجهة المالكة:</b> ${esc(project.clientName || '—')}</span><span><b>تاريخ البداية:</b> ${esc(project.startDate)}</span><span><b>الموقع:</b> ${esc(project.location || '—')}</span></div>
+  <p>${esc(documentContactLabel(currentDocumentContact(project.customerContactHistory, project.clientId)))}</p>
   <div class="totals"><span>قيمة العقد الأصلية: <b>${money(project.contractValueMinor)}</b></span><span>صافي أوامر التغيير المعتمدة: <b>${money(delta)}</b></span><span>قيمة العقد بعد التغيير: <b>${money(effective)}</b></span></div>
   <h2>بنود العقد والحصر</h2><table><thead><tr><th>الكود</th><th>البند</th><th>الوحدة</th><th>كمية العقد</th><th>كمية أوامر التغيير</th><th>المنفذ المحصور</th><th>سعر الوحدة</th><th>قيمة كمية العقد</th></tr></thead><tbody>${rows || '<tr><td colspan="8">لا يوجد جدول كميات مسجل</td></tr>'}</tbody></table>
   <p><b>قيمة الكميات المحصورة بسعر بنود المشروع قبل الضريبة:</b> ${measuredComplete ? money(measuredTotal) : 'غير متاحة لعدم اكتمال الحصر'}</p>

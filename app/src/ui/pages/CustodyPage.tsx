@@ -5,13 +5,15 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * ← تسوية: مرتجع نقدي + عجز يصير سلفة تُخصم من الراتب على دفعات.
  * زيادة المصاريف عن العهدة تُسجَّل مستحقاً للموظف وتُصرف مع راتبه.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Plus, Wallet, Receipt, Scale, Eye, HandCoins, CheckCircle2, AlertTriangle } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { custodyCommitFingerprint } from '../../data/custodyCommit.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { summarizeCustody, summarizeCustodyExcessByFile, CUSTODY_TX_LABELS, type CustodyFile } from '../../core/custody.ts'
+import { summarizeCustody, summarizeCustodyExcessByFile, summarizeCustodyExcessAllocation, CUSTODY_TX_LABELS, type CustodyFile } from '../../core/custody.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { DocSection, DocOutcome } from '../components/DocSection.tsx'
@@ -19,7 +21,6 @@ import { DocSection, DocOutcome } from '../components/DocSection.tsx'
 export function CustodyPage() {
   const {
     custodyFiles, custodyTxs, employeeAdvances, payrollRuns, employees, projects, journal,
-    openCustodyFile, fundCustodyFile, postCustodyExpense, settleCustodyFile,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -38,15 +39,14 @@ export function CustodyPage() {
   const [fReason, setFReason] = useState('')
   const [fNotes, setFNotes] = useState('')
   const doOpenFile = () => {
-    try {
-      const f = openCustodyFile({
-        employeeId: fEmployeeId, projectId: fProjectId ? Number(fProjectId) : null,
-        reason: fReason, notes: fNotes.trim(),
-      })
+    void runCustodyCommit(0, () => useRawDataStore.getState().openCustodyFile({
+      employeeId: fEmployeeId, projectId: fProjectId ? Number(fProjectId) : null,
+      reason: fReason, notes: fNotes.trim(),
+    }), f => {
       toast.show(`فُتح الملف ${f.fileNumber} لـ${empName(f.employeeId)} — سجّل أول عهدة فيه الآن 📂`)
       setOpenModal(false)
       setViewingId(f.id)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    }, () => setOpenModal(false), 'فُتح الملف محلياً لكن تعذر تأكيد الحفظ — راجع الملفات قبل إعادة المحاولة')
   }
 
   /* ─── عرض ملف ─── */
@@ -54,10 +54,11 @@ export function CustodyPage() {
   const viewing: CustodyFile | null = viewingId != null ? custodyFiles.find((f) => f.id === viewingId) ?? null : null
   const viewTxs = useMemo(() => custodyTxs.filter((t) => t.fileId === viewingId), [custodyTxs, viewingId])
   const viewSummary = useMemo(() => summarizeCustody(viewTxs), [viewTxs])
-  const excessByFile = useMemo(
-    () => summarizeCustodyExcessByFile(custodyFiles, custodyTxs, payrollRuns),
+  const excessAllocation = useMemo(
+    () => summarizeCustodyExcessAllocation(custodyFiles, custodyTxs, payrollRuns),
     [custodyFiles, custodyTxs, payrollRuns],
   )
+  const excessByFile = excessAllocation.balances
   const viewingExcess = viewing ? excessByFile.get(viewing.id) : undefined
   const viewingExcessRemaining = viewingExcess?.remainingMinor ?? 0
   const viewingShortageAdvance = viewing
@@ -66,6 +67,31 @@ export function CustodyPage() {
   const viewingShortageRemaining = viewingShortageAdvance
     ? Math.max(0, viewingShortageAdvance.amountMinor - (viewingShortageAdvance.recoveredMinor ?? 0))
     : viewing?.shortageMinor ?? 0
+
+  // يشترك هذا المسار مع قفل الفواتير، لكن بقية كتّاب العهدة لا يشاركونه جميعاً.
+  const commitPending = useRef(false)
+  const [commitSaving, setCommitSaving] = useState(false)
+  const [commitBasis, setCommitBasis] = useState('')
+  const prepareCommit = (id: number) => setCommitBasis(custodyCommitFingerprint(useRawDataStore.getState(), id))
+  const runCustodyCommit = async <T,>(id: number, commit: () => T, done: (result: T) => void, close: () => void, uncertainMessage = 'سُجلت الحركة محلياً لكن تعذر تأكيد الحفظ — راجع العهدة والدفتر قبل إعادة المحاولة') => {
+    if (commitPending.current) return
+    commitPending.current = true; setCommitSaving(true)
+    let committed = false
+    try {
+      const result = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (custodyCommitFingerprint(useRawDataStore.getState(), id) !== commitBasis) throw new Error('تغير أساس العهدة منذ فتح النافذة — أغلقها وراجع الملف قبل المتابعة')
+        const result = commit()
+        committed = true
+        return result
+      })
+      done(result)
+    } catch (error) {
+      if (committed) {
+        close()
+        toast.show(uncertainMessage, 'error')
+      } else toast.show((error as Error).message, 'error')
+    } finally { commitPending.current = false; setCommitSaving(false) }
+  }
 
   /* قيم مشتقة لنوافذ العهدة: المبالغ بالقروش وأثرها المحاسبي قبل الترحيل */
   const toMinorSafe = (v: string) => { try { return v.trim() ? toMinor(v, cur.decimals) : 0 } catch { return 0 } }
@@ -77,11 +103,11 @@ export function CustodyPage() {
   const [fundDesc, setFundDesc] = useState('')
   const doFund = () => {
     if (!viewing) return
-    try {
-      fundCustodyFile({ fileId: viewing.id, amountMinor: toMinor(fundAmount || '0', cur.decimals), treasury: fundTreasury, description: fundDesc.trim() })
+    const id = viewing.id
+    void runCustodyCommit(id, () => useRawDataStore.getState().fundCustodyFile({ fileId: id, amountMinor: toMinor(fundAmount || '0', cur.decimals), treasury: fundTreasury, description: fundDesc.trim() }), () => {
       toast.show('عُزّزت العهدة بقيد متوازن (1108 ← الخزينة المختارة) ✅')
       setFundOpen(false); setFundAmount(''); setFundDesc('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    }, () => setFundOpen(false))
   }
 
   /* ─── مصروف ─── */
@@ -90,19 +116,22 @@ export function CustodyPage() {
   const [expDesc, setExpDesc] = useState('')
   const [expProjectId, setExpProjectId] = useState('')
   const [expAllowExcess, setExpAllowExcess] = useState(false)
+  const [expVatEnabled, setExpVatEnabled] = useState(false)
+  const [expVat, setExpVat] = useState('')
+  const [expTaxRef, setExpTaxRef] = useState('')
+  const [expVatConfirmed, setExpVatConfirmed] = useState(false)
   const doExpense = () => {
     if (!viewing) return
-    try {
-      const tx = postCustodyExpense({
-        fileId: viewing.id, amountMinor: toMinor(expAmount || '0', cur.decimals),
-        description: expDesc, projectId: expProjectId ? Number(expProjectId) : viewing.projectId,
-        allowExcess: expAllowExcess,
-      })
+    const id = viewing.id, projectId = expProjectId ? Number(expProjectId) : null
+    void runCustodyCommit(id, () => useRawDataStore.getState().postCustodyExpense({
+      fileId: id, amountMinor: toMinor(expAmount || '0', cur.decimals), description: expDesc, projectId, allowExcess: expAllowExcess,
+      ...(expVatEnabled ? { inputVatMinor: toMinor(expVat || '0', cur.decimals), taxInvoiceRef: expTaxRef, confirmRecoverableVat: expVatConfirmed } : {}),
+    }), tx => {
       toast.show(tx.excessMinor > 0
         ? `سُجل المصروف — منه ${fmt(tx.excessMinor)} زيادة مستحقة للموظف تُصرف مع راتبه ✅`
         : 'سُجل المصروف وخُصم من العهدة ✅')
       setExpOpen(false); setExpAmount(''); setExpDesc(''); setExpAllowExcess(false)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    }, () => setExpOpen(false))
   }
 
   /* ─── تسوية ─── */
@@ -111,12 +140,13 @@ export function CustodyPage() {
   const [settleTreasury, setSettleTreasury] = useState('1101')
   const doSettle = () => {
     if (!viewing) return
-    try {
-      const f = settleCustodyFile({ fileId: viewing.id, returnedMinor: toMinor(returnAmount || '0', cur.decimals), treasury: settleTreasury })
-      const excessDue = excessByFile.get(viewing.id)?.remainingMinor ?? 0
+    const id = viewing.id
+    void runCustodyCommit(id, () => useRawDataStore.getState().settleCustodyFile({ fileId: id, returnedMinor: toMinor(returnAmount || '0', cur.decimals), treasury: settleTreasury }), f => {
+      const live = useDataStore.getState()
+      const excessDue = summarizeCustodyExcessByFile(live.custodyFiles, live.custodyTxs, live.payrollRuns).get(id)?.remainingMinor ?? 0
       toast.show(`سُوّي ${f.fileNumber}: مرتجع ${fmt(f.returnedMinor)} · عجز ${fmt(f.shortageMinor)}${f.shortageMinor > 0 ? ' (سلفة تُخصم من الراتب)' : ''} · زيادة مصروفات مستحقة ${fmt(excessDue)}${excessDue > 0 ? ' ستظهر في مسير الرواتب' : ''} ✓`)
       setSettleOpen(false); setReturnAmount('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    }, () => setSettleOpen(false))
   }
 
   const openFiles = custodyFiles.filter((f) => f.status === 'open')
@@ -129,7 +159,7 @@ export function CustodyPage() {
     <div className="space-y-4">
       <div className="anim-up flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-black flex items-center gap-2"><HandCoins className="w-6 h-6 text-orange-500" /> ملفات عهد الموظفين</h1>
-        <Btn onClick={() => { setFEmployeeId(employees[0]?.id ?? 0); setFProjectId(''); setFReason(''); setFNotes(''); setOpenModal(true) }} disabled={employees.length === 0}>
+        <Btn onClick={() => { prepareCommit(0); setFEmployeeId(employees[0]?.id ?? 0); setFProjectId(''); setFReason(''); setFNotes(''); setOpenModal(true) }} disabled={commitSaving || employees.length === 0}>
           <Plus size={15} /> فتح ملف عهدة
         </Btn>
       </div>
@@ -188,7 +218,7 @@ export function CustodyPage() {
       )}
 
       {/* فتح ملف */}
-      <Modal open={openModal} onClose={() => setOpenModal(false)} title="فتح ملف عهدة جديد">
+      <Modal open={openModal} onClose={() => { if (!commitPending.current) setOpenModal(false) }} title="فتح ملف عهدة جديد">
         <div className="space-y-4">
           <div className="rounded-xl bg-sky-500/5 border border-sky-500/20 p-3 text-[12px] text-sky-700 dark:text-sky-300 leading-relaxed">
             الفتح إداري بلا قيد محاسبي — أول عهدة تُسجَّل بعد الفتح بزر «تعزيز». يمكن فتح أكثر من ملف لنفس الموظف.
@@ -197,7 +227,7 @@ export function CustodyPage() {
             <Field label="الموظف *">
               <PartyQuickPicker parties={employees} value={fEmployeeId} onChange={setFEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
             </Field>
-            <Field label="ربط بمشروع (اختياري)" hint="مصروفات الملف تدخل تكاليف المشروع تلقائياً">
+            <Field label="ربط بمشروع (اختياري)" hint="يُقترح المشروع عند تسجيل مصروف ويمكن اختيار غيره أو بلا مشروع">
               <QuickSelect value={fProjectId} onChange={(e) => setFProjectId(e.target.value)} className={inputCls}>
                 <option value="">— بلا مشروع —</option>
                 {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
@@ -207,14 +237,14 @@ export function CustodyPage() {
           <Field label="سبب الملف *"><input value={fReason} onChange={(e) => setFReason(e.target.value)} className={inputCls} placeholder="عهدة موقع، مشتريات نثرية، تشغيل يومي…" autoFocus /></Field>
           <Field label="ملاحظات"><input value={fNotes} onChange={(e) => setFNotes(e.target.value)} className={inputCls} /></Field>
           <div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => setOpenModal(false)}>إلغاء</Btn>
-            <Btn onClick={doOpenFile} disabled={!fEmployeeId || !fReason.trim()}>📂 فتح الملف</Btn>
+            <Btn variant="ghost" disabled={commitSaving} onClick={() => setOpenModal(false)}>إلغاء</Btn>
+            <Btn onClick={doOpenFile} disabled={commitSaving || !fEmployeeId || !fReason.trim()}>📂 فتح الملف</Btn>
           </div>
         </div>
       </Modal>
 
       {/* ملف العهدة — التفاصيل */}
-      <Modal open={!!viewing} onClose={() => setViewingId(null)} title={viewing ? `${viewing.fileNumber} — ${empName(viewing.employeeId)}` : ''} wide>
+      <Modal open={!!viewing} onClose={() => { if (!commitPending.current) setViewingId(null) }} title={viewing ? `${viewing.fileNumber} — ${empName(viewing.employeeId)}` : ''} wide>
         {viewing && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 text-center">
@@ -227,9 +257,9 @@ export function CustodyPage() {
             </div>
             {viewing.status === 'open' ? (
               <div className="flex gap-2 flex-wrap">
-                <Btn onClick={() => { setFundTreasury('1101'); setFundOpen(true) }}><Wallet size={14} /> تعزيز العهدة</Btn>
-                <Btn variant="soft" onClick={() => { setExpProjectId(viewing.projectId ? String(viewing.projectId) : ''); setExpOpen(true) }}><Receipt size={14} /> تسجيل مصروف</Btn>
-                <Btn variant="ghost" onClick={() => { setReturnAmount(String(viewSummary.remainingMinor / 10 ** cur.decimals)); setSettleTreasury('1101'); setSettleOpen(true) }}><Scale size={14} /> تسوية وإغلاق</Btn>
+                <Btn onClick={() => { prepareCommit(viewing.id); setFundTreasury('1101'); setFundOpen(true) }}><Wallet size={14} /> تعزيز العهدة</Btn>
+                <Btn variant="soft" onClick={() => { prepareCommit(viewing.id); setExpProjectId(viewing.projectId ? String(viewing.projectId) : ''); setExpVatEnabled(false); setExpVat(''); setExpTaxRef(''); setExpVatConfirmed(false); setExpOpen(true) }}><Receipt size={14} /> تسجيل مصروف</Btn>
+                <Btn variant="ghost" onClick={() => { prepareCommit(viewing.id); setReturnAmount(String(viewSummary.remainingMinor / 10 ** cur.decimals)); setSettleTreasury('1101'); setSettleOpen(true) }}><Scale size={14} /> تسوية وإغلاق</Btn>
               </div>
             ) : (
               <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 p-3 text-[12.5px] font-bold text-emerald-700 dark:text-emerald-300" data-custody-settlement-status>
@@ -242,6 +272,8 @@ export function CustodyPage() {
             {/* الحركات: التعزيزات مقابل المنصرف (طلب المالك) */}
             <div>
               <div className="text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-2">حركات الملف ({viewTxs.length})</div>
+              <p className="mb-2 text-[11px] text-amber-700">توزيع دفعات الزيادات على الملفات محسوب من المسيرات وليس تخصيصاً محفوظاً؛ قد يتغير عند تعديل التاريخ، ويجب مراجعة السجلات غير المتسلسلة.</p>
+              {(excessAllocation.unallocatedPaidByEmployee.get(viewing.employeeId) ?? 0) > 0 && <p role="alert" className="mb-2 text-[11px] font-bold text-rose-700">يوجد صرف سابق غير موزع بمبلغ {fmt(excessAllocation.unallocatedPaidByEmployee.get(viewing.employeeId)!)}؛ رصيد الزيادة المعروض غير معتمد حتى مراجعة المسيرات وتسلسل الحركات.</p>}
               {viewTxs.length === 0 ? (
                 <div className="text-[12.5px] text-slate-400 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 p-4 text-center">لا حركات بعد — ابدأ بتعزيز العهدة بأول مبلغ</div>
               ) : (
@@ -263,7 +295,7 @@ export function CustodyPage() {
                           <tr key={t.id} className="border-t border-slate-100 dark:border-slate-800">
                             <td className="px-3 py-2 text-slate-400">{t.date}</td>
                             <td className="px-3 py-2 font-bold">{lbl.icon} {lbl.nameAr}</td>
-                            <td className="px-3 py-2">{t.description || '—'}{t.projectId != null && <span className="text-[10px] text-orange-500 font-bold"> · 🏗️ {projName(t.projectId)}</span>}{t.excessMinor > 0 && <span className="text-[10px] text-amber-600 font-bold"> · زيادة {fmt(t.excessMinor)} للموظف</span>}</td>
+                            <td className="px-3 py-2">{t.description || '—'}{t.projectId != null && <span className="text-[10px] text-orange-500 font-bold"> · 🏗️ {projName(t.projectId)}</span>}{t.excessMinor > 0 && <span className="text-[10px] text-amber-600 font-bold"> · زيادة {fmt(t.excessMinor)} للموظف</span>}{(t.inputVatMinor ?? 0) > 0 && <span className="text-[10px] text-sky-600 font-bold"> · ضريبة مدخلات {fmt(t.inputVatMinor!)} · مرجع {t.taxInvoiceRef}</span>}</td>
                             <td className="px-3 py-2 font-black text-emerald-600">{isFund ? fmt(t.amountMinor) : ''}</td>
                             <td className="px-3 py-2 font-black text-rose-500">{isExpense ? fmt(t.amountMinor) : ''}</td>
                             <td className="px-3 py-2 font-black text-amber-600">{isExpense && t.excessMinor > 0 ? fmt(t.excessMinor) : ''}</td>
@@ -295,7 +327,7 @@ export function CustodyPage() {
       </Modal>
 
       {/* تعزيز */}
-      <Modal open={fundOpen} onClose={() => setFundOpen(false)} title="" wide bare>
+      <Modal open={fundOpen} onClose={() => { if (!commitPending.current) setFundOpen(false) }} title="" wide bare>
         {viewing && (
           <div dir="rtl" className="overflow-hidden rounded-3xl doc-sheet">
             <div className="doc-head flex flex-wrap items-center justify-between gap-3 px-5 py-4">
@@ -315,7 +347,7 @@ export function CustodyPage() {
                   <Field label={`المبلغ (${cur.symbol}) *`}>
                     <input value={fundAmount} onChange={(e) => setFundAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
                   </Field>
-                  <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={fundTreasury} onChange={setFundTreasury} compact /></Field>
+                  <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={fundTreasury} onChange={setFundTreasury} operation="payment" compact /></Field>
                 </div>
               </DocSection>
               <DocSection step="٢" title="البيان" hint="يظهر في كشف العهدة وفي الدفتر">
@@ -331,8 +363,8 @@ export function CustodyPage() {
             <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">
               <span className="text-[11px] doc-faint">العهدة بعد التعزيز: <b className="font-mono doc-ink">{fmt(viewSummary.remainingMinor + toMinorSafe(fundAmount))}</b></span>
               <div className="flex gap-2">
-                <Btn variant="ghost" onClick={() => setFundOpen(false)}>إلغاء</Btn>
-                <Btn onClick={doFund} shortcut="F9" disabled={toMinorSafe(fundAmount) <= 0}>تعزيز وقيد</Btn>
+                <Btn variant="ghost" disabled={commitSaving} onClick={() => setFundOpen(false)}>إلغاء</Btn>
+                <Btn onClick={doFund} shortcut="F9" disabled={commitSaving || toMinorSafe(fundAmount) <= 0}>تعزيز وقيد</Btn>
               </div>
             </div>
           </div>
@@ -340,9 +372,11 @@ export function CustodyPage() {
       </Modal>
 
       {/* مصروف من العهدة */}
-      <Modal open={expOpen} onClose={() => setExpOpen(false)} title="" wide bare>
+      <Modal open={expOpen} onClose={() => { if (!commitPending.current) setExpOpen(false) }} title="" wide bare>
         {viewing && (() => {
           const amountMinor = toMinorSafe(expAmount)
+          const vatMinor = expVatEnabled ? toMinorSafe(expVat) : 0
+          const vatInvalid = expVatEnabled && (vatMinor <= 0 || vatMinor >= amountMinor || !expTaxRef.trim() || !expVatConfirmed)
           const excess = Math.max(0, amountMinor - viewSummary.remainingMinor)
           return (
             <div dir="rtl" className="overflow-hidden rounded-3xl doc-sheet">
@@ -360,7 +394,7 @@ export function CustodyPage() {
               <div className="max-h-[calc(92vh-11rem)] space-y-3.5 overflow-y-auto px-5 py-4">
                 <DocSection step="١" title="قيمة المصروف ووجهته" hint="المشروع اختياري — يدخل تكاليفه وربحيته">
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <Field label={`المبلغ (${cur.symbol}) *`}>
+                    <Field label={`إجمالي المبلغ المدفوع شامل أي ضريبة (${cur.symbol}) *`}>
                       <input value={expAmount} onChange={(e) => setExpAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
                     </Field>
                     <Field label="على مشروع؟">
@@ -387,9 +421,19 @@ export function CustodyPage() {
                     </p>
                   )}
                 </DocSection>
+                <DocSection step="٤" title="ضريبة المدخلات" hint="اختياري — أدخل الضريبة القابلة للخصم من المستند، لا كامل الضريبة غير القابلة للاسترداد">
+                  <label className="flex items-center gap-2 text-[12px] font-bold"><input type="checkbox" checked={expVatEnabled} onChange={e => setExpVatEnabled(e.target.checked)} /> فصل ضريبة مدخلات قابلة للاسترداد</label>
+                  {expVatEnabled && <div className="mt-3 space-y-2">
+                    <Field label={`مبلغ الضريبة القابلة للاسترداد (${cur.symbol})`}><input aria-label="مبلغ الضريبة القابلة للاسترداد" type="number" min={0} step="any" value={expVat} onChange={e => setExpVat(e.target.value)} className={inputCls} dir="ltr" /></Field>
+                    <Field label="مرجع الفاتورة الضريبية"><input aria-label="مرجع الفاتورة الضريبية" value={expTaxRef} onChange={e => setExpTaxRef(e.target.value)} className={inputCls} /></Field>
+                    <label className="flex items-center gap-2 text-[12px]"><input type="checkbox" checked={expVatConfirmed} onChange={e => setExpVatConfirmed(e.target.checked)} /> أؤكد مراجعة أهلية الخصم والمستند وعدم تسجيله مسبقاً</label>
+                    <p className="text-[11px] text-amber-700">المرجع إقرار يدوي ولا يثبت صلاحية الفاتورة أو يمنع تكرارها. راجع المختص والمستند الأصلي.</p>
+                  </div>}
+                </DocSection>
                 <DocOutcome>
                   <b className="block pb-1">القيد الذي سيُرحَّل</b>
-                  <div className="flex items-center justify-between gap-3"><span>حساب المصروف — مديناً</span><b className="font-mono">{fmt(amountMinor)}</b></div>
+                  <div className="flex items-center justify-between gap-3"><span>حساب المصروف — مديناً</span><b className="font-mono">{fmt(Math.max(0, amountMinor - vatMinor))}</b></div>
+                  {vatMinor > 0 && <div className="flex items-center justify-between gap-3"><span>ضريبة مدخلات (2102) — مديناً</span><b className="font-mono">{fmt(vatMinor)}</b></div>}
                   <div className="flex items-center justify-between gap-3"><span>عهد الموظفين (1108) — دائناً بما خرج من العهدة</span><b className="font-mono">{fmt(Math.min(amountMinor, viewSummary.remainingMinor))}</b></div>
                   {excess > 0 && expAllowExcess && <div className="flex items-center justify-between gap-3"><span>مستحق للموظف (2107) — دائناً بالزائد</span><b className="font-mono">{fmt(excess)}</b></div>}
                 </DocOutcome>
@@ -397,8 +441,8 @@ export function CustodyPage() {
               <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">
                 <span className="text-[11px] doc-faint">يتبقى بالعهدة بعد الصرف: <b className="font-mono doc-ink">{fmt(Math.max(0, viewSummary.remainingMinor - amountMinor))}</b></span>
                 <div className="flex gap-2">
-                  <Btn variant="ghost" onClick={() => setExpOpen(false)}>إلغاء</Btn>
-                  <Btn onClick={doExpense} shortcut="F9" disabled={amountMinor <= 0 || !expDesc.trim() || (excess > 0 && !expAllowExcess)}>تسجيل المصروف</Btn>
+                  <Btn variant="ghost" disabled={commitSaving} onClick={() => setExpOpen(false)}>إلغاء</Btn>
+                  <Btn onClick={doExpense} shortcut="F9" disabled={commitSaving || amountMinor <= 0 || !expDesc.trim() || vatInvalid || (excess > 0 && !expAllowExcess)}>تسجيل المصروف</Btn>
                 </div>
               </div>
             </div>
@@ -407,7 +451,7 @@ export function CustodyPage() {
       </Modal>
 
       {/* تسوية وإغلاق العهدة */}
-      <Modal open={settleOpen} onClose={() => setSettleOpen(false)} title="" wide bare>
+      <Modal open={settleOpen} onClose={() => { if (!commitPending.current) setSettleOpen(false) }} title="" wide bare>
         {viewing && (() => {
           const returned = toMinorSafe(returnAmount)
           const over = returned > viewSummary.remainingMinor
@@ -431,7 +475,7 @@ export function CustodyPage() {
                     <Field label={`المرتجع (${cur.symbol})`}>
                       <input value={returnAmount} onChange={(e) => setReturnAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
                     </Field>
-                    <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={settleTreasury} onChange={setSettleTreasury} compact /></Field>
+                    <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={settleTreasury} onChange={setSettleTreasury} operation="receipt" compact /></Field>
                   </div>
                   {over && <p className="mt-2 rounded-lg bg-rose-500/10 px-3 py-2 text-[11.5px] font-bold text-rose-700 dark:text-rose-300">المرتجع أكبر من المتبقي بالعهدة بـ{fmt(returned - viewSummary.remainingMinor)} — راجع المبلغ.</p>}
                 </DocSection>
@@ -455,8 +499,8 @@ export function CustodyPage() {
               <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">
                 <span className="text-[11px] doc-faint">{shortage > 0 ? `سلفة ستُقيَّد: ${fmt(shortage)}` : 'لا سلفة — العهدة مغطاة بالكامل'}</span>
                 <div className="flex gap-2">
-                  <Btn variant="ghost" onClick={() => setSettleOpen(false)}>إلغاء</Btn>
-                  <Btn onClick={doSettle} shortcut="F9" disabled={returnAmount.trim() === '' || over}>تنفيذ التسوية والإغلاق</Btn>
+                  <Btn variant="ghost" disabled={commitSaving} onClick={() => setSettleOpen(false)}>إلغاء</Btn>
+                  <Btn onClick={doSettle} shortcut="F9" disabled={commitSaving || returnAmount.trim() === '' || over}>تنفيذ التسوية والإغلاق</Btn>
                 </div>
               </div>
             </div>

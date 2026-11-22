@@ -37,6 +37,7 @@ describe('v1.0.13 — مساعدات واتساب الموحدة', () => {
     expect(msg).toContain('فاتورة مبيعات')
     expect(msg).toContain('INV-0001')
     expect(msg).toContain('متجر النور')
+    expect(msg).not.toContain('مرفق')
     expect(docShareMessage('عرض سعر', 'مسودة', 'X')).toContain('مسودة')
   })
 

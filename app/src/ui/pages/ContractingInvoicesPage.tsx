@@ -1,3 +1,4 @@
+import { WhatsappIcon } from '../components/WhatsappIcon.tsx'
 /**
  * §94: مركز فواتير البيع في المقاولات (طلب المالك: «لماذا لم تضع قسم فاتورة بيع
  * في المقاولات؟ وتكون خاصة بالمشاريع ويكون إصدار الفاتورة مرتبطاً بالمشروع
@@ -13,7 +14,7 @@
  *      وطباعة بنفس قوالب الفواتير.
  */
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { FilePlus2, Printer, Pencil, Coins, Plus, Trash2, Send, Download } from 'lucide-react'
+import { FilePlus2, Printer, Pencil, Coins, Plus, Trash2, Download } from 'lucide-react'
 import { useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -381,8 +382,8 @@ export function ContractingInvoicesPage() {
                             /* نفس مسار الطباعة: PDF المرسل مستند ضريبي كامل — بلا رمز يفقد حجيته */
                             if (s.taxQrPayload && documentSettings.identityComplete) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
                             else if (documentSettings.identityComplete) stampDocumentTaxBarcode(model, documentRecord, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
-                            shareDocPdfViaWhatsapp({ model, cur, settings: documentSettings.receipt, docLabel: 'فاتورة', docNumber: s.invoiceNumber, partyPhone: customers.find((c) => c.id === s.customerId)?.phone ?? '', shopName: documentSettings.setup.shopName, toast })
-                          }} title="إرسال PDF واتساب" data-contracting-invoice-whatsapp className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Send size={13} /></button>
+                            shareDocPdfViaWhatsapp({ model, cur, settings: documentSettings.receipt, docLabel: 'فاتورة', docNumber: s.invoiceNumber, partyPhone: customers.find((c) => c.id === s.customerId)?.phone ?? '', countryCode: documentSettings.setup.countryCode, shopName: documentSettings.setup.shopName, toast })
+                          }} title="إرسال PDF واتساب" data-contracting-invoice-whatsapp className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><WhatsappIcon size={13} /></button>
                           <button onClick={() => openSalesInvoiceWindow(s.id)} data-contracting-invoice-review title="مراجعة وتعديل الفاتورة في نافذتها الكاملة" className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Pencil size={13} /></button>
                         </div>
                       </td>
@@ -415,7 +416,7 @@ export function ContractingInvoicesPage() {
               onRestoreDraft={() => toast.show('لا مسودات لفاتورة البنود الحرة — اكتب البنود أو عبئها من بنود المشروع')}
               onPrint={() => { try { openLiveFreeDraft(undefined, { wide: true, title: 'معاينة مسودة فاتورة المقاولات قبل الترحيل' }) } catch (e) { toast.show(e instanceof Error ? e.message : 'تعذرت المعاينة', 'error') } }}
               onExportPdf={() => toast.show('بعد الترحيل: طباعة ← حفظ كـ PDF 🖨️')}
-              onWhatsappPdf={() => { try { const draftSettings = draftPrintSettings(); shareDocPdfViaWhatsapp({ model: edPrintModel(), cur, settings: draftSettings.receipt, docLabel: 'مسودة فاتورة مقاولات', docNumber: 'مسودة', partyPhone: customers.find((c) => c.id === edCustomerId)?.phone ?? '', shopName: draftSettings.setup.shopName, toast }) } catch (e) { toast.show(e instanceof Error ? e.message : 'تعذر إرسال المسودة', 'error') } }}
+              onWhatsappPdf={() => { try { const draftSettings = draftPrintSettings(); shareDocPdfViaWhatsapp({ model: edPrintModel(), cur, settings: draftSettings.receipt, docLabel: 'مسودة فاتورة مقاولات', docNumber: 'مسودة', partyPhone: customers.find((c) => c.id === edCustomerId)?.phone ?? '', countryCode: draftSettings.setup.countryCode, shopName: draftSettings.setup.shopName, toast }) } catch (e) { toast.show(e instanceof Error ? e.message : 'تعذر إرسال المسودة', 'error') } }}
               onPost={postFreeInvoice}
               headerFields={
                 <>

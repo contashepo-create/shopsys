@@ -2982,3 +2982,24 @@ input, textarea, select, option,
 
 /* تمرير مستقل لبنود إنشاء المشروع؛ أدوات الإضافة والإجمالي تبقى خارج القائمة. */
 .project-boq-scroll { flex: 1 1 auto; min-height: 5rem; max-height: min(55vh, 720px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+
+/* عرض السعر: لا تُضغط تسمية العميل أو الصلاحية على حقل الإدخال. */
+[data-quotation-doc-editor] .invoice-doc .invoice-doc-fields > .form-field {
+  grid-template-rows: minmax(1.15rem, auto) 1.9rem;
+  row-gap: .3rem;
+}
+[data-quotation-doc-editor] .invoice-doc .invoice-doc-fields > .form-field > label,
+[data-quotation-doc-editor] .invoice-doc .invoice-doc-fields > .form-field > .field-head {
+  margin: 0;
+}
+[data-quotation-doc-editor] .invoice-doc .invoice-doc-fields > .form-field > label,
+[data-quotation-doc-editor] .invoice-doc .invoice-doc-fields .field-head > label {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+/* حقول التسوية متتابعة من أعلى البطاقة، دون تمدد 100% لارتفاع كل حقل. */
+[data-settlement-form] .form-field { height: auto; }
+[data-settlement-form] .form-field > label { min-height: 0; align-items: flex-start; }

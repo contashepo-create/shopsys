@@ -1,3 +1,4 @@
+import { projectSystemStatusLabel } from '../../core/projectClosureReview.ts'
 /**
  * «تقرير المشروع التحليلي» — التصميم ③ الذي اختاره المالك (2026-10-27).
  * يبني النموذج من بيانات المتجر الحقيقية ويعرضه عبر مكوّن FormalReport،
@@ -8,13 +9,14 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
-import { formatMinor } from '../../core/money.ts'
+import { addMinor, formatMinor } from '../../core/money.ts'
 import { buildAnalyticalProjectReport, buildExtractSettledMap, type AnalyticalProjectSource } from '../../core/analyticalProjectReport.ts'
 import { FormalReport } from '../components/FormalReport.tsx'
 import { EmptyState } from '../components/ui.tsx'
 import { todayLocalIso } from '../../core/time.ts'
 import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 import { creditedProjectRetention } from '../../core/projectExtractNet.ts'
+import { projectReportBasis } from './projectReportBasis.ts'
 
 interface Props {
   /** معرّف المشروع المختار (نص) — يشارك التاب «مشروع بعينه» اختياره */
@@ -25,7 +27,7 @@ interface Props {
 export function AnalyticalProjectReportView({ projectId, onProjectChange }: Props) {
   const {
     projects, projectExtracts, projectCosts, changeOrders, suppliers, customers,
-    clientSettlements, vouchers, cheques, getOpenClientInvoices, getProjectCostBreakdown, assertProjectExtractRefunds, assertProjectExtractOriginals,
+    clientSettlements, vouchers, cheques, getOpenClientInvoices, getProjectCostBreakdown, getProjectPayrollCosts, assertProjectExtractRefunds, assertProjectExtractOriginals,
   } = useDataStore()
   const { setup, receipt } = useAppStore()
   const cur = useMemo(
@@ -35,13 +37,23 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
   const fmt = useCallback((m: number) => formatMinor(m, cur, false), [cur])
 
   const selected = projects.find((p) => p.id === Number(projectId)) ?? null
+  const reportBasis = projectReportBasis(useDataStore.getState())
   /* يُقرأ التاريخ عند إعادة عرض المكوّن؛ لا يضمن ذلك تحديثاً تلقائياً
      عند منتصف الليل ما لم يحدث عرض جديد. */
   const reportDay = todayLocalIso()
+  const payrollReview = (() => {
+    if (!selected) return { rows: null, failed: false }
+    try {
+      const rows = getProjectPayrollCosts(selected.id)
+      const breakdown = getProjectCostBreakdown(selected.id)
+      rows.reduce((sum, row) => addMinor(sum, row.amountMinor), breakdown.totals.allMinor)
+      return { rows, failed: false }
+    } catch (error) { if (error instanceof FinancialDataReviewError || error instanceof RangeError) return { rows: null, failed: true }; throw error }
+  })()
 
   // الحساب مباشر حتى ينعكس تغير فواتير العميل الأخرى التي تؤثر على توزيع الشيكات.
   const model = (() => {
-    if (!selected) return null
+    if (!selected || !payrollReview.rows) return null
     const extracts = projectExtracts.filter((e) => e.projectId === selected.id)
     let originalLedgerIncomplete = false
     try { assertProjectExtractOriginals(selected.id) } catch (error) {
@@ -148,11 +160,11 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
     const src: AnalyticalProjectSource = {
       project: {
         code: selected.code, nameAr: selected.nameAr, clientName: selected.clientName,
-        status: selected.status === 'active' ? 'جارٍ التنفيذ' : selected.status === 'completed' ? 'مكتمل' : 'مُسلَّم',
+        status: projectSystemStatusLabel(selected.status),
         startDate: selected.startDate, contractValueMinor: selected.contractValueMinor,
       },
       changeOrdersApprovedMinor: orders.reduce((s, o) => s + o.amountMinor, 0),
-      refundLedgerIncomplete, originalLedgerIncomplete,
+      refundLedgerIncomplete, originalLedgerIncomplete, payrollAllocationIncluded: true,
       unlinkedReceivable: clientId == null && extracts.some(e => e.payment === 'credit' && e.totals.dueMinor > (e.advanceRecoveryMinor ?? 0)),
       extracts: extracts.map((e) => ({
         extractNumber: e.extractNumber, date: e.date, grossMinor: e.totals.grossMinor,
@@ -172,6 +184,11 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
         ...getProjectCostBreakdown(selected.id).purchaseReturns.map((r) => ({
           date: r.date, docNumber: r.returnNumber, description: 'مرتجع مشتريات المشروع',
           category: 'مرتجع مشتريات', amountMinor: -r.totalMinor,
+        })),
+        ...payrollReview.rows.map(row => ({
+          date: row.date, docNumber: row.slipNumber,
+          description: `توزيع قسيمة 5102 — قيد ${row.journalEntryId} — ${row.basisPoints / 100}٪`,
+          category: 'توزيع رواتب 5102', amountMinor: row.amountMinor,
         })),
       ],
       openInvoiceSettled,
@@ -213,12 +230,17 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
           />
         </div>
       </div>
-      {!selected || !model ? (
+      {payrollReview.failed ? <p role="alert" className="text-amber-700">يلزم مراجعة توزيعات الرواتب وقيودها وتكاليف المشروع ومرتجعات الشراء قبل عرض أو تصدير التقرير.</p> : !selected || !model ? (
         <EmptyState icon="📊" title="اختر مشروعاً لعرض تقريره الرسمي" sub="التقرير يشمل: قيمة المشروع، ما حُصِّل، المتبقي، كل المصروفات برصيد تراكمي، ثم كل التحصيلات بالمتبقي بعد كل عملية، والتسوية الختامية" />
       ) : (
         <FormalReport
           model={model}
           filename={`تقرير-مشروع-${selected.code}-${todayLocalIso()}`}
+          assertCurrent={() => {
+            const fresh = useDataStore.getState()
+            if (projectReportBasis(fresh) !== reportBasis) throw new Error('تغير أساس التقرير')
+            if (JSON.stringify(fresh.getProjectPayrollCosts(selected.id)) !== JSON.stringify(payrollReview.rows)) throw new Error('تغير توزيع الرواتب')
+          }}
           allowPrint
           allowExport
         />

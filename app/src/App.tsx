@@ -88,7 +88,7 @@ const EmployeesPage = lazy(() => import('./ui/pages/EmployeesPage.tsx').then((mo
 const HrPage = lazy(() => import('./ui/pages/HrPage.tsx').then((module) => ({ default: module.HrPage })))
 const InstallmentsPage = lazy(() => import('./ui/pages/InstallmentsPage.tsx').then((module) => ({ default: module.InstallmentsPage })))
 const ReportsPage = lazy(() => import('./ui/pages/ReportsPage.tsx').then((module) => ({ default: module.ReportsPage })))
-const NasqPage = lazy(() => import('./ui/pages/NasqPage.tsx').then((module) => ({ default: module.NasqPage })))
+const LettersPage = lazy(() => import('./ui/pages/LettersPage.tsx').then((module) => ({ default: module.LettersPage })))
 const StatementsPage = lazy(() => import('./ui/pages/StatementsPage.tsx').then((module) => ({ default: module.StatementsPage })))
 const LicensePage = lazy(() => import('./ui/pages/LicensePage.tsx').then((module) => ({ default: module.LicensePage })))
 const BackupPage = lazy(() => import('./ui/pages/BackupPage.tsx').then((module) => ({ default: module.BackupPage })))
@@ -267,7 +267,7 @@ const APP_ROUTES = (<>
 <Route path="/accounting/external-commissions" element={<ExternalCommissionsPage />} />
 <Route path="/branches" element={<BranchesPage />} />
 <Route path="/reports" element={<ReportsPage />} />
-<Route path="/reports/nasq" element={<NasqPage />} />
+<Route path="/reports/letters" element={<LettersPage />} />
 <Route path="/reports/statements" element={<StatementsPage />} />
 <Route path="/settings/printing" element={<PrintSettingsPage />} />
 <Route path="/settings/backup" element={<BackupPage />} />

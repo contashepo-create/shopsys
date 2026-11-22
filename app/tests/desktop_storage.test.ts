@@ -357,3 +357,8 @@ it('لا يمنع سجل حذف قديم لمشروع قائم تسجيل مست
  const right = snap({ projectSurveys: [], surveyDeletionRecords: [{ id: 1, projectId: 1 }], projectExtracts: [], unrelated: 1 })
  expect(JSON.parse(mergeConcurrentSnapshots(base, left, right)).state.projectExtracts).toHaveLength(1)
 })
+
+it('يرفض لقطة غير قابلة للقراءة عند وجود دفتر معروف قبل إرسال الحفظ', () => {
+  const previous = JSON.stringify({ state: { journal: [{ id: 1 }] } })
+  expect(() => newJournalEntries('{invalid-json', previous)).toThrow(/تعذّر قراءة اللقطة الجديدة/)
+})

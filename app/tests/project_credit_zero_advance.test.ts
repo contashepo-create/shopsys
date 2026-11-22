@@ -80,11 +80,11 @@ it('يوقف القراءة عند حذف إثبات الصفر أو إضافة 
 })
 it('يرفض دمج إشعار بعد مقدمة مع تحصيل أو تغيير التوزيع بالتزامن', () => {
   const snap = (state: object) => JSON.stringify({ state })
-  const base = { projects: [{ id: 1 }], clientAdvances: [{ id: 1, projectId: 1, recoveredMinor: 2000 }], projectExtracts: [{ id: 1, projectId: 1, advanceRecoveryMinor: 2000, refunds: [] }], journal: [{ id: 1 }] }
+  const base = { projects: [{ id: 1 }], clientAdvances: [{ id: 1, projectId: 1, amountMinor: 3000, recoveredMinor: 2000, journalEntryId: 2 }], projectExtracts: [{ id: 1, projectId: 1, advanceRecoveryMinor: 2000, refunds: [] }], journal: [{ id: 1 }] }
   const issued = { ...base, projectExtracts: [{ ...base.projectExtracts[0], quantityCreditVersion: 2, refunds: [{ restoredAdvanceMinor: 0 }] }], journal: [{ id: 1 }, { id: 2 }] }
-  for (const other of [{ ...base, clientAdvances: [{ ...base.clientAdvances[0], recoveredMinor: 1500 }] }, { ...base, clientSettlements: [{ id: 1 }] }]) {
-    expect(() => mergeConcurrentSnapshots(snap(base), snap(issued), snap(other))).toThrow(/تعارض/)
-    expect(() => mergeConcurrentSnapshots(snap(base), snap(other), snap(issued))).toThrow(/تعارض/)
+  for (const other of [{ ...base, clientAdvances: [{ ...base.clientAdvances[0], recoveredMinor: 1500 }], projectExtracts: [{ ...base.projectExtracts[0], advanceRecoveryMinor: 1500 }] }, { ...base, clientSettlements: [{ id: 1 }] }]) {
+    expect(() => mergeConcurrentSnapshots(snap(base), snap(issued), snap(other))).toThrow(/تعارض|أصل مستخلص ذي إشعار/)
+    expect(() => mergeConcurrentSnapshots(snap(base), snap(other), snap(issued))).toThrow(/تعارض|أصل مستخلص ذي إشعار/)
   }
 })
 

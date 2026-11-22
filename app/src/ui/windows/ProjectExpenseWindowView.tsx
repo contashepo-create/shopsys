@@ -24,6 +24,7 @@ import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.ts
 import { useWindowHost } from './windowHostContext.ts'
 import { openPartyEditorWindow, openEntityPickerWindow } from './windowStore.ts'
 import { todayLocalIso } from '../../core/time.ts'
+import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 
 const OTHER_CATEGORY_VALUE = '__other'
 
@@ -93,7 +94,11 @@ export function ProjectExpenseWindowView() {
     () => (selectedProject ? boqItems.filter((b) => b.projectId === selectedProject.id) : []),
     [boqItems, selectedProject],
   )
-  const selectedProjectProfit = selectedProject ? getProjectProfit(selectedProject.id) : null
+  const selectedProjectProfit = (() => {
+    if (!selectedProject) return null
+    try { return getProjectProfit(selectedProject.id) }
+    catch (error) { if (error instanceof FinancialDataReviewError) return null; throw error }
+  })()
 
   const updateLine = (id: number, patch: Partial<ExpenseLineDraft>) => {
     setLines((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)))
@@ -198,10 +203,13 @@ export function ProjectExpenseWindowView() {
       for (const row of getProjectBudgetVariance(selectedProject.id).rows) {
         const add = newByKind.get(row.kind) ?? 0
         if (add > 0 && row.budgetMinor > 0 && row.actualMinor + add > row.budgetMinor) {
-          prePostIssues.push({ id: `budget-${row.kind}`, level: 'warning', text: `سيتجاوز موازنة «${COST_KIND_LABELS[row.kind].nameAr}» بمقدار ${fmt(row.actualMinor + add - row.budgetMinor)} ${cur.symbol}`, hint: 'تنبيه فقط — الترحيل مسموح' })
+          prePostIssues.push({ id: `budget-${row.kind}`, level: 'warning', text: `سيتجاوز موازنة «${COST_KIND_LABELS[row.kind].nameAr}» بمقدار ${fmt(row.actualMinor + add - row.budgetMinor)} ${cur.symbol}`, hint: 'تنبيه استرشادي يشمل توزيع القسائم المثبت ولا يخصم المرتجعات أو يشمل المسير المجمّع — الترحيل مسموح' })
         }
       }
-    } catch { /* مشروع بلا موازنة — لا تحذيرات */ }
+    } catch (error) {
+      if (!(error instanceof FinancialDataReviewError)) throw error
+      prePostIssues.push({ id: 'budget-review', level: 'warning', text: 'تعذر حساب تحذير الموازنة: راجع تكاليف المشروع ومرتجعات الشراء وتوزيع الرواتب وقيودها', hint: 'الترحيل مسموح؛ لا تعني هذه الرسالة عدم وجود تجاوز' })
+    }
   }
   if (!invoiceRef.trim() && computedPreview.valid.length > 0) {
     prePostIssues.push({ id: 'no-ref', level: 'warning', text: 'بلا رقم فاتورة/إيصال مرجعي — المراجع الخارجي سيطلبه', focus: '[data-expense-date]' })
@@ -335,6 +343,8 @@ export function ProjectExpenseWindowView() {
         </Field>
       </div>
 
+      {selectedProject && !selectedProjectProfit && <p role="alert" className="text-amber-700">يلزم مراجعة المستخلصات وتكاليف المشروع ومرتجعات الشراء وتوزيع الرواتب وقيودها قبل عرض ربحية المشروع.</p>}
+      {selectedProject && selectedProjectProfit && <p className="text-amber-700 text-xs">الربحية تشمل توزيعات القسائم المثبتة فقط؛ لا تشمل المسير المجمّع أو القسائم بلا توزيع.</p>}
       {selectedProject && selectedProjectProfit && (
         <div className="grid grid-cols-2 gap-2 rounded-xl border border-orange-500/25 bg-orange-500/5 p-3 text-center text-[12px] sm:grid-cols-4" data-expense-project-summary>
           <div><span className="block text-[10.5px] text-slate-500">قيمة العقد</span><b>{fmt(selectedProject.contractValueMinor)} {cur.symbol}</b></div>

@@ -25,7 +25,8 @@ const check = (name, ok) => {
 /* ─── ① النسخ الاحتياطي: مصدر الحقيقة موحّد ─── */
 const backup = read('src/ui/pages/BackupPage.tsx')
 check('① صفحة النسخ لا تلمس localStorage مباشرة (لا قراءة ولا كتابة)', !/localStorage\.(get|set|remove)Item/.test(backup))
-check('① القراءة عبر طبقة التخزين الحقيقية settingsAppStorage()/appStorage()', backup.includes("settingsAppStorage().getItem('shopsys-app')") && backup.includes("appStorage().getItem('shopsys-data')"))
+const backupSnapshot = read('src/data/backupSnapshot.ts')
+check('① القراءة عبر طبقة التخزين الحقيقية settingsAppStorage()/appStorage()', backup.includes('settings = settingsAppStorage(), data = appStorage()') && backup.includes('readBackupSnapshot({') && backupSnapshot.includes("options.settings.getItem('shopsys-app')") && backupSnapshot.includes("options.data.getItem('shopsys-data')"))
 check('① الاستعادة تكتب عبر نفس الطبقة (SQLite في سطح المكتب)', backup.includes("appStorage().setItem('shopsys-data'"))
 
 /* ─── ② الأصول والأيقونة ─── */

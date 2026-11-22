@@ -6,15 +6,24 @@
 import { useRef, useState } from 'react'
 import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock, FileSpreadsheet, FileText, HardDrive, FolderOpen, ShieldAlert, History, KeyRound } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
-import { useDataStore, DATA_VERSION } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, DATA_VERSION } from '../../data/repo.ts'
 import { buildBackup, parseBackup, summarizeBackup, backupFileName, type BackupSummary } from '../../core/backup.ts'
 import { BACKUP_INTERVAL_CHOICES } from '../../core/security.ts'
 import { assertJournalSnapshotSafe } from '../../core/ledgerSnapshotGuard.ts'
-import { appStorage, settingsAppStorage } from '../../data/persistentStorage.ts'
+import { assertContactHistoriesPreserved } from '../../core/customerProfile.ts'
+import { assertLetterCountersPreserved } from '../../core/letterCounterHistoryGuard.ts'
+import { assertMaterialIssueHistoryPreserved } from '../../core/materialIssueHistoryGuard.ts'
+import { assertProjectDocumentHistoryPreserved } from '../../core/projectDocumentHistoryGuard.ts'
+import { assertProjectFinancialHistoryPreserved } from '../../core/projectFinancialHistoryGuard.ts'
+import { assertPayrollProjectHistoryPreserved } from '../../core/payrollProjectHistoryGuard.ts'
+import { assertFiscalYearsPreserved, assertJournalHistoryPreserved } from '../../core/ledgerHistoryGuard.ts'
+import { assertProjectDeletionSnapshotSafe } from '../../core/projectDeletionSnapshotGuard.ts'
+import { appStorage, settingsAppStorage, flushPendingDesktopSnapshots } from '../../data/persistentStorage.ts'
+import { readBackupSnapshot } from '../../data/backupSnapshot.ts'
 import { desktopDatabaseStorage, desktopBackupNow, isElectronRuntime, desktopKeyRecoveryBridge } from '../../data/desktopBridge.ts'
 import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
 import { DesktopKeyRecoveryCard } from '../components/DesktopKeyRecovery.tsx'
-import { getDeviceSecret, setDeviceSecret } from '../../data/secureStorage.ts'
+import { flushSecureStorageWrites, getDeviceSecret, isStorageSealed, setDeviceSecret, storageWriteGeneration } from '../../data/secureStorage.ts'
 import { wrapSecretWithPassword, unwrapSecretWithPassword, parseKeyFile, keyFileName, type SecretKeyFile } from '../../core/secretTransfer.ts'
 import { buildFullExportSheets, sheetsToExcelXml, sheetToCsv, downloadTextFile, exportFileName, type ExportSheet } from '../../core/fullExport.ts'
 import { localIsoTimestamp, localDateTimeLabel, todayLocalIso } from '../../core/time.ts'
@@ -28,6 +37,9 @@ export function BackupPage() {
   const fileRef2 = useRef<HTMLInputElement>(null)
   const [pending, setPending] = useState<{ raw: string; summary: BackupSummary } | null>(null)
   const [confirmText, setConfirmText] = useState('')
+  const [restoringJson, setRestoringJson] = useState(false)
+  const [partialRestoreWarning, setPartialRestoreWarning] = useState('')
+  const restoringJsonRef = useRef(false)
   const [lastVerification, setLastVerification] = useState<{ at: string; bytes: number } | null>(null)
 
   /* ── v1.0.15 (المرحلة ⑤): نقل سر التشفير بين الأجهزة ── */
@@ -61,21 +73,30 @@ export function BackupPage() {
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
 
+  const readBackupSource = async () => {
+    // سجّل مخزني سطح المكتب قبل التصريف، وراقب الحالة الحية طوال الانتظار.
+    const settings = settingsAppStorage(), data = appStorage()
+    return readBackupSnapshot({
+      settings, data,
+      flush: () => isElectronRuntime() ? flushPendingDesktopSnapshots() : flushSecureStorageWrites('shopsys-data'),
+      generation: storageWriteGeneration, sealed: isStorageSealed,
+      subscribe: onChange => {
+        const stopData = useRawDataStore.subscribe(onChange)
+        const stopSettings = useAppStore.subscribe(onChange)
+        return () => { stopData(); stopSettings() }
+      },
+    })
+  }
+
   const verifyRoundTrip = async () => {
     try {
-      /* v1.0.6 (بلاغ المالك): القراءة من طبقة التخزين الحقيقية — في المتصفح
-         localStorage/secureStorage وفي سطح المكتب SQLite عبر IPC. القراءة
-         النصية المباشرة من localStorage كانت ترجع null دائماً في النسخة
-         المثبتة فيظهر «لا بيانات للنسخ بعد» رغم وجود البيانات. */
-      const appRaw = await settingsAppStorage().getItem('shopsys-app')
-      const storeRaw = await appStorage().getItem('shopsys-data')
-      if (!storeRaw) throw new Error('لا بيانات محلية لفحصها')
+      const { appRaw, storeRaw } = await readBackupSource()
       const backup = buildBackup({ appState: appRaw ? JSON.parse(appRaw) : null, storeState: JSON.parse(storeRaw), appDataVersion: DATA_VERSION, shopName: setup.shopName })
       const serialized = JSON.stringify(backup)
       const restored = parseBackup(serialized)
-      if (JSON.stringify(restored.data.store) !== JSON.stringify(backup.data.store)) throw new Error('فشل تطابق البيانات بعد الاستعادة التجريبية')
-      setLastVerification({ at: localIsoTimestamp(), bytes: new Blob([serialized]).size })
-      toast.show('نجح فحص النسخ والاستعادة التجريبي دون تغيير بياناتك ✓')
+      if (JSON.stringify(restored.data) !== JSON.stringify(backup.data)) throw new Error('فشل تطابق محتوى النسخة بعد قراءة JSON')
+      setLastVerification(appRaw == null ? null : { at: localIsoTimestamp(), bytes: new Blob([serialized]).size })
+      toast.show(appRaw == null ? 'نجح فحص صيغة النسخة وبصمتها، لكن الإعدادات غير موجودة — النسخة غير كاملة' : 'نجح فحص صيغة النسخة وبصمتها فقط — لم تُختبر الاستعادة', appRaw == null ? 'error' : undefined)
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
 
@@ -83,9 +104,7 @@ export function BackupPage() {
     try {
       // نقرأ الحالة المفكوكة من طبقة التخزين الفعلية؛ ملف JSON الاحتياطي نص عادي
       // وقابل للقراءة لمن يصل إليه، لكنه مستقل عن تنسيق لقطة SQLite المحلية.
-      const appRaw = await settingsAppStorage().getItem('shopsys-app')
-      const storeRaw = await appStorage().getItem('shopsys-data')
-      if (!storeRaw) return toast.show('لا بيانات للنسخ بعد', 'error')
+      const { appRaw, storeRaw } = await readBackupSource()
       const backup = buildBackup({
         appState: appRaw ? JSON.parse(appRaw) : null,
         storeState: JSON.parse(storeRaw),
@@ -98,7 +117,7 @@ export function BackupPage() {
       a.download = backupFileName(setup.shopName, backup.createdAt)
       a.click()
       setTimeout(() => URL.revokeObjectURL(a.href), 3000)
-      toast.show('نُزّلت النسخة الاحتياطية — احفظها في مكان آمن 💾')
+      toast.show(appRaw == null ? 'نُزّلت نسخة بيانات بلا إعدادات — غير مكتملة، راجع التخزين واحفظ الملف بأمان' : 'نُزّلت النسخة الاحتياطية — احفظها في مكان آمن 💾', appRaw == null ? 'error' : undefined)
     } catch (err) {
       toast.show((err as Error).message, 'error')
     }
@@ -122,31 +141,97 @@ export function BackupPage() {
   }
 
   const restore = async () => {
-    if (!pending) return
+    if (!pending || restoringJsonRef.current || partialRestoreWarning) return
+    restoringJsonRef.current = true
+    setRestoringJson(true)
+    let restoreWriteStarted = false
+    let restoreComplete = false
+    let unsubscribeData: (() => void) | undefined
+    let unsubscribeApp: (() => void) | undefined
     try {
+      if (isStorageSealed()) throw new Error('التخزين مختوم بعد استيراد المفتاح — أعد تشغيل التطبيق قبل الاستعادة')
       const backup = parseBackup(pending.raw) // تحقق ثانٍ لحظة التنفيذ
-      const unwrapPersisted = (value: unknown): Record<string, unknown> => {
+      const unwrapPersisted = (value: unknown, live: Record<string, unknown>): Record<string, unknown> => {
         if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('لقطة المتجر أو الإعدادات ليست كائناً صالحاً')
         const envelope = value as Record<string, unknown>
-        const state = envelope.state
-        return state && typeof state === 'object' && !Array.isArray(state) ? { ...(state as Record<string, unknown>) } : { ...envelope }
+        const state = Object.hasOwn(envelope, 'state') ? envelope.state : envelope
+        if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('حالة المتجر أو الإعدادات في النسخة غير صالحة')
+        const record = state as Record<string, unknown>
+        // عند إعادة الترطيب لا يُسمح للبيانات باستبدال إجراءات Zustand أو النموذج.
+        for (const key of Object.keys(record)) {
+          if (key === '__proto__' || key === 'prototype' || key === 'constructor' || typeof live[key] === 'function') throw new Error('النسخة تحتوي حقلاً محظوراً — لم تُستعد البيانات')
+        }
+        return { ...record }
       }
-      const restoredStore = unwrapPersisted(backup.data.store)
-      const restoredApp = backup.data.app == null ? {} : unwrapPersisted(backup.data.app)
+      const restoredStore = unwrapPersisted(backup.data.store, useRawDataStore.getState() as unknown as Record<string, unknown>)
+      // النسخة بلا إعدادات تترك الإعدادات الحالية مكانها؛ فحص مرجع قيد إقفالها
+      // يجب أن يستعمل السنوات الحية التي ستبقى، لا قائمة فارغة أو حقل بيانات قديم.
+      const restoredApp = backup.data.app == null ? useAppStore.getState() as unknown as Record<string, unknown> : unwrapPersisted(backup.data.app, useAppStore.getState() as unknown as Record<string, unknown>)
+      if (restoredApp.fiscalYears !== undefined && !Array.isArray(restoredApp.fiscalYears)) throw new Error('السنوات المالية في إعدادات النسخة غير صالحة — لم تُستعد البيانات')
+      assertFiscalYearsPreserved(useAppStore.getState().fiscalYears, restoredApp.fiscalYears)
       const restoredYears = Array.isArray(restoredApp.fiscalYears) ? restoredApp.fiscalYears as { id: number; branchId?: number | null; status: 'open' | 'closed'; nameAr: string; startDate: string; endDate: string }[] : []
-      assertJournalSnapshotSafe(restoredStore, restoredYears, todayLocalIso())
+      const checkedStore: Record<string, unknown> = { ...restoredStore, fiscalYears: restoredYears }
+      // الاستعادة لا تسقط التاريخ المحلي أو تغيّر هوية قيد دون مراجعة.
+      const localJournal = useRawDataStore.getState().journal
+      assertJournalHistoryPreserved(localJournal, checkedStore.journal)
+      assertJournalSnapshotSafe(checkedStore, restoredYears, todayLocalIso())
+      // فوق الفحص الكامل للنسخة، امنع القيود المستجدة في الفترات المحلية
+      // المقفلة؛ لا تُعاد قراءة كل التاريخ كأنه ترحيل جديد في السنة المقفلة.
+      if (localJournal.length) assertJournalSnapshotSafe(checkedStore, restoredYears, todayLocalIso(), localJournal)
+      if ('journal' in checkedStore) restoredStore.journal = checkedStore.journal
+      // المقارنة قبل كتابة أي من المخزنين؛ لا نُسقط سجل حذف أو نحيي مشروعاً
+      // بلا مراجعة. لا يحمي هذا الفحص استعادة ملف SQLite كاملة أو كاتباً متزامناً.
+      assertProjectDeletionSnapshotSafe(useRawDataStore.getState() as unknown as Record<string, unknown>, restoredStore)
+      assertContactHistoriesPreserved(useRawDataStore.getState() as unknown as Record<string, unknown>, restoredStore)
+      assertLetterCountersPreserved(useRawDataStore.getState() as unknown as Record<string, unknown>, restoredStore)
+      assertMaterialIssueHistoryPreserved(useRawDataStore.getState() as unknown as Record<string, unknown>, restoredStore)
+      assertProjectDocumentHistoryPreserved(useRawDataStore.getState() as unknown as Record<string, unknown>, restoredStore)
+      assertProjectFinancialHistoryPreserved(useRawDataStore.getState() as unknown as Record<string, unknown>, restoredStore)
+      assertPayrollProjectHistoryPreserved(useRawDataStore.getState() as unknown as Record<string, unknown>, restoredStore)
       const storeEnvelope = backup.data.store as Record<string, unknown>
       const restoredPersistedStore = 'state' in storeEnvelope ? { ...storeEnvelope, state: restoredStore } : restoredStore
       /* v1.0.6: الكتابة عبر نفس طبقة التخزين التي يقرأ منها التطبيق عند الإقلاع —
          localStorage المباشر كان يكتب في المكان الخطأ في النسخة المثبتة (persist
          يقرأ من SQLite) فلا تنجح الاستعادة. الترقيم المتفائل في DesktopStateStorage
          يمنع أي حفظ متأخر من المتجر القديم من الكتابة فوق النسخة المستعادة. */
-      if (backup.data.app != null) await settingsAppStorage().setItem('shopsys-app', JSON.stringify(backup.data.app))
+      // كشف تغيير الحالة المحلية أو السر أثناء الكتابات غير الذرية. لا يمنع
+      // كاتباً خارج هذا السياق، وقد تكون الكتابة قد بدأت؛ لذلك لا نُرجع نجاحاً.
+      let liveChanged = false
+      const generation = storageWriteGeneration()
+      const observe = (next: unknown, previous: unknown) => {
+        try { if (JSON.stringify(next) !== JSON.stringify(previous)) liveChanged = true } catch { liveChanged = true }
+      }
+      unsubscribeData = useRawDataStore.subscribe(observe)
+      unsubscribeApp = useAppStore.subscribe(observe)
+      const assertRestoreBasis = () => {
+        if (isStorageSealed() || storageWriteGeneration() !== generation) throw new Error('تغير مفتاح التخزين أو خُتم أثناء الاستعادة')
+        if (liveChanged) throw new Error('تغيرت البيانات أو الإعدادات أثناء الاستعادة')
+      }
+      assertRestoreBasis()
+      restoreWriteStarted = true
+      if (backup.data.app != null) {
+        await settingsAppStorage().setItem('shopsys-app', JSON.stringify(backup.data.app))
+        assertRestoreBasis()
+      }
       await appStorage().setItem('shopsys-data', JSON.stringify(restoredPersistedStore))
-      toast.show('استُعيدت النسخة — يُعاد تحميل التطبيق…')
-      setTimeout(() => window.location.reload(), 800)
+      assertRestoreBasis()
+      // لا نترك مهلة تفاعلية بين التحقق وإعادة التحميل، حيث قد يحفظ
+      // المتجر القديم لقطةً فوق المستعادة. لا يغني هذا عن قفل الكتّاب.
+      window.location.reload()
+      restoreComplete = true
     } catch (err) {
-      toast.show((err as Error).message, 'error')
+      if (restoreWriteStarted) {
+        const warning = `تعذر تأكيد الاستعادة بعد بدء الكتابة. قد تكون الإعدادات أو البيانات قد تغيرت جزئياً؛ لا تتابع العمل أو تعِد المحاولة قبل مراجعة النسخ والمخزنين. السبب: ${(err as Error).message}`
+        setPartialRestoreWarning(warning)
+        toast.show(warning, 'error')
+      } else toast.show((err as Error).message, 'error')
+    } finally {
+      unsubscribeData?.()
+      unsubscribeApp?.()
+      if (!restoreComplete) {
+        restoringJsonRef.current = false
+        setRestoringJson(false)
+      }
     }
   }
 
@@ -226,8 +311,9 @@ export function BackupPage() {
           <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="font-black text-lg">{counts.journal}</div><div className="text-slate-400">قيداً</div></div>
         </div>
         <Btn onClick={download} className="w-full"><Download size={15} /> تنزيل نسخة احتياطية الآن</Btn>
-        <Btn variant="ghost" onClick={() => { void verifyRoundTrip() }} className="w-full"><CheckCircle2 size={15}/> فحص استعادة تجريبي دون تغيير البيانات</Btn>
-        {lastVerification && <div className="rounded-xl bg-emerald-500/10 p-3 text-xs text-emerald-700">آخر فحص ناجح: {lastVerification.at.slice(0,16).replace('T',' ')} · حجم النسخة {lastVerification.bytes.toLocaleString('ar-EG')} بايت</div>}
+        <Btn variant="ghost" onClick={() => { void verifyRoundTrip() }} className="w-full"><CheckCircle2 size={15}/> فحص صيغة النسخة وبصمتها</Btn>
+        <div className="text-[11px] text-slate-500">الفحص لا يستعيد النسخة ولا يثبت سلامة البيانات أو اكتمالها. قد تتغير المخازن من نافذة أو جهاز آخر؛ احتفظ بنسخ مستقلة واختبر الاستعادة في بيئة معزولة.</div>
+        {lastVerification && <div className="rounded-xl bg-emerald-500/10 p-3 text-xs text-emerald-700">آخر فحص صيغة وبصمة: {lastVerification.at.slice(0,16).replace('T',' ')} · حجم النسخة {lastVerification.bytes.toLocaleString('ar-EG')} بايت</div>}
       </div>
 
       {/* على سطح المكتب: مفتاح استرداد للقطات القديمة المشفرة فقط؛ نسخة المتصفح تستخدم سرها المحلي */}
@@ -399,7 +485,7 @@ export function BackupPage() {
           </div>
           <div className="rounded-2xl border-2 border-amber-400/40 bg-amber-500/[0.06] p-3.5 text-[12px] text-slate-600 dark:text-slate-300">
             ⚠️ الاستعادة <b>تستبدل بياناتك الحالية بالكامل</b> بحالة النسخة المختارة، ثم يُعاد تشغيل التطبيق تلقائياً.
-            تُحفظ نسخة أمان من بياناتك الحالية قبل الاستبدال (لا يُفقد شيء بلا نسخة).
+            يحاول التطبيق حفظ نسخة أمان من القاعدة الحالية قبل الاستبدال؛ لا يضمن ذلك حفظ التغييرات المعلّقة في كل النوافذ. يرفض إسقاط بعض الأدلة المحلية المحفوظة كقيود اليومية والفترات وأرقام المستندات وأحداث التدقيق وسجلات الحذف، لكن الفحص ليس شاملاً ولا يحمي التغييرات غير المحفوظة أو الأجهزة الأخرى. قد تُرفض نسخة قديمة وتحتاج مراجعة أو استرداداً منفصلاً؛ احفظ نسخة مستقلة وأغلق النوافذ وراجع البيانات.
           </div>
           <div className="flex flex-wrap gap-2">
             <Btn variant="ghost" onClick={() => { void refreshFileBackups() }}>
@@ -442,6 +528,7 @@ export function BackupPage() {
           <Upload size={17} className="text-slate-500" /> استعادة من نسخة
         </div>
 
+        {partialRestoreWarning && <div role="alert" className="rounded-xl border border-rose-500 bg-rose-500/10 p-3 text-sm font-bold text-rose-700">{partialRestoreWarning}</div>}
         {!pending ? (
           <>
             <div className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed">
@@ -483,8 +570,8 @@ export function BackupPage() {
             </div>
 
             <div className="flex gap-2">
-              <Btn variant="ghost" onClick={() => setPending(null)} className="flex-1">إلغاء</Btn>
-              <Btn onClick={restore} disabled={confirmText.trim() !== 'استبدال'} className="flex-1 !bg-rose-600 hover:!bg-rose-700">استعادة الآن</Btn>
+              <Btn variant="ghost" disabled={restoringJson} onClick={() => setPending(null)} className="flex-1">إلغاء</Btn>
+              <Btn onClick={restore} disabled={restoringJson || !!partialRestoreWarning || confirmText.trim() !== 'استبدال'} className="flex-1 !bg-rose-600 hover:!bg-rose-700">{restoringJson ? 'جارٍ الاستعادة…' : 'استعادة الآن'}</Btn>
             </div>
           </div>
         )}

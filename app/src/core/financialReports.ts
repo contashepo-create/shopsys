@@ -469,6 +469,19 @@ const VAT_SETTLEMENT_SOURCES = new Set(['payment_voucher', 'receipt_voucher', 'y
 export function vatReport(journal: readonly JournalEntry[], p: FinPeriod, vatCode = '2102'): VatReport {
   let output = 0, input = 0, settled = 0
   const sourceOf = economicSourceResolver(journal)
+  const byId = new Map(journal.map(entry => [entry.id, entry]))
+  const custodyVatOrigin = (entry: JournalEntry): boolean => {
+    const seen = new Set<number>()
+    let current = entry
+    while (current.sourceType === 'reversal' && current.reversesEntryId != null) {
+      if (seen.has(current.id)) return false
+      seen.add(current.id)
+      const parent = byId.get(current.reversesEntryId)
+      if (!parent) return false
+      current = parent
+    }
+    return current.sourceType === 'payment_voucher' && current.sourceCollection === 'custodyTxs' && Number.isSafeInteger(current.custodyInputVatMinor) && (current.custodyInputVatMinor ?? 0) > 0
+  }
   for (const e of journal) {
     if (!inP(e.date, p) || sourceOf(e) === 'opening') continue
     let credit = 0, debit = 0
@@ -482,7 +495,7 @@ export function vatReport(journal: readonly JournalEntry[], p: FinPeriod, vatCod
     // كانت اليدوية تقع في «مخرجات صافية» فيظهر قيد يدوي مدين على 2102
     // مخرجاتٍ سالبة تشوه بندي الإقرار (اكتشاف رحلة التقارير)
     if (st === undefined || st === 'manual') { output += credit; input += debit }
-    else if (VAT_INPUT_SOURCES.has(st)) input += debit - credit
+    else if (VAT_INPUT_SOURCES.has(st) || custodyVatOrigin(e)) input += debit - credit
     else if (VAT_SETTLEMENT_SOURCES.has(st)) settled += debit - credit
     else output += credit - debit
   }

@@ -24,7 +24,7 @@ const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 const R = reporter('المرحلة 5 — الخدمات السحابية والمحاسبة')
 const RUNNER = readFileSync(`${APP_ROOT}/src/data/syncRunner.ts`, 'utf8')
-const LOCAL_SESSION_KEYS = ['currentUserId']
+const LOCAL_SESSION_KEYS = ['currentUserId', 'loggedOut']
 
 // حالة متجر حقيقية فيها كل أنواع المستندات
 const c = await freshCase({ activityId: 'general' })
@@ -113,7 +113,7 @@ assertInvariants('قبل المزامنة', c)
 
 /* ③ هوية الجهاز لا تُزامَن */
 {
-  assert.ok(RUNNER.includes("LOCAL_SESSION_KEYS = ['currentUserId']"), 'مفاتيح الجلسة المحلية غير محددة')
+  assert.ok(RUNNER.includes("LOCAL_SESSION_KEYS = ['currentUserId', 'loggedOut']"), 'مفاتيح الجلسة المحلية غير محددة')
   const serializeFn = RUNNER.slice(RUNNER.indexOf('function serializeStore'), RUNNER.indexOf('function serializeStore') + 320)
   assert.ok(serializeFn.includes('delete state[k]'), 'التسلسل لا يحذف مفاتيح الجلسة')
   assert.ok(RUNNER.includes('for (const k of LOCAL_SESSION_KEYS) delete parsed[k]'), 'التطبيق لا يحمي جلسة الجهاز')
@@ -123,12 +123,13 @@ assertInvariants('قبل المزامنة', c)
 /* ④ لا عمل محلي يُدهس بلا لقطة */
 {
   assert.ok(RUNNER.includes('saveConflictSnapshot(serializeStore())'), 'لا لقطة أمان قبل تطبيق حالة أحدث')
-  assert.ok(RUNNER.includes('sync.dirty && !(await saveConflictSnapshot(serializeStore()))'), 'تغييرات محلية معلقة يجب أن توقف السحب إذا فشل حفظ اللقطة')
-  assert.ok(RUNNER.includes('if (!(await saveConflictSnapshot(serializeStore())))'), 'استعادة اللقطة يجب أن تحفظ الحالة الحالية قبل استبدالها')
+  assert.ok(RUNNER.includes('serializeStore() !== sentData) && !(await saveConflictSnapshot(serializeStore()))'), 'التغييرات المحلية أو المتزامنة يجب أن توقف السحب إذا فشل حفظ اللقطة')
+  assert.ok(RUNNER.includes('توجد تغييرات محلية لم تُدمج مع السحابة'), 'السحب لا يستبدل التعديلات المحلية غير المدمجة')
+  assert.ok(RUNNER.includes('const beforeSnapshot = serializeStore()') && RUNNER.includes('if (!(await saveConflictSnapshot(beforeSnapshot)))') && RUNNER.includes('serializeStore() !== beforeSnapshot'), 'استعادة اللقطة يجب أن تحفظ الحالة الحالية وترفض تغيرها أثناء الحفظ قبل استبدالها')
   assert.ok(RUNNER.includes('restoreConflictSnapshot'), 'لا استرجاع للقطات')
   const pullBlock = RUNNER.slice(RUNNER.indexOf("outcome.action === 'pulled'"), RUNNER.indexOf('applyingPull = true'))
   assert.ok(pullBlock.includes('saveConflictSnapshot'), 'اللقطة يجب أن تُحفظ قبل السحب المطبَّق')
-  R.ok('قبل دهس عمل محلي غير مدفوع بحالة سحابية أحدث تُحفظ لقطة كاملة قابلة للاسترجاع')
+  R.ok('السحب لا يدهس التعديلات المحلية غير المدمجة، وتُحفظ لقطة أمان للمراجعة')
   assert.ok(RUNNER.includes('اللقطة مرفوضة'), 'استرجاع اللقطة بلا حارس')
   R.ok('حتى اللقطة المسترجَعة تمر بحارس الدفتر — ملف قديم مختل لا يعود للدفتر')
 }

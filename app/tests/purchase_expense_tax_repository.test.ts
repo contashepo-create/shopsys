@@ -42,6 +42,11 @@ describe('ترحيل ضريبة مصروف الشراء في المستودع', 
   })
 
   it.each(['treasury', 'payable', 'custody'] as const)('يبني قيداً متوازناً عندما يدفع مصدر %s مصروف الشحن', (paidBy) => {
+    if (paidBy === 'custody') useDataStore.setState({
+      employees: [{ id: 1, nameAr: 'موظف', active: true }] as never,
+      custodyTxs: [{ ...useDataStore.getState().custodyTxs[0], journalEntryId: 1 }],
+      journal: [{ id: 1, entryNumber: 1, date: '2026-09-01', description: 'تمويل', sourceType: 'payment_voucher', sourceCollection: 'custodyTxs', sourceId: 1, lines: [{ accountCode: '1108', debit: 5000, credit: 0 }, { accountCode: '1101', debit: 0, credit: 5000 }], createdBy: 'اختبار', createdAt: '2026-09-01T00:00:00', reversedByEntryId: null, reversesEntryId: null }],
+    })
     const purchase = postDirectExpense(paidBy)
     const state = useDataStore.getState()
     const entry = state.journal.find(row => row.id === purchase.journalEntryId)!

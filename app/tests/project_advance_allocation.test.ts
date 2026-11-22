@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { mergeConcurrentSnapshots } from '../src/data/persistentStorage.ts'
+import { assertProjectFinancialHistoryPreserved } from '../src/core/projectFinancialHistoryGuard.ts'
 
 const initial = useRawDataStore.getState(), app = useAppStore.getState(), S = () => useRawDataStore.getState()
 beforeEach(() => {
@@ -60,7 +61,7 @@ it('يرفض الرصيد أو التوزيع أو القيد المعبث به 
 })
 it('يمنع دمج تحصيل أو استرداد مقدمات مع أساس المشروع أو الدفتر المتغير في الاتجاهين', () => {
   const snap = (state: object) => JSON.stringify({ state })
-  const base = { projects: [{ id: 1 }], clientAdvances: [{ id: 1, projectId: 1, amountMinor: 1000, recoveredMinor: 0 }], projectExtracts: [], journal: [{ id: 1 }] }
+  const base = { projects: [{ id: 1 }], clientAdvances: [{ id: 1, projectId: 1, amountMinor: 1000, recoveredMinor: 0, journalEntryId: 1 }], projectExtracts: [], journal: [{ id: 1 }] }
   const issuing = { ...base, clientAdvances: [{ ...base.clientAdvances[0], recoveredMinor: 500 }], projectExtracts: [{ id: 1, projectId: 1, advanceRecoveryMinor: 500, advanceAllocations: [{ advanceId: 1, journalEntryId: 1, amountMinor: 500 }] }], journal: [{ id: 1 }, { id: 2 }] }
   const otherStates = [
     { ...base, clientAdvances: [...base.clientAdvances, { id: 2, projectId: 1, amountMinor: 100, recoveredMinor: 0 }] },
@@ -112,7 +113,7 @@ it('يرفض تجاوز المتاح بعد التراجع دون اعتماد �
 it('تحصيل مقدمة جديد متزامن مع مستخلص آخر لا يُدمج آلياً', () => {
   const wrap = (state: object) => JSON.stringify({ state })
   const base = { projects: [{ id: 1 }], clientAdvances: [], projectExtracts: [], journal: [] }
-  const advancing = { ...base, clientAdvances: [{ id: 1, projectId: 1 }], journal: [{ id: 1 }] }
+  const advancing = { ...base, clientAdvances: [{ id: 1, projectId: 1, amountMinor: 1000, recoveredMinor: 0, journalEntryId: 1 }], journal: [{ id: 1 }] }
   const extract = { ...base, projectExtracts: [{ id: 1, projectId: 1 }], journal: [{ id: 2 }] }
   expect(() => mergeConcurrentSnapshots(wrap(base), wrap(advancing), wrap(extract))).toThrow(/تعارض/)
   expect(() => mergeConcurrentSnapshots(wrap(base), wrap(extract), wrap(advancing))).toThrow(/تعارض/)
@@ -123,4 +124,24 @@ it('يرفض صف تخصيص تالف بدلاً من اعتماد رصيد بل
   const before = S()
   expect(() => edit(ex.id, 300)).toThrow(/مراجعة/)
   expect(S().journal).toBe(before.journal); expect(S().clientAdvances).toBe(before.clientAdvances)
+})
+
+it('تقبل مقارنة اللقطة إصدار مستخلص حقيقي ثم تعديله واسترداد تخصيصه', () => {
+  advance(); advance()
+  const snapshot = () => ({ clientAdvances: structuredClone(S().clientAdvances), projectExtracts: structuredClone(S().projectExtracts), retentionReleases: [] })
+  const before = snapshot(), ex = issue(1200), issued = snapshot()
+  expect(() => assertProjectFinancialHistoryPreserved(before, issued)).not.toThrow()
+  edit(ex.id, 400)
+  const edited = snapshot()
+  expect(() => assertProjectFinancialHistoryPreserved(issued, edited)).not.toThrow()
+  edit(ex.id, 0)
+  expect(() => assertProjectFinancialHistoryPreserved(edited, snapshot())).not.toThrow()
+})
+it('تقبل مقارنة اللقطات تعديل مستخلص قديم غير موزع بقيد بديل حقيقي', () => {
+  advance(); const ex = issue(600)
+  useRawDataStore.setState({ projectExtracts: S().projectExtracts.map(row => ({ ...row, advanceAllocations: undefined })) })
+  const snapshot = () => ({ clientAdvances: structuredClone(S().clientAdvances), projectExtracts: structuredClone(S().projectExtracts), retentionReleases: [] })
+  const before = snapshot()
+  edit(ex.id, 300)
+  expect(() => assertProjectFinancialHistoryPreserved(before, snapshot())).not.toThrow()
 })

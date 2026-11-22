@@ -12,7 +12,7 @@
 import type { ReceiptModel, ReceiptSettings, InvoiceTemplate } from '../../core/receipt.ts'
 import type { CurrencyConfig } from '../../core/money.ts'
 import { buildModelHtml } from './printDoc.ts'
-import { waChatLink, safePdfFileName, docShareMessage } from '../../core/whatsapp.ts'
+import { waChatLink, documentWaPhone, safePdfFileName, docShareMessage } from '../../core/whatsapp.ts'
 
 type ToastLike = { show: (msg: string, kind?: 'success' | 'error') => void }
 
@@ -26,6 +26,8 @@ interface ShareDocPdfArgs {
   docNumber: string
   /** رقم الطرف (عميل/مورد) — فارغ = يفتح واتساب لاختيار الجهة */
   partyPhone?: string
+  /** بلد المنشأة للرقم المحلي؛ الرقم الدولي الصريح يظل كما أدخله المستخدم. */
+  countryCode?: string | null
   shopName: string
   toast: ToastLike
 }
@@ -37,9 +39,14 @@ export function shareDocPdfViaWhatsapp(args: ShareDocPdfArgs): void {
     toast.show('إرسال PDF واتساب متاح في نسخة سطح المكتب — من المتصفح استخدم «طباعة ← حفظ كـ PDF»', 'error')
     return
   }
+  let phone: string
+  try { phone = documentWaPhone(partyPhone, args.countryCode) } catch (error) {
+    toast.show((error as Error).message, 'error')
+    return
+  }
   const html = buildModelHtml(model, cur, settings, template)
   const fileName = safePdfFileName(docLabelToPrefix(docLabel), docNumber)
-  const link = waChatLink(partyPhone, docShareMessage(docLabel, docNumber, shopName))
+  const link = waChatLink(phone, docShareMessage(docLabel, docNumber, shopName))
   toast.show(`جارٍ توليد PDF لـ ${docLabel} ${docNumber}…`)
   void bridge(html, fileName, link).then((result) => {
     if (!result.ok) { toast.show(`تعذر توليد PDF: ${result.error ?? 'خطأ غير معروف'}`, 'error'); return }

@@ -1,5 +1,5 @@
 /**
- * مخطط قاعدة §101 التنفيذية (وثيقة المعمارية §3.2 و§3.4) — نسخة المخطط 1:
+ * مخطط قاعدة §101 التنفيذية (وثيقة المعمارية §3.2 و§3.4) — نسخة المخطط 2:
  *   • snapshots: لقطة المتجر الحالية بعقد الجسر القائم (revision تفاؤلي)
  *   • journal: اليومية مسطّحة بأعمدة حقيقية — append-only (الوثيقة: الجداول
  *     الساخنة تُسطَّح حيث يفيد؛ اليومية هي الجدول الساخن للتدقيق)
@@ -18,7 +18,7 @@ export interface SchemaMigration {
   sql: string
 }
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 export const MIGRATIONS: readonly SchemaMigration[] = [
   {
@@ -92,6 +92,18 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
         sent_at TEXT
       );
       CREATE INDEX idx_outbox_status ON sync_outbox(status, next_attempt_at);
+    `,
+  },
+  {
+    id: 2,
+    name: 'إيصال آخر حفظ للقطة مع بصمة أدلتها',
+    sql: `
+      CREATE TABLE snapshot_save_receipts (
+        store_name TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        request_hash TEXT NOT NULL
+      );
     `,
   },
 ]

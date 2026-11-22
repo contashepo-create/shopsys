@@ -1,3 +1,4 @@
+import { WhatsappIcon } from '../components/WhatsappIcon.tsx'
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * مركز التقارير (المرحلة 5) — كل الأرقام من المستندات المرحّلة وقيودها:
@@ -16,7 +17,7 @@ import {
 } from '../../core/reports.ts'
 import { GRADE_LABELS } from '../../core/items.ts'
 import { PENDING_PART_ORDER_STATUS_AR, buildPartArrivedMessage } from '../../core/partOrders.ts'
-import { waChatLink } from '../../core/whatsapp.ts'
+import { waChatLink, documentWaPhone } from '../../core/whatsapp.ts'
 import { returnReasonName } from '../../core/returns.ts'
 import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
 import { MODULE_LABELS, isInvoiceFirst, effectiveModules } from '../../core/activities.ts'
@@ -791,9 +792,15 @@ export function ReportsPage() {
                     </td>
                     <td className="px-4 py-2 text-left whitespace-nowrap">
                       {o.status === 'pending' && <button type="button" onClick={() => setPendingPartOrderStatus(o.id, 'arrived')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-600 hover:bg-sky-500/20 ml-1">وصلت</button>}
-                      {o.status === 'arrived' && o.customerPhone && (
-                        <a href={waChatLink(o.customerPhone, buildPartArrivedMessage(o, setup.shopName || ''))} target="_blank" rel="noreferrer" className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 ml-1">📲 إخطار واتساب</a>
-                      )}
+                      {o.status === 'arrived' && o.customerPhone && (() => {
+                        try {
+                          const phone = documentWaPhone(o.customerPhone, setup.countryCode)
+                          if (!phone) throw new Error('رقم واتساب غير صالح')
+                          return <a href={waChatLink(phone, buildPartArrivedMessage(o, setup.shopName || ''))} target="_blank" rel="noreferrer" className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 ml-1"><WhatsappIcon size={12} className="inline-block align-middle" /> إخطار واتساب</a>
+                        } catch {
+                          return <span role="status" className="text-[10px] text-amber-700 ml-1">رقم واتساب يحتاج مراجعة — أدخله دولياً</span>
+                        }
+                      })()}
                       {o.status === 'arrived' && <button type="button" onClick={() => setPendingPartOrderStatus(o.id, 'delivered')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 ml-1">تم التسليم</button>}
                       {(o.status === 'pending' || o.status === 'arrived') && <button type="button" onClick={() => setPendingPartOrderStatus(o.id, 'cancelled')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 ml-1">إلغاء</button>}
                       <button type="button" onClick={() => deletePendingPartOrder(o.id)} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 hover:bg-slate-500/20">حذف</button>

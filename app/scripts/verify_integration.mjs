@@ -24,6 +24,9 @@ const throws = (name, fn, part) => {
   catch (e) { const good = !part || String(e.message).includes(part); good ? pass++ : fail++; console.log(`  ${good ? '✅' : '❌'} ${name}${good ? '' : ` — ${e.message}`}`) }
 }
 const S = () => useDataStore.getState()
+// العهدة تُفتح اليوم؛ لا يصح اصطناع فاتورة شراء قبل فتحها.
+const { todayLocalIso } = await import('../src/core/time.ts')
+const today = todayLocalIso()
 
 /* ميزان متزن؟ */
 const trialBalanced = () => {
@@ -52,7 +55,7 @@ throws('تعزيز بمبلغ سالب يُرفض', () => S().fundCustodyFile({ 
 
 console.log('🧾 فاتورة شراء تُدفع من العهدة وتربط بمخزون حقيقي')
 const inv = S().postPurchase({
-  supplierId: sup.id, date: '2026-09-15',
+  supplierId: sup.id, date: today,
   lines: [{ itemId: item.id, qty: 10, unitPriceMinor: 8000, expiryDate: null }],
   expenses: [], paidMinor: 80000, custodyFileId: file.id, projectId: null, notes: '',
 })
@@ -60,7 +63,7 @@ ok('الفاتورة رُحّلت والمخزون تحدث', S().items.find((i)
 ok('خُصمت من العهدة (المتبقي 2200)', S().getCustodySummary(file.id).remainingMinor === 220000)
 ok('حركة «فاتورة» في ملف العهدة', S().custodyTxs.some((t) => t.fileId === file.id && t.type === 'invoice' && t.purchaseId === inv.id))
 throws('فاتورة أكبر من المتبقي تُرفض', () => S().postPurchase({
-  supplierId: sup.id, date: '2026-09-15',
+  supplierId: sup.id, date: today,
   lines: [{ itemId: item.id, qty: 100, unitPriceMinor: 8000, expiryDate: null }],
   expenses: [], paidMinor: 800000, custodyFileId: file.id, projectId: null, notes: '',
 }))
@@ -86,7 +89,7 @@ console.log('🏦 سلفة نقدية + مسير رواتب بخصم جزئي و
 S().grantEmployeeAdvance({ employeeId: emp1.id, amountMinor: 100000, treasury: '1101', notes: 'سلفة زواج' })
 ok('رصيد سلف أحمد 1000', S().getEmployeeAdvanceBalance(emp1.id).remainingMinor === 100000)
 const run = S().postPayroll({
-  month: '2026-09', payMode: 'cash', treasury: '1101',
+  month: today.slice(0, 7), payMode: 'cash', treasury: '1101',
   lines: [
     { employeeId: emp1.id, baseMinor: 500000, allowancesMinor: 50000, overtimeMinor: 0, deductionsMinor: 0, advancesMinor: 40000, excessPaidMinor: 30000 },
     { employeeId: emp2.id, baseMinor: 300000, allowancesMinor: 0, overtimeMinor: 0, deductionsMinor: 0, advancesMinor: 10000, excessPaidMinor: 0 },

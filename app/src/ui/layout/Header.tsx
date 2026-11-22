@@ -54,7 +54,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, scopedReadNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance, cars, journal, restaurantOrders, jewelryProfiles, gramPrices } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, scopedReadNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts, vehicles, driverDues, employees, labOrders, bonds, projects, projectBudgets, projectCosts, purchases, purchaseReturns, payrollSlips, payrollRuns, approvalRequests, getProjectBudgetVariance, getRemainingRetention, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance, cars, journal, restaurantOrders, jewelryProfiles, gramPrices } = useDataStore()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -99,6 +99,21 @@ export function Header({ title }: { title: string }) {
   const authOn = authRequired(ownerPinHash, appUsers.filter((u) => u.active).length)
 
   const retentionWarnings = retentionWarningsWithReview(projects, getRemainingRetention, localIsoTimestamp(), 30)
+  const budgetWarnings = useMemo(() => {
+    void projectBudgets; void projectCosts; void purchases; void purchaseReturns; void payrollSlips; void payrollRuns; void journal
+    const overruns: { projectId: number; projectNameAr: string; kindAr: string; overrunMinor: number }[] = []
+    const review: { projectId: number; projectNameAr: string }[] = []
+    for (const p of projects.filter(p => p.status === 'active')) {
+      try {
+        overruns.push(...getProjectBudgetVariance(p.id).rows.filter(r => r.status === 'over' && r.budgetMinor > 0)
+          .map(r => ({ projectId: p.id, projectNameAr: p.nameAr, kindAr: COST_KIND_LABELS[r.kind].nameAr, overrunMinor: r.actualMinor - r.budgetMinor })))
+      } catch {
+        // لا يُسمح لفشل حساب مشروع واحد بتعطيل الرأس أو إخفاء بقية التنبيهات.
+        review.push({ projectId: p.id, projectNameAr: p.nameAr })
+      }
+    }
+    return { overruns, review }
+  }, [projects, getProjectBudgetVariance, projectBudgets, projectCosts, purchases, purchaseReturns, payrollSlips, payrollRuns, journal])
 
   const notifications = useMemo(
     () => [
@@ -162,11 +177,8 @@ export function Header({ title }: { title: string }) {
       // بنود موازنة مشروعات نشطة تجاوزت الفعلي موازنتها (سد فجوة تقرير النشاط #11 — Immediate #3)
       // قرار المالك 2026-10-21: «إذا كتبت أي رقم ابدأ المقارنة، أما إذا كان صفراً فلا أريد
       // أي إشعارات للموازنة» — لذا يُشترط وجود موازنة موجبة فعلاً، لا مجرد حالة 'over'.
-      projectBudgetOverruns: projects
-        .filter((p) => p.status === 'active')
-        .flatMap((p) => getProjectBudgetVariance(p.id).rows
-          .filter((r) => r.status === 'over' && r.budgetMinor > 0)
-          .map((r) => ({ projectId: p.id, projectNameAr: p.nameAr, kindAr: COST_KIND_LABELS[r.kind].nameAr, overrunMinor: r.actualMinor - r.budgetMinor }))),
+      projectBudgetOverruns: budgetWarnings.overruns,
+      projectBudgetReview: budgetWarnings.review,
       // طلبات اعتماد مقاولات معلّقة تجاوزت 3 أيام بلا قرار (سد فجوة تقرير النشاط #11 — Immediate #3)
       pendingApprovalsAging: pendingApprovalAging(approvalRequests, localIsoTimestamp(), 3).map((a) => ({
         requestId: a.requestId, subject: a.subject, actionLabel: APPROVAL_ACTION_LABELS[a.action], daysPending: a.daysPending,
@@ -217,7 +229,7 @@ export function Header({ title }: { title: string }) {
       todayIso: localIsoTimestamp(),
     }),
     ],
-    [retentionWarnings, cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance, cars, journal, restaurantOrders, jewelryProfiles, gramPrices],
+    [budgetWarnings, retentionWarnings, cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload, vehicles, driverDues, employees, labOrders, bonds, approvalRequests, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance, cars, journal, restaurantOrders, jewelryProfiles, gramPrices],
   )
   const announcedCloudNoticeIds = useRef(new Set<string>())
   const sawCloudNoticeSnapshot = useRef(false)

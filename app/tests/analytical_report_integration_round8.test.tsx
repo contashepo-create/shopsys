@@ -17,7 +17,7 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); useDataStore.setState(original); useAppStore.setState(appOriginal) })
 
-it('سجل مرتجع افتراضي/مستورد يُعرض في التقرير ويتحدث عند إضافته', () => {
+it('مرتجع مستورد لا يثبت عكس 5110 فيحجب التقرير فور إضافته بدلاً من خصمه افتراضياً', () => {
   const store = useDataStore.getState()
   store.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
   const customer = useDataStore.getState().customers.at(-1)!
@@ -31,8 +31,9 @@ it('سجل مرتجع افتراضي/مستورد يُعرض في التقرير
     purchases: [{ id: 999, projectId: project.id }] as unknown as DataState['purchases'],
     purchaseReturns: [{ purchaseId: 999, returnNumber: 'R-1', totalMinor: 300, date: '2026-01-03' }] as unknown as DataState['purchaseReturns'],
   }))
-  expect(total()).toContain(formatMinor(700, currency, false))
-  expect(screen.getByText('مرتجع مشتريات المشروع')).toBeTruthy()
+  expect(screen.getByRole('alert').textContent).toContain('مرتجعات الشراء')
+  expect(screen.queryByText('إجمالي المصروفات')).toBeNull()
+  expect(screen.queryByText('مرتجع مشتريات المشروع')).toBeNull()
 })
 
 
@@ -301,4 +302,12 @@ it('التقرير يعكس محتجز إشعار كمي مع الإيراد و�
  expect(indicator('صافي المستحق على المستخلصات')).toBe(amount(6300))
  expect(indicator('صافي نتيجة المشروع حتى تاريخه')).toBe(amount(6000))
  expect(screen.queryByText(/تنبيه مراجعة: مجموع سطور التحصيلات/)).toBeNull()
+})
+
+it('تقرير المشروع التحليلي يصف حالة النظام ولا يدعي التسليم', () => {
+  const project = useDataStore.getState().addProject({ nameAr: 'حالة الاختبار', clientId: null, clientName: '', contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  useDataStore.setState({ projects: [{ ...project, status: 'completed' }] })
+  render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
+  expect(screen.getByText('مكتمل بالنظام')).toBeTruthy()
+  expect(screen.queryByText('مُسلَّم')).toBeNull()
 })

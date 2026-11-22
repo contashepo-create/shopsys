@@ -5,6 +5,30 @@
  */
 
 import { todayLocalIso } from './time.ts'
+import { getCountry } from './countries.ts'
+
+const CALLING_CODES: Record<string, string> = { EG: '20', SA: '966', AE: '971', KW: '965', QA: '974', BH: '973', OM: '968', JO: '962', IQ: '964', LY: '218', MA: '212', DZ: '213', TN: '216', SD: '249', YE: '967', LB: '961', PS: '970', SY: '963', MR: '222' }
+
+/** للمستندات: لا نُحوّل رقماً محلياً إلى بلد مصر تلقائياً عند غياب بلد واضح. */
+export function documentWaPhone(phone: string, countryCode?: string | null): string {
+  const normalized = (phone || '').trim().replace(/[٠-٩۰-۹]/g, char => String(char.charCodeAt(0) - (char >= '۰' ? 0x06f0 : 0x0660)))
+  if (!normalized) return ''
+  if (!/^[+\d\s().-]+$/.test(normalized) || normalized.slice(1).includes('+')) throw new Error('رقم واتساب غير صالح — أدخله بالصيغة الدولية')
+  const digits = normalized.replace(/\D/g, '')
+  if (normalized.startsWith('+') || digits.startsWith('00')) {
+    const intl = digits.startsWith('00') && !normalized.startsWith('+') ? digits.slice(2) : digits
+    if (!/^[1-9]\d{6,14}$/.test(intl)) throw new Error('رقم واتساب الدولي غير صالح — راجع الرقم')
+    return intl
+  }
+  const code = countryCode ? CALLING_CODES[countryCode] : undefined
+  const country = countryCode ? getCountry(countryCode) : undefined
+  if (!code || !country) throw new Error('بلد رقم واتساب غير معروف — أدخل الرقم الدولي مبتدئاً بعلامة +')
+  const example = country.phoneExample.replace(/\D/g, '')
+  // رقم صريح يبدأ بمفتاح الدولة وطوله الدولي أطول من الرقم المحلي.
+  if (digits.startsWith(code) && digits.length > example.length && digits.length <= 15) return digits
+  if (digits.length !== example.length || (example.startsWith('0') !== digits.startsWith('0'))) throw new Error('رقم واتساب لا يطابق طول الرقم المحلي للبلد — أدخل الرقم الدولي مبتدئاً بعلامة +')
+  return code + (example.startsWith('0') ? digits.slice(1) : digits)
+}
 
 /** يطبّع الرقم لمسار wa.me: يقبل 01x المصري ويرفقه 2، ويمرر الدولي كما هو */
 export function normalizeWaPhone(phone: string): string {
@@ -36,7 +60,7 @@ export function safePdfFileName(prefix: string, docNumber: string): string {
 /** رسالة مصاحبة للإرسال — أرقام لاتينية (en-US) حفاظاً على مقروئيتها في كل الأجهزة */
 export function docShareMessage(docLabel: string, docNumber: string, shopName: string): string {
   const n = (docNumber || 'مسودة').replace(/[^\u0600-\u06FFA-Za-z0-9/-]/g, '')
-  return `${docLabel} ${n} — ${shopName}\nالملف مرفق (PDF). شكراً لثقتكم 🌟`
+  return `${docLabel} ${n} — ${shopName}\nشكراً لثقتكم 🌟`
 }
 
 /** الطرف المستحق لمستند مع رقمه المسجّل في بطاقته (لزر الإرسال لكل سطر) */

@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { ShopsysDatabase } from '../desktop/sqlite/storage.ts'
+import { SCHEMA_VERSION } from '../desktop/sqlite/schema.ts'
 import { SnowflakeGenerator, SNOWFLAKE_MAX } from '../desktop/sqlite/snowflake.ts'
 
 let pass = 0
@@ -24,7 +25,7 @@ const db = await ShopsysDatabase.open(dbPath)
 /* ═══ ① المخطط: كل جداول القرار موجودة بأعمدتها ═══ */
 {
   const tables = new Set(db.raw.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name))
-  for (const t of ['meta', 'migrations', 'snapshots', 'journal', 'audit_log', 'doc_numbers', 'sync_outbox'])
+  for (const t of ['meta', 'migrations', 'snapshots', 'journal', 'audit_log', 'doc_numbers', 'sync_outbox', 'snapshot_save_receipts'])
     assert.ok(tables.has(t), `الجدول ${t} مفقود`)
   const cols = (t) => db.raw.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name)
   for (const col of ['origin_device', 'origin_branch', 'updated_at']) {
@@ -32,7 +33,7 @@ const db = await ShopsysDatabase.open(dbPath)
   }
   assert.ok(cols('doc_numbers').includes('branch'), 'فهرس الترقيم بلا عمود الفرع (توافق §103)')
   assert.equal(db.raw.pragma('journal_mode', { simple: true }), 'wal', 'وضع WAL غير مفعّل')
-  ok('المخطط: 7 جداول أساسية + أعمدة النسب على snapshots/journal/audit + WAL')
+  ok('المخطط: الجداول الأساسية وإيصال الحفظ + أعمدة النسب وWAL')
 }
 
 /* ═══ ② حفظ أول + استخراج اليومية والتدقيق في نفس المعاملة ═══ */
@@ -68,7 +69,9 @@ const payloadV2 = JSON.stringify({ state: baseState([{ id: 1, invoiceNumber: 'S-
 
 /* ═══ ③ القفل التفاؤلي + التكرار الآمن (idempotency) ═══ */
 {
-  const replay = db.saveSnapshot({ storeName: 'shopsys-data', expectedRevision: 0, payloadJson: payloadV1, idempotencyKey: 'k1' })
+  const retry = { storeName: 'shopsys-data', expectedRevision: 0, payloadJson: payloadV1, idempotencyKey: 'k1', journalEntries: [entryA], auditEvents: [{ id: 1, at: '2026-10-04T09:00:00', user: 'المالك', kind: 'sale', title: 'فاتورة S-0001' }] }
+  const replay = db.saveSnapshot(retry)
+  assert.throws(() => db.saveSnapshot({ ...retry, journalEntries: [] }), /أدلة إعادة محاولة/, 'إعادة مختلفة الأدلة قُبلت')
   assert.equal(replay.replayed, true, 'إعادة الإرسال لم تُكتشف كتكرار')
   assert.equal(db.getSnapshot('shopsys-data').revision, 1, 'التكرار رفع المراجعة خطأً')
   assert.throws(() => db.saveSnapshot({ storeName: 'shopsys-data', expectedRevision: 0, payloadJson: payloadV1, idempotencyKey: 'kx' }), /تعارض كتابة/, 'كاتب قديم مرّ بلا تعارض')
@@ -188,12 +191,12 @@ const payloadV2 = JSON.stringify({ state: baseState([{ id: 1, invoiceNumber: 'S-
 /* ═══ ⑪ السلامة + النسخة الاحتياطية ملف قاعدة صالح ═══ */
 {
   assert.deepEqual(db.integrityCheck(), { ok: true, message: 'ok' })
-  assert.equal(db.schemaVersion(), 1)
+  assert.equal(db.schemaVersion(), SCHEMA_VERSION)
   assert.ok(db.getMeta('device_id'), 'هوية الجهاز لم تُخزن')
   const dest = await db.backupTo('gate-backup.db')
   const copy = new Database(dest, { readonly: true })
   assert.equal(copy.prepare('SELECT COUNT(*) n FROM journal').get().n, 1, 'النسخة الاحتياطية ناقصة')
-  assert.equal(copy.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '1')
+  assert.equal(copy.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION))
   copy.close()
   assert.ok(readdirSync(join(dir, 'backups')).includes('gate-backup.db'))
   db.close()

@@ -3,6 +3,14 @@ import { desktopBridge, type DesktopAuditEvent, type DesktopDatabaseBridge, type
 import { secureStorage } from './secureStorage.ts'
 import { assertQuantityChangeLinks } from '../core/projectExtractQuantity.ts'
 import { assertFinancialEntityProfiles, type FinancialEntityProfile } from '../core/financialEntities.ts'
+import { assertContactHistoriesPreserved } from '../core/customerProfile.ts'
+import { assertLetterCountersPreserved } from '../core/letterCounterHistoryGuard.ts'
+import { assertMaterialIssueHistoryPreserved } from '../core/materialIssueHistoryGuard.ts'
+import { assertProjectDocumentHistoryPreserved } from '../core/projectDocumentHistoryGuard.ts'
+import { assertProjectFinancialHistoryPreserved } from '../core/projectFinancialHistoryGuard.ts'
+import { assertPayrollProjectHistoryPreserved } from '../core/payrollProjectHistoryGuard.ts'
+import { assertJournalHistoryPreserved } from '../core/ledgerHistoryGuard.ts'
+import type { JournalEntry } from '../core/ledger.ts'
 import type { BoqItem, ChangeOrder } from '../core/contracting.ts'
 
 type CachedSnapshot = {
@@ -138,11 +146,35 @@ function parseJsonValue(value: string | null): JsonValue | undefined {
 }
 
 export function mergeConcurrentSnapshots(base: string | null, local: string, remote: string | null): string {
+  // إذن الصرف قرار بقيمة ومخزون ومشروع واعتماد محددين؛ لا يُركَّب من لقطة أخرى.
+  // هذا خاص بدمج اللقطات ولا يحمي من كاتب لا يستعمل هذه الآلية.
+  const prior = persistedState(base) ?? {}, localState = persistedState(local) ?? {}, remoteState = persistedState(remote) ?? {}
+  const hasChanged = (side: Record<string, unknown>, key: string) => JSON.stringify(prior[key] ?? []) !== JSON.stringify(side[key] ?? [])
+  // العداد والخطابات قرار واحد: دمج إضافتين مستقلتين قد يحفظ رقماً واحداً مرتين
+  // حتى لو اتفق الطرفان على قيمة العداد. نرفض الدمج ويعاد فتح اللقطة الأحدث.
+  const letterChanged = (side: Record<string, unknown>) => hasChanged(side, 'letters') || hasChanged(side, 'letterNumberCounters')
+  if (letterChanged(localState) && letterChanged(remoteState) && (!jsonEqual(localState.letters as JsonValue | undefined, remoteState.letters as JsonValue | undefined) || !jsonEqual(localState.letterNumberCounters as JsonValue | undefined, remoteState.letterNumberCounters as JsonValue | undefined))) throw new Error('تعارض تعديل الخطابات أو ترقيمها — أعد التحميل وراجع الخطاب')
+  const templateChanged = (side: Record<string, unknown>) => hasChanged(side, 'letterTemplates') || hasChanged(side, 'letterDefaultTemplates')
+  if (templateChanged(localState) && templateChanged(remoteState) && (!jsonEqual(localState.letterTemplates as JsonValue | undefined, remoteState.letterTemplates as JsonValue | undefined) || !jsonEqual(localState.letterDefaultTemplates as JsonValue | undefined, remoteState.letterDefaultTemplates as JsonValue | undefined))) throw new Error('تعارض تعديل قوالب الخطابات — أعد التحميل وراجع القوالب')
+  const materialChanged = (side: Record<string, unknown>) => hasChanged(side, 'materialRequisitions')
+  const materialBasisChanged = (side: Record<string, unknown>) => ['materialRequisitions', 'items', 'warehouses', 'transfers', 'purchases', 'sales', 'saleReturns', 'purchaseReturns', 'productionOrders', 'processingOrders', 'serials', 'batches', 'wastages', 'consumptions', 'stockMoves', 'journal', 'projectCosts', 'projects', 'employees', 'approvalFlows', 'approvalRequests', 'branches', 'activeBranchId', 'appUsers', 'currentUserId', 'loggedOut', 'roleOverrides', 'branchRoleOverrides', 'customRoles', 'customAccounts'].some(key => hasChanged(side, key))
+  if (!jsonEqual(parseJsonValue(local), parseJsonValue(remote)) && ((materialChanged(localState) && materialBasisChanged(remoteState)) || (materialChanged(remoteState) && materialBasisChanged(localState)))) throw new Error('تعارض صرف المواد مع تعديل متزامن في أساس المخزون أو المشروع — أعد التحميل وراجع الإذن')
   const merged = mergeJson(parseJsonValue(base), parseJsonValue(local), parseJsonValue(remote))
   if (merged === undefined) throw new Error('تعذّر دمج لقطة فارغة مع تعديل متزامن')
   const result = JSON.stringify(merged)
   const state = persistedState(result)
   if (state) {
+    for (const payload of [base, local, remote]) {
+      const previous = persistedState(payload)
+      if (previous) {
+        assertContactHistoriesPreserved(previous, state)
+        assertLetterCountersPreserved(previous, state)
+        assertMaterialIssueHistoryPreserved(previous, state)
+        assertProjectDocumentHistoryPreserved(previous, state)
+        assertProjectFinancialHistoryPreserved(previous, state)
+        assertPayrollProjectHistoryPreserved(previous, state)
+      }
+    }
     const items = Array.isArray(state.boqItems) ? state.boqItems as BoqItem[] : []
     const orders = Array.isArray(state.changeOrders) ? state.changeOrders as ChangeOrder[] : []
     if (items.some(item => item?.quantityChange) || orders.some(order => order?.quantityChange)) assertQuantityChangeLinks(items, orders)
@@ -186,6 +218,16 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
   // الإعداد الوصفي وارتباطاته قرار واحد؛ لا ندمج قرارين متوازيين أو تغيير فروع
   // مع قرار كيان حتى لو كانت حقول JSON قابلة للدمج. لا يحمي ذلك الكتّاب خارج آلية اللقطات.
   const changed = (side: Record<string, unknown>, key: string) => JSON.stringify(before[key] ?? []) !== JSON.stringify(side[key] ?? [])
+  // رصيد العهدة مبني على حركة الملف والقيود والمستندات المشتركة. لا يُدمج
+  // تغيير العهدة مع أساس مالي أو صلاحية متزامنة لم يُراجعها الكاتب.
+  const custodyChanged = (side: Record<string, unknown>) => ['custodyFiles', 'custodyTxs'].some(key => changed(side, key))
+  const custodyBasisChanged = (side: Record<string, unknown>) => ['custodyFiles', 'custodyTxs', 'journal', 'employees', 'projects', 'projectCosts', 'purchases', 'sales', 'payrollRuns', 'employeeAdvances', 'trips', 'tripExpenses', 'treasuries', 'branches', 'activeBranchId', 'appUsers', 'currentUserId', 'loggedOut', 'roleOverrides', 'branchRoleOverrides', 'customRoles'].some(key => changed(side, key))
+  if (!jsonEqual(parseJsonValue(local), parseJsonValue(remote)) && ((custodyChanged(left) && custodyBasisChanged(right)) || (custodyChanged(right) && custodyBasisChanged(left)))) throw new Error('تعارض حركة العهدة مع تعديل متزامن في أساسها — أعد تحميل البيانات وراجع السجل')
+  // الترحيل المجمّع والقسائم والخصومات أساس مشترك، ولا يصح تركيب قرار مسير
+  // من نافذة على تغير مالي أو تغيير صلاحية لم يراجعه كاتب المسير.
+  const payrollChanged = (side: Record<string, unknown>) => ['payrollRuns', 'payrollSlips'].some(key => changed(side, key))
+  const payrollBasisChanged = (side: Record<string, unknown>) => ['payrollRuns', 'payrollSlips', 'journal', 'employees', 'projects', 'projectCosts', 'employeeAdvances', 'employeeDeductions', 'advanceRepayments', 'staffCommissions', 'driverDues', 'custodyFiles', 'custodyTxs', 'treasuries', 'branches', 'activeBranchId', 'appUsers', 'currentUserId', 'loggedOut', 'roleOverrides', 'branchRoleOverrides', 'customRoles'].some(key => changed(side, key))
+  if (!jsonEqual(parseJsonValue(local), parseJsonValue(remote)) && ((payrollChanged(left) && payrollBasisChanged(right)) || (payrollChanged(right) && payrollBasisChanged(left)))) throw new Error('تعارض مسير الرواتب مع تغيير متزامن في أساسه — أعد تحميل البيانات وراجع الرواتب')
   const conflictsWithEntityEdit = (side: Record<string, unknown>) => ['financialEntityProfiles', 'branches', 'appUsers', 'currentUserId', 'loggedOut'].some(key => changed(side, key))
   if ((changed(left, 'financialEntityProfiles') && conflictsWithEntityEdit(right)) ||
       (changed(right, 'financialEntityProfiles') && conflictsWithEntityEdit(left))) {
@@ -309,7 +351,7 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
         const select = (source: Record<string, unknown>) => Array.isArray(source[name]) ? (source[name] as Array<Record<string, unknown>>).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id)) : []
         if (JSON.stringify(select(before)) !== JSON.stringify(select(other))) throw new Error('تعارض إشعار الكميات مع تعديل المشروع بالتزامن — أعد تحميل البيانات')
       }
-      for (const name of ['journal', 'vouchers', 'clientSettlements', 'sales', 'saleReturns', 'cheques', 'openingBalances', 'branchOpeningBalances', 'partyOffsets', 'paymentTerminalTransactions', 'treasuries', 'paymentTerminals', 'customers', 'branches', 'activeBranchId', 'appUsers', 'currentUserId']) {
+      for (const name of ['journal', 'vouchers', 'clientSettlements', 'sales', 'saleReturns', 'cheques', 'openingBalances', 'branchOpeningBalances', 'partyOffsets', 'paymentTerminalTransactions', 'treasuries', 'paymentTerminals', 'customers', 'branches', 'activeBranchId', 'appUsers', 'currentUserId', 'loggedOut', 'roleOverrides', 'branchRoleOverrides', 'customRoles']) {
         // التحقق من الفرع والعميل والخزينة والماكينة وصلاحية المستخدم جزء من
         // قرار الترحيل، فلا ندمج إصداراً مع تغيير متزامن في أي من أسسه.
         if (JSON.stringify(before[name]) !== JSON.stringify(other[name])) throw new Error('تعارض إشعار الكميات مع حركة مالية أو أساس ترحيل متزامن — أعد تحميل البيانات')
@@ -317,6 +359,25 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
     }
   }
   checkQuantityCredit(left, right); checkQuantityCredit(right, left)
+  // قرار تحصيل المحتجز وإقفال المشروع يعتمد على أسس قد تتغير في نافذة
+  // أخرى. رفض التعارض هنا محافظ ومحصور بدمج لقطة البيانات، ولا يقفل
+  // مخزن الفترات المستقل أو كاتباً لا يمر بهذه الآلية.
+  const checkRetentionRelease = (issuing: Record<string, unknown>, other: Record<string, unknown>) => {
+    const rows = (source: Record<string, unknown>, name: string) => Array.isArray(source[name]) ? source[name] as Array<Record<string, unknown>> : []
+    const oldIds = new Set(rows(before, 'retentionReleases').map(row => row?.id))
+    for (const release of rows(issuing, 'retentionReleases')) {
+      if (!release || oldIds.has(release.id) || typeof release.projectId !== 'number') continue
+      const id = release.projectId
+      for (const name of ['projects', 'projectExtracts', 'retentionReleases', 'clientAdvances', 'boqItems', 'changeOrders', 'projectSurveys', 'projectExtractDrafts', 'projectCloseouts']) {
+        const select = (source: Record<string, unknown>) => rows(source, name).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id))
+        if (JSON.stringify(select(before)) !== JSON.stringify(select(other))) throw new Error('تعارض تحصيل المحتجز مع تغيير متزامن في المشروع — أعد تحميل البيانات')
+      }
+      for (const name of ['journal', 'vouchers', 'clientSettlements', 'sales', 'saleReturns', 'cheques', 'openingBalances', 'branchOpeningBalances', 'partyOffsets', 'paymentTerminalTransactions', 'treasuries', 'paymentTerminals', 'customers', 'branches', 'activeBranchId', 'appUsers', 'currentUserId', 'loggedOut', 'roleOverrides', 'branchRoleOverrides', 'customRoles']) {
+        if (JSON.stringify(before[name]) !== JSON.stringify(other[name])) throw new Error('تعارض تحصيل المحتجز مع حركة مالية أو أساس ترحيل متزامن — أعد تحميل البيانات')
+      }
+    }
+  }
+  checkRetentionRelease(left, right); checkRetentionRelease(right, left)
   // استرداد المقدمة موثق حسب الدفعة: أي تحديث متزامن للأساس أو الدفتر
   // يرفض الدمج حتى لا يضيع تخصيص أو يُنسب استرداد إلى دفعة خاطئة.
   const checkAdvanceRecovery = (issuing: Record<string, unknown>, other: Record<string, unknown>) => {
@@ -330,7 +391,12 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
       const changedRecoveries = JSON.stringify(recoveryRows(before)) !== JSON.stringify(recoveryRows(issuing))
       if (!changedAdvances && !changedRecoveries) continue
       for (const name of ['projects', 'clientAdvances', 'projectExtracts']) if (JSON.stringify(select(before, name)) !== JSON.stringify(select(other, name))) throw new Error('تعارض استرداد مقدمات المشروع مع تغيير متزامن — أعد تحميل البيانات')
-      if (JSON.stringify(before.journal) !== JSON.stringify(other.journal)) throw new Error('تعارض استرداد مقدمات المشروع مع الدفتر — أعد تحميل البيانات')
+      // فحص محافظ للّقطة نفسها فقط: لا ندمج قرار المقدمة مع تغيير
+      // صلاحية أو فرع أو أصل مالي يمكن أن يغيّر أسس الترحيل. مخزن
+      // الفترات مستقل ولا تشمل هذه المقارنة التغييرات التي تقع فيه.
+      for (const name of ['journal', 'vouchers', 'clientSettlements', 'sales', 'saleReturns', 'cheques', 'openingBalances', 'branchOpeningBalances', 'partyOffsets', 'retentionReleases', 'paymentTerminalTransactions', 'treasuries', 'paymentTerminals', 'customers', 'branches', 'activeBranchId', 'appUsers', 'currentUserId', 'loggedOut', 'roleOverrides', 'branchRoleOverrides', 'customRoles']) {
+        if (JSON.stringify(before[name]) !== JSON.stringify(other[name])) throw new Error('تعارض مقدمة المشروع مع حركة مالية أو أساس ترحيل متزامن — أعد تحميل البيانات')
+      }
     }
   }
   checkAdvanceRecovery(left, right); checkAdvanceRecovery(right, left)
@@ -356,6 +422,15 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
       if (['projects', 'projectDeletionRecords', 'quotationDeletionRecords', 'surveyDeletionRecords', 'auditLog'].includes(key) || !Array.isArray(value)) continue
       const activeRows = key === 'quotations' ? value.filter(row => !row || typeof row !== 'object' || !(row as { deletedAt?: unknown }).deletedAt) : value
       if (refersToDeleted(activeRows)) throw new Error('تعارض المشروع المحذوف مع مستند مرتبط أُضيف بالتزامن — أعد تحميل البيانات')
+    }
+  }
+  // بعد فحوص التعارض المتخصصة، يضمن الدمج العام حفظ ترتيب دفتر كل طرف
+  // ويرفض تركيب قيد من تعديلين متزامنين بدلاً من اختيار تاريخ صامت.
+  if (state) for (const payload of [base, local, remote]) {
+    const previous = persistedState(payload)
+    if (previous && (previous.journal !== undefined || state.journal !== undefined)) {
+      try { assertJournalHistoryPreserved((previous.journal === undefined ? [] : previous.journal) as JournalEntry[], state.journal) }
+      catch (error) { throw new Error(`تعارض تاريخ اليومية عند الدمج — ${error instanceof Error ? error.message : 'راجع الدفتر'}`, { cause: error }) }
     }
   }
   return result
@@ -402,18 +477,52 @@ export function newAuditEvents(nextPayloadJson: string, previousPayloadJson: str
     }))
 }
 
-/** القيود الجديدة فقط؛ جداول SQLite تحفظ القيد وسطوره بصورة append-only. */
+/** القيود الجديدة وعلامات العكس الجديدة؛ سطور القيد القديم لا تُعدّل. */
 export function newJournalEntries(nextPayloadJson: string, previousPayloadJson: string | null): DesktopJournalEntry[] {
   const next = persistedState(nextPayloadJson)
-  if (!next || !Array.isArray(next.journal)) return []
   const previous = persistedState(previousPayloadJson)
-  const known = new Set(
-    previous && Array.isArray(previous.journal)
-      ? previous.journal.map((entry) => (entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : null)).filter((id): id is number => typeof id === 'number')
-      : [],
-  )
-  return next.journal
-    .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object' && Number.isInteger(entry.id) && !known.has(entry.id))
+  // يحمي الحفظ غير المتعارض أيضاً من حذف أو تعديل تاريخ الدفتر في اللقطة.
+  // البيانات التاريخية غير المتغيرة لا تُمنع من الحفظ بسبب تلف قديم؛ لكن
+  // تعديل دفتر تالف يتطلب مراجعة. لا يُفترض تاريخ عند أول استيراد.
+  const checkHistory = () => {
+    if (previous?.journal !== undefined && !next) throw new Error('تعذّر قراءة اللقطة الجديدة للتحقق من دفتر اليومية — لم يُحفظ التغيير')
+    if (previous && next && JSON.stringify(previous.journal) !== JSON.stringify(next.journal)) {
+      assertJournalHistoryPreserved((previous.journal === undefined ? [] : previous.journal) as JournalEntry[], next.journal)
+    }
+  }
+  if (!next || !Array.isArray(next.journal)) { checkHistory(); return [] }
+  const known = new Map<number, Record<string, unknown>>()
+  if (previous && Array.isArray(previous.journal)) {
+    for (const entry of previous.journal) {
+      if (entry && typeof entry === 'object' && Number.isInteger(entry.id)) known.set(entry.id as number, entry as Record<string, unknown>)
+    }
+  }
+  const extracted = next.journal
+    .filter((entry): entry is Record<string, unknown> => {
+      if (!entry || typeof entry !== 'object' || !Number.isInteger(entry.id)) return false
+      const old = known.get(entry.id as number)
+      if (!old) return true
+      if (old.reversedByEntryId != null || entry.reversedByEntryId == null) return false
+      const reversalId = entry.reversedByEntryId
+      const matches = next.journal as Record<string, unknown>[]
+      const reversals = matches.filter(row => row && typeof row === 'object' && row.id === reversalId)
+      if (!Number.isSafeInteger(reversalId) || (reversalId as number) <= 0 || reversals.length !== 1 || reversals[0].reversesEntryId !== entry.id || matches.filter(row => row && typeof row === 'object' && row.reversesEntryId === entry.id).length !== 1) throw new Error('علامة عكس قيد اليومية بلا قيد عاكس مرتبط وفريد — راجع الدفتر')
+      const reversal = reversals[0]
+      const originals = Array.isArray(entry.lines) ? entry.lines : null
+      const reversed = Array.isArray(reversal.lines) ? reversal.lines : null
+      const exactLines = originals && reversed && originals.length === reversed.length && (originals.length >= 2 || (entry.memoOnly === true && originals.length === 0)) && originals.every((value: unknown, index: number) => {
+        if (!value || typeof value !== 'object' || !reversed[index] || typeof reversed[index] !== 'object') return false
+        const line = value as Record<string, unknown>, opposite = reversed[index] as Record<string, unknown>
+        return typeof line.accountCode === 'string' && line.accountCode.length > 0 && line.accountCode === opposite.accountCode
+          && Number.isSafeInteger(line.debit) && Number.isSafeInteger(line.credit) && (line.debit as number) >= 0 && (line.credit as number) >= 0
+          && line.debit === opposite.credit && line.credit === opposite.debit
+          && (line.costCenterId ?? null) === (opposite.costCenterId ?? null)
+          && (line.partyKind ?? null) === (opposite.partyKind ?? null) && (line.partyId ?? null) === (opposite.partyId ?? null)
+          && (line.relatedBranchId ?? null) === (opposite.relatedBranchId ?? null)
+      })
+      if (reversal.sourceType !== 'reversal' || reversal.sourceId !== entry.id || reversal.reversedByEntryId != null || (entry.branchId ?? null) !== (reversal.branchId ?? null) || !exactLines) throw new Error('قيد العكس لا يطابق أصل اليومية وأطرافه — راجع الدفتر قبل الحفظ')
+      return true
+    })
     .map((entry) => ({
       id: entry.id as number,
       entryNumber: typeof entry.entryNumber === 'number' ? entry.entryNumber : entry.id as number,
@@ -436,6 +545,8 @@ export function newJournalEntries(nextPayloadJson: string, previousPayloadJson: 
       reversedByEntryId: typeof entry.reversedByEntryId === 'number' ? entry.reversedByEntryId : null,
       reversesEntryId: typeof entry.reversesEntryId === 'number' ? entry.reversesEntryId : null,
     }))
+  checkHistory()
+  return extracted
 }
 
 /**

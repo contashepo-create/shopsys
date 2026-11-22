@@ -245,7 +245,7 @@ export function PurchaseOrdersPage() {
     shareDocPdfViaWhatsapp({
       model: buildPrintModel(), cur, settings: documentSettings.receipt,
       docLabel: 'أمر شراء', docNumber: 'مسودة',
-      partyPhone: selectedSupplier?.phone ?? '', shopName: documentSettings.setup.shopName, toast,
+      partyPhone: selectedSupplier?.phone ?? '', countryCode: documentSettings.setup.countryCode, shopName: documentSettings.setup.shopName, toast,
     })
   }
   /**

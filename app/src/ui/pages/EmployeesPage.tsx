@@ -20,6 +20,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { toCsv } from '../../core/security.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
 import { type PayrollSlip, defaultAdvanceRecovery, slipPaidMinor, slipRemainingMinor } from '../../core/payrollSlips.ts'
+import { calculatePayrollProjectAmounts, isPayrollProjectSnapshotReadable, parsePayrollProjectPercentage, payrollProjectExpenseBasis, suggestPayrollProjectPercentages, validateManualPayrollPercentages, type PayrollProjectPercentage } from '../../core/payrollProjectAllocation.ts'
 import { matchesSearch } from '../../core/search.ts'
 import { STAFF_COMMISSION_SOURCE_LABELS, STAFF_COMMISSION_STATUS_LABELS, type StaffCommissionSource } from '../../core/staffCommissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -113,6 +114,14 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
   /* ── حالة قسائم الرواتب (طلب المالك) ── */
   const payrollSlips = useDataStore((state) => state.payrollSlips)
+  // فحص السجلات الظاهرة في نطاق الفرع؛ الترحيل يعيد التحقق على السجلات كاملة بما فيها الفروع الأخرى.
+  const hasVisiblePayroll = (employeeId: number, forMonth: string) =>
+    payrollRuns.some((run) => run.month === forMonth && Array.isArray(run.lines) && run.lines.some((line) => line.employeeId === employeeId)) ||
+    payrollSlips.some((slip) => slip.month === forMonth && slip.employeeId === employeeId && slip.status !== 'cancelled')
+  const hasCancelledDistributedSlip = (employeeId: number, forMonth: string) =>
+    payrollSlips.some(slip => slip.month === forMonth && slip.employeeId === employeeId && slip.status === 'cancelled' && slip.projectAllocation != null)
+  const hasVisibleAggregatedConflict = (employeeId: number, forMonth: string) =>
+    hasVisiblePayroll(employeeId, forMonth) || hasCancelledDistributedSlip(employeeId, forMonth)
   /* الربط بالحضور (طلب المالك ㉘): خصومات وأجر إضافي من بيانات الحضور والإجازات */
   const getAttendancePayrollImpact = useDataStore((state) => state.getAttendancePayrollImpact)
   const getMonthlyAttendance = useDataStore((state) => state.getMonthlyAttendance)
@@ -156,7 +165,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [slipDate, setSlipDate] = useState(() => todayLocalIso())
   const [slipSaving, setSlipSaving] = useState(false)
   const slipPending = useRef(false), slipBasis = useRef(''), slipWarningBasis = useRef('')
-  const slipFingerprint = () => { const s = useRawDataStore.getState(); const app = useAppStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.payrollSlips, s.payrollRuns, s.employeeAdvances, s.advanceRepayments, s.employeeDeductions, s.attendanceRecords, s.leaveRequests, s.hrRules, s.branchHrSettings, s.journal, app.fiscalYears, app.setup]) }
+  const slipFingerprint = () => { const s = useRawDataStore.getState(); const app = useAppStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.projects, s.payrollSlips, s.payrollRuns, s.projectCosts, s.employeeAdvances, s.advanceRepayments, s.employeeDeductions, s.attendanceRecords, s.leaveRequests, s.hrRules, s.branchHrSettings, s.journal, app.fiscalYears, app.setup]) }
   /* كشف حساب الموظف (طلب المالك: يُعامل كالعميل) */
   const getEmployeeBalance = useDataStore((state) => state.getEmployeeBalance)
   const getEmployeeStatementRows = useDataStore((state) => state.getEmployeeStatementRows)
@@ -165,6 +174,30 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [slipSearch, setSlipSearch] = useState('')
   const [slipScope, setSlipScope] = useState<'all' | 'selected'>('all')
   const [slipRows, setSlipRows] = useState<{ employeeId: number; name: string; on: boolean; gross: number; allowances: number; deductions: number; advance: number; advanceEdited: boolean; attDed: number; attAllw: number; regDed: number }[]>([])
+  // اختيار صريح لهذه القسيمة فقط؛ ليس سجلاً تلقائياً أو مؤرخاً لمشاركة الموظف.
+  const [slipProjectDrafts, setSlipProjectDrafts] = useState<Record<number, Record<number, string>>>({})
+  const selectedSlipProjects = (employeeId: number): PayrollProjectPercentage[] | undefined => {
+    const chosen = slipProjectDrafts[employeeId] ?? {}
+    const ids = Object.keys(chosen).map(Number)
+    if (!ids.length) return undefined
+    const selected = ids.map(id => {
+      const project = projects.find(row => row.id === id)
+      if (!project || project.status !== 'active') throw new Error('أحد مشاريع توزيع الراتب لم يعد قائماً أو ظاهراً')
+      return project
+    })
+    const shares = ids.map(projectId => ({ projectId, basisPoints: parsePayrollProjectPercentage(chosen[projectId]) }))
+    if (validateManualPayrollPercentages(selected, shares).unallocatedBasisPoints !== 0) throw new Error('مجموع نسب المشاريع لكل موظف يجب أن يساوي 100٪')
+    return shares
+  }
+  const toggleSlipProject = (employeeId: number, projectId: number, checked: boolean) => {
+    setSlipProjectDrafts(previous => {
+      const ids = new Set(Object.keys(previous[employeeId] ?? {}).map(Number))
+      if (checked) ids.add(projectId); else ids.delete(projectId)
+      const selected = [...ids].map(id => projects.find(project => project.id === id)).filter((project): project is NonNullable<typeof project> => Boolean(project && project.status === 'active'))
+      const shares = suggestPayrollProjectPercentages(selected)
+      return { ...previous, [employeeId]: Object.fromEntries(shares.map(share => [share.projectId, String(share.basisPoints / 100)])) }
+    })
+  }
   useEffect(() => {
     if (!slipDraftOpen) return
     setSlipRows(employees.filter((employee) => employee.active !== false).map((employee) => ({
@@ -189,6 +222,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
     if (slipScope === 'selected' && !row.on) return false
     return true
   })
+  const conflictingSlipRows = slipRowsEffective.filter((row) => row.on && hasVisiblePayroll(row.employeeId, slipMonth))
   /* §92: إجماليات المسير الصلبة — لشريط الترحيل السفلي */
   const slipTotals = useMemo(() => {
     const sel = slipRowsEffective.filter((row) => row.on)
@@ -253,7 +287,14 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const accrueSlips = async () => {
     if (slipPending.current) return
     const chosen = slipRowsEffective.filter((row) => row.on)
-    const rows = chosen.map((row) => ({ employeeId: row.employeeId, grossMinor: row.gross, allowancesMinor: row.allowances, deductionsMinor: row.deductions, advanceMinor: row.advance }))
+    if (chosen.some((row) => hasVisiblePayroll(row.employeeId, slipMonth))) {
+      toast.show('استبعد الموظفين الذين لديهم راتب مرحّل لهذا الشهر أو اختر شهراً آخر', 'error')
+      return
+    }
+    let rows: { employeeId: number; grossMinor: number; allowancesMinor: number; deductionsMinor: number; advanceMinor: number; projectPercentages?: PayrollProjectPercentage[] }[]
+    try {
+      rows = chosen.map((row) => ({ employeeId: row.employeeId, grossMinor: row.gross, allowancesMinor: row.allowances, deductionsMinor: row.deductions, advanceMinor: row.advance, projectPercentages: selectedSlipProjects(row.employeeId) }))
+    } catch (error) { toast.show((error as Error).message, 'error'); return }
     const formBasis = JSON.stringify([slipMonth, slipDate, rows])
     const withRecords = new Set(attendanceRecords.filter((r) => r.date.startsWith(slipMonth)).map((r) => r.employeeId))
     const missing = chosen.filter((row) => !withRecords.has(row.employeeId)).map((row) => row.name)
@@ -608,10 +649,6 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
     allowances: toMajor(employee.allowancesMinor),
     overtime: '', deductions: '', advances: '', excessPaid: '', payCommissions: false,
   })
-  /** أُسند راتب هذا الشهر لهذا الموظف من قبل؟ (يمنع التكرار قبل الترحيل) */
-  const paidThisMonth = (employeeId: number, forMonth: string) =>
-    payrollRuns.some((run) => run.month === forMonth && run.lines.some((line) => line.employeeId === employeeId))
-
   const resetRunHeader = () => {
     setMonth(todayLocalIso().slice(0, 7))
     setPayMode('cash'); setPaySource(DEFAULT_PAY_SOURCE); setRunNotes(''); setRunFilter('')
@@ -621,7 +658,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
     if (activeStaff.length === 0) return toast.show('لا يوجد موظفون على رأس العمل — أضفهم أولاً', 'error')
     const thisMonth = todayLocalIso().slice(0, 7)
     setRunScope('all')
-    setDraft(activeStaff.filter((employee) => !paidThisMonth(employee.id, thisMonth)).map(draftLineFor))
+    setDraft(activeStaff.filter((employee) => !hasVisibleAggregatedConflict(employee.id, thisMonth)).map(draftLineFor))
     resetRunHeader()
     setRunOpen(true)
   }
@@ -636,8 +673,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const pickSingleEmployee = (employeeId: number) => {
     const employee = employees.find((e) => e.id === employeeId)
     if (!employee) return
-    if (paidThisMonth(employee.id, month)) {
-      toast.show(`صُرف راتب ${monthLabelAr(month)} لـ«${employee.nameAr}» من قبل — اختر شهراً آخر`, 'error')
+    if (hasCancelledDistributedSlip(employee.id, month)) {
+      toast.show('توجد قسيمة موزعة ملغاة لهذا الشهر — استخدم قسيمة بديلة بعد مراجعة الإلغاء', 'error')
+      return
+    }
+    if (hasVisiblePayroll(employee.id, month)) {
+      toast.show(`رُحّل راتب ${monthLabelAr(month)} لـ«${employee.nameAr}» من قبل — اختر شهراً آخر`, 'error')
       return
     }
     setDraft([draftLineFor(employee)])
@@ -646,7 +687,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   /** إعادة تعبئة مسير «كل الموظفين» عند تغيير الشهر — يستبعد من صُرف له بالفعل */
   const refillAll = (forMonth: string) => {
     if (runScope !== 'all') return
-    setDraft(employees.filter((employee) => employee.active && !paidThisMonth(employee.id, forMonth)).map(draftLineFor))
+    setDraft(employees.filter((employee) => employee.active && !hasVisibleAggregatedConflict(employee.id, forMonth)).map(draftLineFor))
   }
   const patchDraft = (id: number, patch: Partial<DraftLine>) =>
     setDraft((d) => d.map((l) => (l.employeeId === id ? { ...l, ...patch } : l)))
@@ -703,9 +744,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   }), [draft, employees, runFilter])
   /** موظفون على رأس العمل خارج المسير الحالي — لإعادة إدراج من استُبعد */
   const draftCandidates = useMemo(
-    () => employees.filter((employee) => employee.active && !draft.some((line) => line.employeeId === employee.id) && !paidThisMonth(employee.id, month)),
+    () => employees.filter((employee) => employee.active && !draft.some((line) => line.employeeId === employee.id) && !hasVisibleAggregatedConflict(employee.id, month)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [employees, draft, month, payrollRuns],
+    [employees, draft, month, payrollRuns, payrollSlips],
   )
 
   const saveRun = () => {
@@ -1242,7 +1283,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
               <div className="flex items-center gap-2">
                 <input type="month" className={inputCls + ' w-36'} value={slipMonth} onChange={(event) => setSlipMonth(event.target.value)} aria-label="شهر الاستحقاق" />
-                <Btn onClick={() => { slipBasis.current = slipFingerprint(); setSlipDate(todayLocalIso()); setSlipNoAttendance(null); setSlipDraftOpen(true) }} disabled={!employees.length}>
+                <Btn onClick={() => { slipBasis.current = slipFingerprint(); setSlipDate(todayLocalIso()); setSlipNoAttendance(null); setSlipProjectDrafts({}); setSlipDraftOpen(true) }} disabled={!employees.length}>
                   <span className="flex items-center gap-1.5"><Plus size={15} /> استحقاق قسائم</span>
                 </Btn>
               </div>
@@ -1295,6 +1336,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   </Field>
                 </div>
 
+                <p className="mt-2 text-[11px] text-slate-500" data-payroll-scope-note>التنبيه يفحص السجلات الظاهرة في نطاق الفرع فقط؛ عند الترحيل يُتحقق أيضاً من جميع الفروع.</p>
+                {conflictingSlipRows.length > 0 && <p role="alert" className="mt-2 text-[12px] font-bold text-amber-700" data-slip-duplicate-warning>لدى {conflictingSlipRows.length} من المحددين راتب مرحّل لهذا الشهر في السجلات الظاهرة. ألغِ تحديدهم أو اختر شهراً آخر؛ لم تُحذف تعديلاتك.</p>}
                 {/* ═══ جدول القسائم — رأس صلب داكن ═══ */}
                 <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
                   <table className="w-full text-[12px]">
@@ -1317,6 +1360,28 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                               <span className="font-bold text-slate-700 dark:text-slate-200">{row.name}</span>
                               <span className="font-mono text-[10px] text-slate-400">#{index + 1}</span>
                             </label>
+                            {hasVisiblePayroll(row.employeeId, slipMonth) && <span className="block mt-1 text-[10px] font-bold text-amber-700" data-slip-duplicate={row.employeeId}>راتب مرحّل لهذا الشهر</span>}
+                            {projects.length > 0 && <details className="mt-1 rounded-lg border border-slate-200 p-2 dark:border-slate-700" data-slip-project-editor={row.employeeId}>
+                              <summary className="cursor-pointer text-[11px] font-bold text-brand-700">مشاريع {row.name} في {slipMonth} · {Object.keys(slipProjectDrafts[row.employeeId] ?? {}).length} محدد</summary>
+                              <p className="my-1 text-[10px] text-slate-500">اختر المشاريع القائمة التي شارك فيها الموظف هذا الشهر. يقترح النظام نسباً متساوية قابلة للتعديل؛ تغيير اختيار المشاريع يعيد اقتراحها. لا توجد مشاركة تلقائية محفوظة لشهر آخر.</p>
+                              {projects.filter(project => project.status === 'active').map(project => {
+                                const selected = Object.hasOwn(slipProjectDrafts[row.employeeId] ?? {}, project.id)
+                                return <div key={project.id} className="flex flex-wrap items-center gap-2 py-1">
+                                  <label className="flex items-center gap-1"><input type="checkbox" checked={selected} onChange={event => toggleSlipProject(row.employeeId, project.id, event.target.checked)} aria-label={`مشاركة ${row.name} في ${project.nameAr}`} /> {project.code} — {project.nameAr}</label>
+                                  {selected && <label className="flex items-center gap-1">النسبة ٪ <input className={inputCls + ' w-20'} inputMode="decimal" aria-label={`نسبة ${row.name} في ${project.nameAr}`} value={slipProjectDrafts[row.employeeId][project.id]} onChange={event => setSlipProjectDrafts(previous => ({ ...previous, [row.employeeId]: { ...previous[row.employeeId], [project.id]: event.target.value } }))} /></label>}
+                                </div>
+                              })}
+                              {Object.keys(slipProjectDrafts[row.employeeId] ?? {}).length > 0 && (() => {
+                                try {
+                                  const shares = selectedSlipProjects(row.employeeId)!
+                                  const selected = shares.map(share => projects.find(project => project.id === share.projectId)!)
+                                  const cost = payrollProjectExpenseBasis(Math.max(0, row.gross + row.allowances - row.deductions - row.advance), row.advance)
+                                  const preview = calculatePayrollProjectAmounts(selected, shares, cost)
+                                  return <p className="text-[10px] text-slate-600" data-slip-project-preview={row.employeeId}>أساس 5102 {fmt(cost)}: {preview.shares.map(share => `${selected.find(project => project.id === share.projectId)!.nameAr} ${fmt(share.amountMinor)}`).join(' · ')}</p>
+                                } catch (error) { return <p className="text-[10px] font-bold text-rose-600" data-slip-project-error={row.employeeId}>{(error as Error).message}</p> }
+                              })()}
+                              <p className="mt-1 text-[10px] text-amber-700">تُحفظ اللقطة بالقسيمة وتدخل ربحية المشاريع بعد مطابقة القيود؛ لا يُنشأ قيد إضافي. عند عدم الاختيار لا يُسجل توزيع.</p>
+                            </details>}
                             {/* §93: متبقي السلف والجزاءات المسجلة — مرئي قبل الترحيل لا من الذاكرة */}
                             {(() => {
                               const adv = getEmployeeAdvanceBalance(row.employeeId)
@@ -1378,7 +1443,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                       </Btn>
                       <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
                     </div>
-                    <Btn onClick={accrueSlips} disabled={slipSaving || !slipDate || slipTotals.count === 0 || slipTotals.net <= 0} className="!bg-emerald-500 hover:!bg-emerald-400 !text-white font-black px-5" data-slip-post>
+                    <Btn onClick={accrueSlips} disabled={slipSaving || !slipDate || slipTotals.count === 0 || slipTotals.net <= 0 || conflictingSlipRows.length > 0} className="!bg-emerald-500 hover:!bg-emerald-400 !text-white font-black px-5" data-slip-post>
                       💾 ترحيل المسير — {slipTotals.count} قسيمة بقيد متوازن
                     </Btn>
                   </div>
@@ -1444,7 +1509,14 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                 {payrollSlips.slice().reverse().map((slip) => (
                   <tr key={slip.id} className="border-t border-slate-200/70 dark:border-slate-700/60" data-slip={slip.slipNumber}>
                     <td className="p-1 text-center font-mono font-bold">{slip.slipNumber}</td>
-                    <td className="p-1 text-center">{slip.employeeName}</td>
+                    <td className="p-1 text-center">{slip.employeeName}{slip.projectAllocation && <details className="mt-1 text-right" data-slip-project-snapshot={slip.id}>
+                      <summary className="cursor-pointer text-[10px] text-brand-700">توزيع الراتب المحفوظ{slip.status === 'cancelled' ? ' — القسيمة ملغاة' : ''}</summary>
+                      {isPayrollProjectSnapshotReadable(slip.projectAllocation, slip) ? <>
+                        <p className="text-[10px] text-slate-500">أساس 5102: {fmt(slip.projectAllocation.expenseMinor)} · قيد #{slip.projectAllocation.journalEntryId} · يدخل ربحية المشروع بعد التحقق من القيود</p>
+                        {slip.projectAllocation.projects.map(project => <p key={project.projectId} className="text-[10px]">{project.projectCode} — {project.projectName}: {project.basisPoints / 100}٪ · {fmt(project.amountMinor)}</p>)}
+                        <p className="text-[10px] text-slate-500">عرض اللقطة لا يثبت صحة القيد أو الإلغاء.</p>
+                      </> : <p className="text-[10px] font-bold text-rose-600">لقطة التوزيع غير صالحة — راجع القسيمة والأدلة.</p>}
+                    </details>}</td>
                     <td className="p-1 text-center">{monthLabelAr(slip.month)}</td>
                     <td className="p-1 text-center font-mono font-bold" title={`الصافي ${fmt(slip.netMinor)} · المصروف ${fmt(slipPaidMinor(slip))}`}>{fmt(slipRemainingMinor(slip))}</td>
                     <td className="p-1 text-center">
@@ -1730,6 +1802,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           جدول عملي بأعمدة مجمّعة وصف إجماليات، ونمط «موظف واحد» ببطاقة راتب كاملة */}
       <Modal open={runOpen} onClose={() => setRunOpen(false)} title={runScope === 'single' ? 'مسير راتب موظف واحد' : 'مسير رواتب شامل'} extraWide subtitle="مستند مسير: استحقاق الشهر ثم خصم السلف والجزاءات ثم الصرف نقداً أو تأجيله استحقاقاً">
         <div className="space-y-4">
+          <p className="text-[11px] text-slate-500">يُستبعد أصحاب الرواتب المرحلة والقسائم الموزعة الملغاة في السجلات الظاهرة عند تعبئة المسير؛ استخدم قسيمة بديلة للموزعة بعد مراجعة إلغائها. يتحقق الترحيل من الأدلة وجميع الفروع مجدداً.</p>
+          {projects.length > 0 && <p className="text-[11px] font-bold text-amber-700">المسير المجمّع القديم لا يدعم توزيع الرواتب على المشاريع؛ استخدم مسار القسائم لاختيار المشاريع وحفظ النسب؛ لا تُحتسب المسيرات القديمة أو القسائم غير الموزعة في الربحية.</p>}
+          {draft.some(line => hasCancelledDistributedSlip(line.employeeId, month)) && <p role="alert" className="text-[11px] font-bold text-rose-700">تغيرت البيانات وفي المسير موظف له قسيمة موزعة ملغاة لهذا الشهر — استبعده واستخدم قسيمة بديلة بعد مراجعة الإلغاء.</p>}
           {/* 1) بيانات المسير */}
           <section className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-2 bg-brand-500/10 px-4 py-2.5">
@@ -1742,7 +1817,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     onClick={() => {
                       setRunScope(scope)
                       setRunFilter('')
-                      setDraft(scope === 'all' ? employees.filter((employee) => employee.active && !paidThisMonth(employee.id, month)).map(draftLineFor) : [])
+                      setDraft(scope === 'all' ? employees.filter((employee) => employee.active && !hasVisibleAggregatedConflict(employee.id, month)).map(draftLineFor) : [])
                     }}
                     className={`rounded-lg px-3 py-1 text-[11px] font-bold transition-all ${runScope === scope ? 'bg-brand-600 text-white' : 'bg-white/70 dark:bg-slate-800 text-slate-500'}`}
                   >{label}</button>
@@ -1796,7 +1871,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     cashLabel="اختر الموظف"
                     label="بحث الموظف"
                     showCash={false}
-                    partyInfo={(party) => ({ code: partyCode('EMP', party.id), balance: paidThisMonth(party.id, month) ? `صُرف راتب ${monthLabelAr(month)}` : '' })}
+                    partyInfo={(party) => ({ code: partyCode('EMP', party.id), balance: hasCancelledDistributedSlip(party.id, month) ? 'قسيمة موزعة ملغاة — استخدم قسيمة بديلة' : hasVisiblePayroll(party.id, month) ? `رُحّل راتب ${monthLabelAr(month)}` : '' })}
                   />
                 </Field>
                 {draft.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-[12px] text-slate-400 dark:border-slate-700">اكتب أول حرف من اسم الموظف لاختياره — ثم تظهر بطاقة راتبه كاملة.</div>}
@@ -2025,7 +2100,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                 })()}
               </div>
             ) : draft.length === 0 ? (
-              <div className="p-6 text-center text-[12px] text-slate-400">لا موظف مدرج — كل من على رأس العمل صُرف راتب هذا الشهر، أو استبعدتهم يدوياً.</div>
+              <div className="p-6 text-center text-[12px] text-slate-400">لا موظف مدرج — لا موظف مؤهل ظاهر في الفرع، أو استبعدتهم يدوياً.</div>
             ) : null}
 
             {runScope === 'all' && draft.length > 0 && (
@@ -2166,7 +2241,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <span className="text-[11px] text-slate-500">مرة واحدة لكل موظف في الشهر — التكرار مرفوض آلياً</span>
               <div className="flex gap-2">
                 <Btn variant="ghost" onClick={() => setRunOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveRun} shortcut="F9" disabled={draft.length === 0 || draftTotals.net <= 0}>💾 ترحيل المسير وتوليد القيد</Btn>
+                <Btn onClick={saveRun} shortcut="F9" disabled={draft.length === 0 || draftTotals.net <= 0 || draft.some(line => hasCancelledDistributedSlip(line.employeeId, month))}>💾 ترحيل المسير وتوليد القيد</Btn>
               </div>
             </div>
           </section>

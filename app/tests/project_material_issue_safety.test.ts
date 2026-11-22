@@ -75,3 +75,26 @@ it('رفض متأخر لا يستهلك الاعتماد وتُسجل جميع �
  const unsubscribe = useRawDataStore.subscribe(s => { updates++; expect(s.approvalRequests[0].consumedAt).toBeTruthy(); expect(s.materialRequisitions).toHaveLength(1); expect(s.journal).toHaveLength(1); expect(s.projectCosts).toHaveLength(1) })
  S().issueMaterials(base); unsubscribe(); expect(updates).toBe(1)
 })
+it('يرفض صنفاً غير نشط حتى لو استُدعي المستودع مباشرة', () => {
+ useRawDataStore.setState({ items: [{ ...item, isActive: false }] as never }); const before = S()
+ expect(() => S().issueMaterials(base)).toThrow(/غير نشط/); expect(S()).toBe(before)
+})
+it('يرفض وحدة مكررة ذات معاملين بدلاً من اختيار أول معامل بصمت', () => {
+ useRawDataStore.setState({ items: [{ ...item, extraUnits: [{ nameAr: 'علبة', factor: 2 }, { nameAr: 'علبة', factor: 3 }] }] as never }); const before = S()
+ expect(() => S().issueMaterials({ ...base, lines: [{ itemId: 5, qty: 1, unitAr: 'علبة' }] })).toThrow(/مكررة/); expect(S()).toBe(before)
+})
+it('المحرك لا يستبدل تكلفة تالفة بصفر ولا يقبل رصيداً أو كمية مخططة فاسدة', async () => {
+ const { buildIssueLine } = await import('../src/core/projectOps.ts')
+ for (const costMinor of [-1, NaN, 1.5, Number.MAX_SAFE_INTEGER + 1]) expect(() => buildIssueLine(base.lines[0], { ...item, costMinor }, 0)).toThrow(/تكلفة/)
+ for (const stockQty of [-1, NaN, 1.0001]) expect(() => buildIssueLine(base.lines[0], { ...item, stockQty }, 0)).toThrow(/رصيد/)
+ expect(() => buildIssueLine(base.lines[0], item, -1)).toThrow(/رصيد/)
+ expect(() => buildIssueLine(base.lines[0], item, 4)).toThrow(/رصيد/)
+ expect(() => buildIssueLine({ ...base.lines[0], itemId: 99 }, item, 0)).toThrow(/يطابق/)
+})
+it('يثبت مخزن الصنف عند الصرف ولا يعيد إسناده عند تغيير الإعداد لاحقاً', () => {
+ useRawDataStore.setState({ items: [{ ...item, warehouseId: 2 }] as never })
+ const doc = S().issueMaterials(base)
+ expect(doc.lines[0].warehouseId).toBe(2)
+ useRawDataStore.setState({ items: [{ ...S().items[0], warehouseId: 1 }] as never })
+ expect(S().materialRequisitions[0].lines[0].warehouseId).toBe(2)
+})

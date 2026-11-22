@@ -22,6 +22,7 @@ import { renderReportShell, htmlTableHtml } from '../../core/reportPrint.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { localIsoTimestamp } from '../../core/time.ts'
+import { useToast } from '../components/ui.tsx'
 
 const PRINT_HEADERS = ['التاريخ', 'المستند', 'مرجع المورد', 'المورد', 'بيان البند', 'التصنيف', 'كمية × سعر', 'الصافي', 'الضريبة', 'الإجمالي'] as const
 
@@ -31,8 +32,11 @@ export function ProjectExpenseLedgerCard(props: {
   projectNameAr: string
   /** أوراق Excel تسبق ورقة المصروفات (بطاقة المشروع/المستخلصات من التقارير) */
   preSheets?: ExportSheet[]
+  /** تحقّق مباشر قبل تصدير الأوراق الملتقطة من تقرير خارجي. */
+  assertExportCurrent?: () => void
   title?: string
 }) {
+  const toast = useToast()
   const { suppliers, treasuries, custodyFiles, boqItems, journal } = useDataStore()
   const { setup } = useAppStore()
   const cur = getCountry(setup.countryCode ?? 'EG')!.currency
@@ -48,8 +52,8 @@ export function ProjectExpenseLedgerCard(props: {
 
   const exportSheet = (): ExportSheet => ({
     nameAr: 'مصروفات المشروع التفصيلية',
-    headers: [...PROJECT_EXPENSE_LEDGER_HEADERS],
-    rows: projectExpenseLedgerExportRows(ledger.rows, cur.decimals),
+    headers: [...PROJECT_EXPENSE_LEDGER_HEADERS, 'نطاق الكشف'],
+    rows: projectExpenseLedgerExportRows(ledger.rows, cur.decimals).map(row => [...row, 'مستندات 5110 فقط؛ لا يتضمن مرتجعات الشراء أو توزيع رواتب 5102']),
   })
   const hasLedger = ledger.rows.length > 0
 
@@ -65,6 +69,7 @@ export function ProjectExpenseLedgerCard(props: {
   }
 
   const exportExcel = () => {
+    try { props.assertExportCurrent?.() } catch { toast.show('تغيّرت بيانات الرواتب أو تحتاج مراجعة — أعد فتح التقرير', 'error'); return }
     const sheets = [...(props.preSheets ?? []), exportSheet()]
     downloadTextFile(
       exportFileName(resolveLedgerPrintSettings()?.setup.shopName || setup.shopName || 'المنشأة', `كشف-مصروفات-${props.projectCode}`, 'xls', localIsoTimestamp()),
@@ -95,7 +100,7 @@ export function ProjectExpenseLedgerCard(props: {
     })
     printHtml(renderReportShell({
       title: `كشف مصروفات المشروع التفصيلي — ${props.projectCode}`,
-      subtitle: `${props.projectNameAr} · المدفوع ${fmt(ledger.totals.paidMinor)} · الآجل ${fmt(ledger.totals.dueMinor)}`,
+      subtitle: `${props.projectNameAr} · مستندات 5110 فقط، دون مرتجعات الشراء أو توزيع رواتب 5102 · المدفوع ${fmt(ledger.totals.paidMinor)} · الآجل ${fmt(ledger.totals.dueMinor)}`,
       companyName: companyName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml, settings: reportPrint,
     }))
   }
@@ -106,13 +111,14 @@ export function ProjectExpenseLedgerCard(props: {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
         <div>
           <h3 className="text-[13px] font-black text-slate-700 dark:text-slate-100">{props.title ?? 'كشف المصروفات التفصيلي — سطر لكل بند'}</h3>
+          <p className="text-[11px] font-bold text-slate-400">كشف مستندات 5110 فقط؛ لا يتضمن توزيع رواتب 5102 أو مرتجعات الشراء.</p>
           <p className="text-[11px] font-bold text-slate-400">
             {t.docsCount} مستند · {t.linesCount} بند · الصافي {fmt(t.netMinor)} · الضريبة {fmt(t.vatMinor)} · الإجمالي {fmt(t.grossMinor)} · المدفوع {fmt(t.paidMinor)} · الآجل {fmt(t.dueMinor)}
           </p>
         </div>
         <div className="flex items-center gap-1.5">
           <button type="button" onClick={printLedger} disabled={!hasLedger} data-expense-ledger-print className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11.5px] font-black text-slate-600 transition hover:border-brand hover:text-brand disabled:opacity-40 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"><Printer size={13} /> طباعة / PDF</button>
-          <button type="button" onClick={exportExcel} disabled={!hasLedger} data-expense-ledger-excel className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11.5px] font-black text-white transition hover:bg-emerald-500 disabled:opacity-40"><FileSpreadsheet size={13} /> Excel{props.preSheets?.length ? ' (كشف شامل)' : ''}</button>
+          <button type="button" onClick={exportExcel} disabled={!hasLedger && !props.preSheets?.length} data-expense-ledger-excel className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11.5px] font-black text-white transition hover:bg-emerald-500 disabled:opacity-40"><FileSpreadsheet size={13} /> Excel{props.preSheets?.length ? ' (كشف شامل)' : ''}</button>
           <button type="button" onClick={exportCsv} disabled={!hasLedger} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11.5px] font-black text-slate-600 transition hover:border-brand hover:text-brand disabled:opacity-40 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"><FileText size={13} /> CSV</button>
         </div>
       </div>

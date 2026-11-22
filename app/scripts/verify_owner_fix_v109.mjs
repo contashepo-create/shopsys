@@ -36,7 +36,8 @@ check('① لا نسخة سليمة؟ يوقف الإقلاع بحوار خطأ 
 
 /* ─── ② الاستعادة من داخل التطبيق ─── */
 check('② IPC قائمة النسخ الملفية (المكانان + نوع + حجم + تاريخ)', main.includes("ipcMain.handle('database:listFileBackups'"))
-check('② IPC استعادة: أمن مسار (الملفات المعروفة فقط) + فحص سلامة قبل الاستبدال', main.includes("ipcMain.handle('database:restoreFileBackup'") && main.includes('مسار نسخة غير معروف') && main.includes('النسخة المحددة غير سليمة'))
+const restoreStage = read('desktop/fileRestoreStage.ts')
+check('② IPC استعادة: أمن مسار (الملفات المعروفة فقط) + فحص سلامة المرحلة قبل الاستبدال', main.includes("ipcMain.handle('database:restoreFileBackup'") && main.includes('مسار نسخة غير معروف') && main.includes('stageFileRestore(target, dbPath)') && restoreStage.includes("probeShopsysDatabase(staged) !== 'ok'"))
 check('② الاستعادة تحفظ نسخة أمان من الحالية قبل الاستبدال (before-restore)', main.includes('.before-restore-'))
 check('② الجسر كامل: preload + types', preload.includes('restoreFileBackup') && preload.includes('recoveryNotice') && bridge.includes('listFileBackups(): Promise'))
 check('② بطاقة الاستعادة: قائمة + تحذير الاستبدال الكامل + تأكيد على مرحلتين', backupPage.includes('استعادة نسخة قاعدة كاملة (من النسخ الملفية)') && backupPage.includes('تستبدل بياناتك الحالية بالكامل') && backupPage.includes('متأكد — استبدل بياناتي الحالية'))

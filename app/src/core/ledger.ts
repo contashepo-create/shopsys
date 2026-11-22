@@ -95,6 +95,8 @@ export interface JournalEntry {
   sourceId: number | null
   /** اسم مجموعة المستند المالكة عندما يحتمل sourceType أكثر من نوع مستند. */
   sourceCollection?: string
+  /** ضريبة مدخلات مُثبتة لمصروف عهدة مباشر (لتمييزه عن سداد ضريبة بسند صرف). */
+  custodyInputVatMinor?: Minor
   /** هوية مندوب البيع المصرّح بها عند الترحيل؛ مستقلة عن المحصّل والعمولة. */
   saleRepresentativeId?: number | null
   /** محصّل سند القبض المعيّن صراحةً، لا مستخدم النظام أو طرف السند. */

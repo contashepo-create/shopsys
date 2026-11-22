@@ -1,3 +1,5 @@
+import { CustomerProfileFields } from './CustomerProfileFields.tsx'
+import type { CustomerProfile } from '../../core/customerProfile.ts'
 import { useMemo, useState } from 'react'
 import { useDataStore, type Customer, type Supplier } from '../../data/repo.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
@@ -64,10 +66,12 @@ function PartyQuickEditModalForm({ open, target, currencyDecimals, currencySymbo
   const { updateCustomer, updateSupplier, priceLists } = useDataStore()
   const initialForm = useMemo(() => formFromTarget(target, currencyDecimals), [target, currencyDecimals])
   const [form, setForm] = useState<FormState>(() => initialForm)
+  const [profile, setProfile] = useState<CustomerProfile>(() => target?.kind === 'customer' ? { customerType: target.party.customerType, contactPerson: target.party.contactPerson, contactRole: target.party.contactRole, contactPhone: target.party.contactPhone, contactEmail: target.party.contactEmail } : {})
+  const [initialProfile] = useState(() => JSON.stringify(profile))
   const [initial, setInitial] = useState(() => JSON.stringify(initialForm))
   const [confirmDiscard, setConfirmDiscard] = useState(false)
 
-  const dirty = useMemo(() => JSON.stringify(form) !== initial, [form, initial])
+  const dirty = useMemo(() => JSON.stringify(form) !== initial || JSON.stringify(profile) !== initialProfile, [form, initial, profile, initialProfile])
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((prev) => ({ ...prev, [key]: value }))
   const requestClose = () => { if (dirty) setConfirmDiscard(true); else onClose() }
   const save = () => {
@@ -82,7 +86,7 @@ function PartyQuickEditModalForm({ open, target, currencyDecimals, currencySymbo
         address: form.address.trim(), city: form.city.trim(), postalCode: form.postalCode.trim(), buildingNo: form.buildingNo.trim(), nationalId: form.nationalId.trim(), notes: form.notes.trim(), active: form.active,
       }
       if (target.kind === 'customer') {
-        updateCustomer(target.party.id, { ...common, creditLimitMinor: Math.max(0, Math.round(Number(form.creditLimit || 0) * 10 ** currencyDecimals)), priceListId: form.priceListId ? Number(form.priceListId) : null })
+        updateCustomer(target.party.id, { ...common, ...profile, creditLimitMinor: Math.max(0, Math.round(Number(form.creditLimit || 0) * 10 ** currencyDecimals)), priceListId: form.priceListId ? Number(form.priceListId) : null })
         toast.show('تم تحديث بيانات العميل داخل الفاتورة ✓')
       } else {
         updateSupplier(target.party.id, { ...common, contactPerson: form.contactPerson.trim(), category: form.category.trim(), paymentTermsDays: Math.max(0, Math.round(Number(form.paymentTermsDays || 0))), bankName: form.bankName.trim(), iban: form.iban.trim() })
@@ -112,6 +116,7 @@ function PartyQuickEditModalForm({ open, target, currencyDecimals, currencySymbo
           <Field label="الرمز البريدي"><input className={inputCls} value={form.postalCode} onChange={(e) => set('postalCode', e.target.value)} dir="ltr" /></Field>
           <Field label="رقم المبنى"><input className={inputCls} value={form.buildingNo} onChange={(e) => set('buildingNo', e.target.value)} dir="ltr" /></Field>
           {target?.kind === 'customer' ? <>
+            <CustomerProfileFields profile={profile} onChange={setProfile} />
             <Field label={`حد الائتمان (${currencySymbol})`}><input className={inputCls} type="number" inputMode="decimal" step="any" min="0" value={form.creditLimit} onChange={(e) => set('creditLimit', e.target.value)} dir="ltr" /></Field>
             <Field label="قائمة الأسعار"><select className={inputCls} value={form.priceListId} onChange={(e) => set('priceListId', e.target.value)}><option value="">سعر قطاعي</option>{priceLists.filter((list) => list.isActive).map((list) => <option key={list.id} value={list.id}>{list.nameAr}</option>)}</select></Field>
           </> : <>

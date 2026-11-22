@@ -1,3 +1,4 @@
+import { WhatsappIcon } from './WhatsappIcon.tsx'
 import { QuickSelect } from './KeyboardPickers.tsx'
 /**
  * مودال اختيار قالب الطباعة (تعميم شريط الكاشير — طلب المالك):
@@ -5,7 +6,7 @@ import { QuickSelect } from './KeyboardPickers.tsx'
  * والاختيار للجلسة فقط — لا يغيّر الإعدادات الدائمة.
  */
 import { useState } from 'react'
-import { Printer, MessageCircle } from 'lucide-react'
+import { Printer } from 'lucide-react'
 import { INVOICE_TEMPLATE_OPTIONS, type InvoiceTemplate } from '../../core/receipt.ts'
 import { Modal, Btn } from './ui.tsx'
 
@@ -38,7 +39,7 @@ export function PrintTemplateModal(props: {
         </Btn>
         {props.onWhatsappPdf && (
           <Btn className="w-full !bg-emerald-600 hover:!bg-emerald-700 !text-white" onClick={() => { props.onWhatsappPdf?.(active); props.onClose() }} title="يولّد PDF بالقالب المختار ويفتح مجلد الملف ومحادثة واتساب — اسحب الملف للمحادثة">
-            <MessageCircle size={15} /> إرسال PDF عبر واتساب
+            <WhatsappIcon size={15} /> إرسال PDF عبر واتساب
           </Btn>
         )}
       </div>

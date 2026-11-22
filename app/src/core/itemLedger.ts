@@ -21,16 +21,17 @@ export interface ItemLedgerRow {
 
 export interface ItemLedgerInput {
   itemId: number
+  scopedWarehouseId?: number
   openingQty: number // رصيد الصنف الافتتاحي (وقت إنشائه)
   purchases: { invoiceNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; expenseShareMinor?: number; warehouseId?: number | null }[] }[]
   purchaseReturns: { returnNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitCostMinor: number; warehouseId?: number | null }[] }[]
-  sales: { invoiceNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; discountPercent: number; warehouseId?: number | null; isServiceAtSale?: boolean }[] }[]
-  saleReturns: { returnNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; condition?: string; warehouseId?: number | null; isServiceAtSale?: boolean }[] }[]
+  sales: { invoiceNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; discountPercent: number; unitFactor?: number; warehouseId?: number | null; isServiceAtSale?: boolean }[] }[]
+  saleReturns: { returnNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; unitFactor?: number; condition?: string; warehouseId?: number | null; isServiceAtSale?: boolean }[] }[]
   stocktakes: { stocktakeNumber: string; date: string; warehouseId?: number | null; userName?: string | null; rows: { itemId: number; systemQty: number; countedQty: number }[] }[]
-  productionOrders: { orderNumber: string; date: string; productItemId: number; qty: number; ingredients: { itemId: number; qty: number }[] }[]
-  materialRequisitions: { reqNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number }[] }[]
+  productionOrders: { orderNumber: string; date: string; productItemId: number; qty: number; outputWarehouseId?: number | null; ingredients: { itemId: number; qty: number; warehouseId?: number | null }[] }[]
+  materialRequisitions: { reqNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; baseQty?: number; unitFactor?: number; warehouseId?: number | null; costMinor?: number }[] }[]
   /** أوامر التجهيز والتفكيك (جزارة/تمور): خام خارج ونواتج داخلة — اختياري لتوافق المستدعين الأقدم */
-  processingOrders?: { orderNumber: string; date: string; sourceItemId: number; sourceQty: number; outputs: { itemId: number; qty: number }[] }[]
+  processingOrders?: { orderNumber: string; date: string; sourceItemId: number; sourceQty: number; sourceWarehouseId?: number | null; outputWarehouseId?: number | null; outputs: { itemId: number; qty: number }[] }[]
   transfers?: { transferNumber?: string; date: string; fromWarehouseId: number; toWarehouseId: number; userName?: string | null; lines: { itemId: number; qty: number }[] }[]
 }
 
@@ -76,7 +77,7 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
       const gross = Math.round(l.qty * l.unitPriceMinor)
       raw.push({
         date: s.date, docLabel: `فاتورة بيع ${s.invoiceNumber}`, docType: 'sale',
-        inQty: 0, outQty: l.qty,
+        inQty: 0, outQty: Math.round(l.qty * (l.unitFactor ?? 1) * 1000) / 1000,
         valueMinor: gross - Math.round((gross * (l.discountPercent ?? 0)) / 100),
         note: 'منصرف بيع (القيمة بسعر البيع)', warehouseId: l.warehouseId ?? s.warehouseId ?? null, userName: s.userName ?? null,
       })
@@ -90,7 +91,7 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
       const damaged = l.condition === 'damaged'
       raw.push({
         date: r.date, docLabel: `مرتجع بيع ${r.returnNumber}`, docType: 'sale_return',
-        inQty: damaged ? 0 : l.qty, outQty: 0, valueMinor: Math.round(l.qty * l.unitPriceMinor),
+        inQty: damaged ? 0 : Math.round(l.qty * (l.unitFactor ?? 1) * 1000) / 1000, outQty: 0, valueMinor: Math.round(l.qty * l.unitPriceMinor),
         note: damaged ? `مرتجع تالف (${l.qty}) — لا يدخل المخزون، تكلفته هالك` : 'عودة بضاعة من عميل', warehouseId: l.warehouseId ?? r.warehouseId ?? null, userName: r.userName ?? null,
       })
     }
@@ -108,32 +109,32 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
     }
   }
   for (const po of input.productionOrders) {
-    if (po.productItemId === id && po.qty > 0) {
+    if (po.productItemId === id && po.qty > 0 && (!input.scopedWarehouseId || po.outputWarehouseId === input.scopedWarehouseId)) {
       raw.push({
         date: po.date, docLabel: `أمر إنتاج ${po.orderNumber}`, docType: 'production',
-        inQty: po.qty, outQty: 0, valueMinor: 0, note: 'منتج تام من الإنتاج',
+        inQty: po.qty, outQty: 0, valueMinor: 0, note: 'منتج تام من الإنتاج', warehouseId: po.outputWarehouseId ?? null,
       })
     }
     for (const ing of po.ingredients) {
-      if (ing.itemId !== id || ing.qty <= 0) continue
+      if (ing.itemId !== id || ing.qty <= 0 || (input.scopedWarehouseId && ing.warehouseId !== input.scopedWarehouseId)) continue
       raw.push({
         date: po.date, docLabel: `أمر إنتاج ${po.orderNumber}`, docType: 'production',
-        inQty: 0, outQty: ing.qty, valueMinor: 0, note: 'خامة مستهلكة في الإنتاج',
+        inQty: 0, outQty: ing.qty, valueMinor: 0, note: 'خامة مستهلكة في الإنتاج', warehouseId: ing.warehouseId ?? null,
       })
     }
   }
   for (const pr of input.processingOrders ?? []) {
-    if (pr.sourceItemId === id && pr.sourceQty > 0) {
+    if (pr.sourceItemId === id && pr.sourceQty > 0 && (!input.scopedWarehouseId || pr.sourceWarehouseId === input.scopedWarehouseId)) {
       raw.push({
         date: pr.date, docLabel: `أمر تجهيز ${pr.orderNumber}`, docType: 'processing',
-        inQty: 0, outQty: pr.sourceQty, valueMinor: 0, note: 'خام مستهلك في التقطيع/الفرز',
+        inQty: 0, outQty: pr.sourceQty, valueMinor: 0, note: 'خام مستهلك في التقطيع/الفرز', warehouseId: pr.sourceWarehouseId ?? null,
       })
     }
     for (const out of pr.outputs) {
-      if (out.itemId !== id || out.qty <= 0) continue
+      if (out.itemId !== id || out.qty <= 0 || (input.scopedWarehouseId && pr.outputWarehouseId !== input.scopedWarehouseId)) continue
       raw.push({
         date: pr.date, docLabel: `أمر تجهيز ${pr.orderNumber}`, docType: 'processing',
-        inQty: out.qty, outQty: 0, valueMinor: 0, note: 'ناتج تقطيع/فرز داخل المخزون',
+        inQty: out.qty, outQty: 0, valueMinor: 0, note: 'ناتج تقطيع/فرز داخل المخزون', warehouseId: pr.outputWarehouseId ?? null,
       })
     }
   }
@@ -142,7 +143,7 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
       if (l.itemId !== id || l.qty <= 0) continue
       raw.push({
         date: mr.date, docLabel: `إذن صرف ${mr.reqNumber}`, docType: 'material_issue',
-        inQty: 0, outQty: l.qty, valueMinor: 0, note: 'صرف لمشروع/تشغيل', warehouseId: mr.warehouseId ?? null, userName: mr.userName ?? null,
+        inQty: 0, outQty: l.baseQty ?? (l.unitFactor != null ? Math.round(l.qty * l.unitFactor * 1000) / 1000 : l.qty), valueMinor: l.costMinor ?? 0, note: l.baseQty == null && l.unitFactor == null ? 'صرف لمشروع/تشغيل — كمية قديمة غير مثبتة بالوحدة الأساسية' : 'صرف لمشروع/تشغيل', warehouseId: l.warehouseId ?? mr.warehouseId ?? null, userName: mr.userName ?? null,
       })
     }
   }
@@ -150,11 +151,11 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
     for (const l of tr.lines) {
       if (l.itemId !== id || l.qty <= 0) continue
       const label = tr.transferNumber ?? 'تحويل مخزني'
-      raw.push({
+      if (!input.scopedWarehouseId || input.scopedWarehouseId === tr.fromWarehouseId) raw.push({
         date: tr.date, docLabel: `تحويل ${label}`, docType: 'transfer',
         inQty: 0, outQty: l.qty, valueMinor: 0, note: 'خروج من مخزن', warehouseId: tr.fromWarehouseId, userName: tr.userName ?? null,
       })
-      raw.push({
+      if (!input.scopedWarehouseId || input.scopedWarehouseId === tr.toWarehouseId) raw.push({
         date: tr.date, docLabel: `تحويل ${label}`, docType: 'transfer',
         inQty: l.qty, outQty: 0, valueMinor: 0, note: 'دخول إلى مخزن', warehouseId: tr.toWarehouseId, userName: tr.userName ?? null,
       })
@@ -184,5 +185,19 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
     totalIn: Math.round(totalIn * 1000) / 1000,
     totalOut: Math.round(totalOut * 1000) / 1000,
     closingQty: inRange.length ? inRange[inRange.length - 1].balance : openingForRange,
+  }
+}
+
+/** لا يُنسب المخزن المجهول لمخزن بعينه؛ المخازن غير المثبتة لا تدخل نطاق مخزن محدد. */
+export function scopeItemLedgerWarehouse(input: ItemLedgerInput, warehouseId: number): ItemLedgerInput {
+  if (!warehouseId) return input
+  const linesInWarehouse = <T extends { warehouseId?: number | null; lines: { warehouseId?: number | null }[] }>(docs: T[]) =>
+    docs.map(doc => ({ ...doc, lines: doc.lines.filter(line => (line.warehouseId ?? doc.warehouseId) === warehouseId) })).filter(doc => doc.lines.length > 0)
+  return { ...input, scopedWarehouseId: warehouseId,
+    purchases: linesInWarehouse(input.purchases), purchaseReturns: linesInWarehouse(input.purchaseReturns),
+    sales: linesInWarehouse(input.sales), saleReturns: linesInWarehouse(input.saleReturns),
+    materialRequisitions: linesInWarehouse(input.materialRequisitions),
+    stocktakes: input.stocktakes.filter(doc => doc.warehouseId === warehouseId),
+    transfers: (input.transfers ?? []).filter(tr => tr.fromWarehouseId === warehouseId || tr.toWarehouseId === warehouseId),
   }
 }

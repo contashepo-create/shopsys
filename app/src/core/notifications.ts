@@ -48,6 +48,7 @@ export interface NotificationsInput {
   complianceDueBonds?: { bondId: number; bondNumber: string; dueDate: string; daysLeft: number }[]
   /** بنود موازنة مشروعات تجاوزت الفعلي موازنتها — سد فجوة تقرير النشاط #11 Immediate #3 */
   projectBudgetOverruns?: { projectId: number; projectNameAr: string; kindAr: string; overrunMinor: number }[]
+  projectBudgetReview?: { projectId: number; projectNameAr: string }[]
   /** طلبات اعتماد مقاولات معلّقة تجاوزت مهلة معقولة بلا قرار — سد فجوة تقرير النشاط #11 Immediate #3 */
   pendingApprovalsAging?: { requestId: number; subject: string; actionLabel: string; daysPending: number }[]
   /** مشروعات مقاولات تستحق/تقترب من استحقاق الإفراج عن محتجزها بعد فترة الضمان — سد فجوة تقرير النشاط #11 Future #1 */
@@ -257,11 +258,15 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       id: `prjbudget:${o.projectId}:${o.kindAr}`,
       icon: '📊',
       title: `تجاوز موازنة: ${o.projectNameAr}`,
-      body: `بند «${o.kindAr}» تجاوز موازنته بمقدار ${input.fmt(o.overrunMinor)} — راجع أسعار التوريد أو عدّل الموازنة`,
+      body: `بند «${o.kindAr}» تجاوز موازنته بمقدار ${input.fmt(o.overrunMinor)} — المقارنة استرشادية ولا تخصم المرتجعات أو تشمل المسير المجمّع والقسائم بلا توزيع`,
       severity: 'danger',
       route: '/contracting/budget',
       perm: 'ops.activity.use',
     })
+  }
+
+  for (const p of input.projectBudgetReview ?? []) {
+    out.push({ id: `prjbudgetreview:${p.projectId}`, icon: '⚠️', title: `مراجعة موازنة: ${p.projectNameAr}`, body: 'تعذر احتساب التجاوز: راجع تكاليف المشروع ومرتجعات الشراء وتوزيع الرواتب وقيودها.', severity: 'danger', route: '/contracting/budget', perm: 'ops.activity.use' })
   }
 
   // 1.73) طلبات اعتماد مقاولات معلّقة تجاوزت مهلة معقولة (سد فجوة تقرير النشاط #11 — Immediate #3)

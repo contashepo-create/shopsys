@@ -12,12 +12,13 @@ export function assertProjectExtractOriginalIntegrity(
   extract: { id: number; extractNumber: string; journalEntryId: number; payment: 'cash' | 'credit'; advanceRecoveryMinor?: number; totals: { grossMinor: number; vatMinor: number; retentionMinor: number; dueMinor: number } },
   journal: ReadonlyMap<number, JournalEntry>,
 ): void {
+  if (!extract || typeof extract !== 'object' || Array.isArray(extract)) throw new FinancialDataReviewError('المستخلص')
   const fail = (): never => { throw new FinancialDataReviewError(`المستخلص ${extract.extractNumber}`) }
   const t = extract.totals
   const recovery = extract.advanceRecoveryMinor ?? 0
   if (!t || !Number.isSafeInteger(t.grossMinor) || t.grossMinor <= 0 || !Number.isSafeInteger(t.vatMinor) || t.vatMinor < 0 || !Number.isSafeInteger(t.retentionMinor) || t.retentionMinor < 0 || !Number.isSafeInteger(t.dueMinor) || t.dueMinor < 0 || t.dueMinor !== t.grossMinor + t.vatMinor - t.retentionMinor || !Number.isSafeInteger(recovery) || recovery < 0 || recovery > t.dueMinor || (extract.payment !== 'cash' && extract.payment !== 'credit')) return fail()
   const entry = journal.get(extract.journalEntryId)
-  if (!entry || entry.sourceType !== 'project_extract' || entry.sourceId !== extract.id || (entry.sourceCollection != null && entry.sourceCollection !== 'projectExtracts') || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines) || entry.lines.some(line => !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit))) return fail()
+  if (!entry || entry.sourceType !== 'project_extract' || entry.sourceId !== extract.id || (entry.sourceCollection != null && entry.sourceCollection !== 'projectExtracts') || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines) || entry.lines.some(line => !line || typeof line !== 'object' || !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit))) return fail()
   try { assertBalanced(entry.lines) } catch { return fail() }
   const sum = (account: string, side: 'debit' | 'credit') => entry.lines.filter(line => line.accountCode === account).reduce((n, line) => n + line[side], 0)
   const totalDebit = entry.lines.reduce((n, line) => n + line.debit, 0)
@@ -29,17 +30,23 @@ export function assertProjectExtractRefundIntegrity(
   extracts: readonly { id: number; extractNumber: string; journalEntryId?: number; date?: string; totals: { dueMinor: number; vatMinor: number; grossMinor?: number; retentionMinor?: number }; lines?: readonly ProjectCreditLine[]; advanceRecoveryMinor?: number; advanceAllocations?: readonly ProjectAdvanceAllocation[]; refundedMinor?: number; refundedTaxMinor?: number; quantityCreditVersion?: number; refunds?: readonly (ServiceRefundRecord & { quantities?: readonly ProjectRefundQuantity[]; grossMinor?: number; retentionMinor?: number; restoredAdvanceMinor?: number })[] }[],
   journal: ReadonlyMap<number, JournalEntry>,
 ): void {
+  if (!Array.isArray(extracts as unknown)) throw new FinancialDataReviewError('إشعارات المستخلصات')
   const used = new Set<number>()
   for (const extract of extracts) {
+    if (!extract || typeof extract !== 'object' || Array.isArray(extract)) throw new FinancialDataReviewError('إشعارات المستخلصات')
     const fail = (): never => { throw new FinancialDataReviewError(`إشعارات المستخلص ${extract.extractNumber}`) }
+    // بيانات النسخ القديمة قد تكون غير مطابقة للأنواع في الذاكرة؛ يجب أن
+    // تذهب للمراجعة المالية بدلاً من تعطيل التقرير بخطأ TypeError.
+    if (!extract.totals || typeof extract.totals !== 'object' || !Number.isSafeInteger(extract.totals.dueMinor) || extract.totals.dueMinor < 0 || !Number.isSafeInteger(extract.totals.vatMinor) || extract.totals.vatMinor < 0 || (extract.refunds != null && !Array.isArray(extract.refunds))) return fail()
     const refunds = extract.refunds ?? []
+    if (refunds.some(row => !row || typeof row !== 'object' || Array.isArray(row))) return fail()
     const hasEvidence = refunds.some(row => row.quantities != null || row.grossMinor != null || row.retentionMinor != null || row.restoredAdvanceMinor != null)
     if (extract.quantityCreditVersion != null && extract.quantityCreditVersion !== 1 && extract.quantityCreditVersion !== 2) return fail()
     if (extract.quantityCreditVersion != null && !refunds.length) return fail()
     if (hasEvidence && extract.quantityCreditVersion == null) return fail()
     if (extract.quantityCreditVersion != null) {
       const recovery = extract.advanceRecoveryMinor ?? 0
-      if (!Number.isSafeInteger(recovery) || recovery < 0 || recovery > extract.totals.dueMinor || !extract.date || !isValidExpiryDate(extract.date.slice(0, 10)) || !Number.isSafeInteger(extract.journalEntryId) || extract.journalEntryId! <= 0) return fail()
+      if (!Number.isSafeInteger(recovery) || recovery < 0 || recovery > extract.totals.dueMinor || typeof extract.date !== 'string' || !isValidExpiryDate(extract.date.slice(0, 10)) || !Number.isSafeInteger(extract.journalEntryId) || extract.journalEntryId! <= 0) return fail()
       if (recovery > 0) {
         const allocations = extract.advanceAllocations
         if (!Array.isArray(allocations) || !allocations.length || refunds.some(row => row.restoredAdvanceMinor !== 0)) return fail()
@@ -73,7 +80,7 @@ export function assertProjectExtractRefundIntegrity(
       if (!Number.isSafeInteger(refund.journalEntryId) || used.has(refund.journalEntryId) || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0 || !Number.isSafeInteger(refund.taxShareMinor) || refund.taxShareMinor < 0 || refund.taxShareMinor > refund.amountMinor || (refund.mode !== 'cash' && refund.mode !== 'customer_credit')) return fail()
       used.add(refund.journalEntryId)
       const entry = journal.get(refund.journalEntryId)
-      if (!entry || entry.sourceType !== 'project_extract' || entry.sourceId !== extract.id || (entry.sourceCollection != null && entry.sourceCollection !== 'projectExtracts') || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines) || entry.lines.some(line => !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit))) return fail()
+      if (!entry || entry.sourceType !== 'project_extract' || entry.sourceId !== extract.id || (entry.sourceCollection != null && entry.sourceCollection !== 'projectExtracts') || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines) || entry.lines.some(line => !line || typeof line !== 'object' || !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit))) return fail()
       if (extract.quantityCreditVersion != null && (!isValidExpiryDate(refund.date) || entry.date !== refund.date || refund.date < previousDate || refund.date < extract.date!.slice(0, 10) || refund.journalEntryId <= previousEntryId)) return fail()
       previousDate = refund.date
       previousEntryId = refund.journalEntryId

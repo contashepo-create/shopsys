@@ -8,7 +8,8 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
-import { buildItemLedger } from '../../core/itemLedger.ts'
+import { buildItemLedger, scopeItemLedgerWarehouse } from '../../core/itemLedger.ts'
+import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { useItemLedgerInput } from '../hooks/useItemLedgerInput.ts'
 import { ItemSearchPanel, type QuickItem, type QuickItemMeta } from '../components/KeyboardPickers.tsx'
 import { resolvePrice, priceSource } from '../../core/priceLists.ts'
@@ -95,7 +96,8 @@ export function ItemLedgerWindowView() {
   const host = useWindowHost()
   const itemId = Number(host?.props.itemId ?? 0)
   const cur = useCur()
-  const { items, warehouses } = useDataStore()
+  const { items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders } = useDataStore()
+  const warehouseStock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders])
   const { fiscalYears: allFiscalYears, activeBranchContext } = useAppStore()
   const fiscalYears = fiscalYearsForBranch(allFiscalYears, activeBranchContext?.id ?? null, Boolean(activeBranchContext?.isMain))
   const item = items.find((row) => row.id === itemId) ?? null
@@ -114,22 +116,11 @@ export function ItemLedgerWindowView() {
   const ledgerInput = useItemLedgerInput(itemId || null)
   const ledger = useMemo(() => {
     if (!ledgerInput) return null
-    const scoped = warehouseId
-      ? {
-          ...ledgerInput,
-          purchases: ledgerInput.purchases.filter((p) => (p.warehouseId ?? 0) === warehouseId),
-          purchaseReturns: ledgerInput.purchaseReturns.filter((r) => (r.warehouseId ?? 0) === warehouseId),
-          sales: ledgerInput.sales.filter((sl) => (sl.warehouseId ?? 0) === warehouseId),
-          saleReturns: ledgerInput.saleReturns.filter((r) => (r.warehouseId ?? 0) === warehouseId),
-          stocktakes: ledgerInput.stocktakes.filter((st) => (st.warehouseId ?? 0) === warehouseId),
-          materialRequisitions: ledgerInput.materialRequisitions.filter((mr) => (mr.warehouseId ?? 0) === warehouseId),
-          transfers: (ledgerInput.transfers ?? []).filter((t) => t.fromWarehouseId === warehouseId || t.toWarehouseId === warehouseId),
-        }
-      : ledgerInput
+    const scoped = scopeItemLedgerWarehouse(ledgerInput, warehouseId)
     const all = buildItemLedger(scoped)
-    const opening = Math.round(((item?.stockQty ?? 0) - (all.totalIn - all.totalOut)) * 1000) / 1000
+    const opening = Math.round(((warehouseId ? (warehouseStock.get(warehouseId)?.get(itemId) ?? 0) : (item?.stockQty ?? 0)) - (all.totalIn - all.totalOut)) * 1000) / 1000
     return buildItemLedger({ ...scoped, openingQty: opening }, from || undefined, to || undefined)
-  }, [ledgerInput, warehouseId, from, to, item])
+  }, [ledgerInput, warehouseId, from, to, item, itemId, warehouseStock])
 
   const rows = useMemo(
     () => (ledger?.rows ?? []).filter((r) => (flow === 'in' ? r.inQty > 0 : flow === 'out' ? r.outQty > 0 : true))
@@ -175,7 +166,7 @@ export function ItemLedgerWindowView() {
         <Stat label="رصيد أول المدة" value={`${ledger?.openingQty ?? 0} ${item.baseUnit}`} />
         <Stat label="إجمالي الوارد" value={String(totalIn)} tone="in" />
         <Stat label="إجمالي المنصرف" value={String(totalOut)} tone="out" />
-        <Stat label={warehouseId ? 'رصيد المخزن الحالي' : 'الرصيد الحالي'} value={`${ledger?.closingQty ?? item.stockQty ?? 0} ${item.baseUnit}`} />
+        <Stat label="رصيد آخر الفترة" value={`${ledger?.closingQty ?? item.stockQty ?? 0} ${item.baseUnit}`} />
       </div>
       <div className="overflow-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-[12px]">
@@ -195,7 +186,7 @@ export function ItemLedgerWindowView() {
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-slate-500">دفتر الحركة مبني من المستندات نفسها (شراء · بيع · مرتجعات · جرد · إنتاج · تحويلات)، فلا تفوت حركة.</p>
+      <p className="text-[11px] text-slate-500">الرصيد الافتتاحي مشتق من الرصيد الحالي وقد يخفي حركات ناقصة. المخزن غير المثبت لا يُنسب لمخزن محدد؛ حركات الإنتاج والتجهيز بلا مخزن مثبت لا تظهر ضمن مخزن محدد. أذون قديمة بلا تحويل تعرض الكمية المسجلة للمراجعة. فلاتر نوع الحركة والمستند تغير الصفوف والإجماليات المعروضة فقط لا الأرصدة.</p>
     </div>
   )
 }

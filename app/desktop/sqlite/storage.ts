@@ -18,7 +18,7 @@
 import Database from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { COLLECTION_TABLE_SQL, DOC_NUMBER_FIELDS, MIGRATIONS, SCHEMA_VERSION } from './schema.ts'
 import { SnowflakeGenerator } from './snowflake.ts'
 
@@ -105,6 +105,19 @@ function persistedState(payloadJson: string | null): Record<string, unknown> | n
   }
 }
 
+/** فحص ضيق للقطات الدفعة، لا يتكفل بصحة أدلتها المالية. */
+function pairSnapshotState(payload: string): Record<string, unknown> {
+  let value: unknown
+  try { value = JSON.parse(payload) as unknown } catch { throw new Error('حمولة اللقطة ليست JSON صالحاً') }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('حمولة اللقطة ليست كائناً صالحاً')
+  const record = value as Record<string, unknown>
+  if ('state' in record) {
+    if (!record.state || typeof record.state !== 'object' || Array.isArray(record.state)) throw new Error('حالة اللقطة ليست كائناً صالحاً')
+    return record.state as Record<string, unknown>
+  }
+  return record
+}
+
 export interface OpenOptions {
   /** جهاز المنشأ — ثابت للجهاز يُخزن في meta ويغذي Snowflake وأعمدة النسب */
   deviceId?: string
@@ -174,9 +187,18 @@ export class ShopsysDatabase {
   saveSnapshot(input: SaveSnapshotInput): { revision: number; updatedAt: string; replayed?: boolean } {
     const updated = nowIso()
     const write = this.db.transaction(() => {
-      const row = this.db.prepare('SELECT revision, payload_json, idempotency_key FROM snapshots WHERE store_name = ?').get(input.storeName) as
-        | { revision: number; payload_json: string | null; idempotency_key: string | null }
+      const row = this.db.prepare('SELECT revision, payload_json, idempotency_key, updated_at FROM snapshots WHERE store_name = ?').get(input.storeName) as
+        | { revision: number; payload_json: string | null; idempotency_key: string | null; updated_at: string }
         | undefined
+      // الإيصال يربط إعادة المحاولة بالقيد والتدقيق أيضاً، لا بالحمولة وحدها.
+      // لا يُخزّن سوى آخر إيصال لكل متجر ولا يُعد هذا سجلاً دائماً للطلبات.
+      const requestHash = input.idempotencyKey ? createHash('sha256').update(JSON.stringify([input.storeName, input.expectedRevision, input.payloadJson, input.auditEvents ?? [], input.journalEntries ?? []])).digest('hex') : null
+      if (row && input.idempotencyKey && row.idempotency_key === input.idempotencyKey) {
+        if (row.payload_json !== input.payloadJson || input.expectedRevision !== row.revision - 1) throw new Error('مفتاح إعادة محاولة الحفظ لا يطابق الحمولة أو المراجعة — راجع البيانات قبل المتابعة')
+        const receipt = this.db.prepare('SELECT idempotency_key, revision, request_hash FROM snapshot_save_receipts WHERE store_name = ?').get(input.storeName) as { idempotency_key: string; revision: number; request_hash: string } | undefined
+        if (!receipt || receipt.idempotency_key !== input.idempotencyKey || receipt.revision !== row.revision || receipt.request_hash !== requestHash) throw new Error('لا يمكن تأكيد أدلة إعادة محاولة الحفظ — راجع اللقطة والدفتر قبل المتابعة')
+        return { revision: row.revision, updatedAt: row.updated_at, replayed: true }
+      }
 
       let nextRevision: number
       if (!row) {
@@ -190,9 +212,6 @@ export class ShopsysDatabase {
         this.db.prepare(
           'UPDATE snapshots SET revision = ?, payload_json = ?, idempotency_key = ?, origin_device = ?, origin_branch = ?, updated_at = ? WHERE store_name = ?',
         ).run(nextRevision, input.payloadJson, input.idempotencyKey ?? null, this.deviceId, this.branchCode, updated, input.storeName)
-      } else if (input.idempotencyKey && row.idempotency_key === input.idempotencyKey) {
-        /* إعادة إرسال نفس الحفظ بعد ضياع الرد — أُعيد نتيجته بلا كتابة مزدوجة */
-        return { revision: row.revision, updatedAt: updated, replayed: true }
       } else {
         throw new Error(`تعارض كتابة على ${input.storeName}: المتوقع ${input.expectedRevision} والموجود ${row.revision} — أعد الفتح ثم أعد المحاولة`)
       }
@@ -206,6 +225,12 @@ export class ShopsysDatabase {
       }
 
       for (const entry of input.journalEntries ?? []) {
+        const existing = this.db.prepare('SELECT entry_number, date, description, source_type, source_id, lines_json, created_by, created_at, reversed_by_entry_id, reverses_entry_id FROM journal WHERE id = ?').get(entry.id) as
+          | { entry_number: number; date: string; description: string; source_type: string; source_id: number | null; lines_json: string; created_by: string; created_at: string; reversed_by_entry_id: number | null; reverses_entry_id: number | null }
+          | undefined
+        if (existing && (existing.entry_number !== entry.entryNumber || existing.date !== entry.date || existing.description !== entry.description || existing.source_type !== entry.sourceType || existing.source_id !== entry.sourceId || existing.lines_json !== JSON.stringify(entry.lines) || existing.created_by !== entry.createdBy || existing.created_at !== entry.createdAt || existing.reverses_entry_id !== entry.reversesEntryId || (existing.reversed_by_entry_id != null && existing.reversed_by_entry_id !== entry.reversedByEntryId))) {
+          throw new Error(`القيد #${entry.id} في جدول SQLite لا يطابق هوية القيد أو علامة عكسه — راجع الدفتر`)
+        }
         this.db.prepare(
           `INSERT INTO journal (id, entry_number, date, description, source_type, source_id, lines_json, created_by, created_at, reversed_by_entry_id, reverses_entry_id, origin_device, origin_branch, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -214,6 +239,13 @@ export class ShopsysDatabase {
       }
 
       this.syncCollections(row?.payload_json ?? null, input.payloadJson, updated)
+      if (input.idempotencyKey && requestHash) {
+        this.db.prepare(`INSERT INTO snapshot_save_receipts (store_name, idempotency_key, revision, request_hash)
+          VALUES (?, ?, ?, ?) ON CONFLICT(store_name) DO UPDATE SET idempotency_key=excluded.idempotency_key, revision=excluded.revision, request_hash=excluded.request_hash`)
+          .run(input.storeName, input.idempotencyKey, nextRevision, requestHash)
+      } else {
+        this.db.prepare('DELETE FROM snapshot_save_receipts WHERE store_name = ?').run(input.storeName)
+      }
       return { revision: nextRevision, updatedAt: updated }
     })
     const result = write()
@@ -221,15 +253,64 @@ export class ShopsysDatabase {
     return result
   }
 
+  /** قراءة تجريبية متسقة للمراجعتين من اتصال SQLite نفسه؛ لا تُزامن النوافذ الحية. */
+  getSnapshotPair(): readonly [SnapshotDto, SnapshotDto] {
+    const read = this.db.transaction((): [SnapshotDto, SnapshotDto] => [this.getSnapshot('shopsys-app'), this.getSnapshot('shopsys-data')])
+    return read()
+  }
+
+  /**
+   * نواة تجريبية لحفظ الإعدادات والبيانات معاً في معاملة SQLite واحدة.
+   * غير موصولة بالواجهة أو IPC: لا تحل حراسة الفترات أو الاستعادة أو مزامنة
+   * النوافذ. على المستدعي تدقيق اللقطتين وأدلة اليومية قبل استخدامها مستقبلاً.
+   * مفتاح الدفعة يحفظ إيصالاً داخل المعاملة، فلا تعيد محاولة رد مفقود كتابتها.
+   */
+  saveSnapshotPair(input: { idempotencyKey: string; snapshots: readonly SaveSnapshotInput[] }): { results: { storeName: string; revision: number; updatedAt: string }[]; replayed: boolean } {
+    if (!input || typeof input.idempotencyKey !== 'string' || !/^[A-Za-z0-9_:-]{8,128}$/.test(input.idempotencyKey) || !Array.isArray(input.snapshots) || input.snapshots.length !== 2) throw new Error('طلب معاملة اللقطتين غير صالح')
+    const snapshots = [...input.snapshots].sort((a, b) => String(a?.storeName).localeCompare(String(b?.storeName)))
+    if (snapshots[0]?.storeName !== 'shopsys-app' || snapshots[1]?.storeName !== 'shopsys-data') throw new Error('معاملة اللقطتين تتطلب مخزن الإعدادات ومخزن البيانات مرة واحدة')
+    for (const snapshot of snapshots) {
+      if (!Number.isSafeInteger(snapshot.expectedRevision) || snapshot.expectedRevision < 0 || typeof snapshot.payloadJson !== 'string' || snapshot.idempotencyKey != null) throw new Error('مراجعة اللقطة أو حمولتها غير صالحة لمعاملة اللقطتين')
+      pairSnapshotState(snapshot.payloadJson)
+    }
+    if ((snapshots[0].journalEntries?.length ?? 0) || (snapshots[0].auditEvents?.length ?? 0)) throw new Error('الأدلة الدفترية تخص مخزن البيانات لا الإعدادات')
+    const digest = createHash('sha256').update(JSON.stringify(snapshots)).digest('hex')
+    const transaction = this.db.transaction(() => {
+      this.db.exec('CREATE TABLE IF NOT EXISTS snapshot_pair_receipts (idempotency_key TEXT PRIMARY KEY, request_hash TEXT NOT NULL, result_json TEXT NOT NULL)')
+      const receipt = this.db.prepare('SELECT request_hash, result_json FROM snapshot_pair_receipts WHERE idempotency_key = ?').get(input.idempotencyKey) as { request_hash: string; result_json: string } | undefined
+      if (receipt) {
+        if (receipt.request_hash !== digest) throw new Error('مفتاح معاملة اللقطتين لا يطابق الطلب السابق')
+        return { results: JSON.parse(receipt.result_json) as { storeName: string; revision: number; updatedAt: string }[], replayed: true }
+      }
+      // الجداول لا تحمل اسم المخزن: مجموعة تختفي من إحدى اللقطتين قد توسم
+      // صفوف الأخرى كمحذوفة. افحص القديم والجديد للطرفين داخل المعاملة.
+      const collections = snapshots.map(snapshot => {
+        const previous = this.getSnapshot(snapshot.storeName).payloadJson
+        let oldState: Record<string, unknown>
+        try { oldState = previous == null ? {} : pairSnapshotState(previous) } catch { throw new Error('اللقطة المحلية القديمة غير قابلة للفحص — راجع البيانات') }
+        const nextState = pairSnapshotState(snapshot.payloadJson)
+        return new Set([...Object.keys(oldState).filter(key => Array.isArray(oldState[key])), ...Object.keys(nextState).filter(key => Array.isArray(nextState[key]))])
+      })
+      if ([...collections[0]].some(key => collections[1].has(key))) throw new Error('مجموعات اللقطتين متداخلة في جداول SQLite — راجع التصميم قبل الحفظ')
+      const results = snapshots.map(snapshot => ({ storeName: snapshot.storeName, ...this.saveSnapshot(snapshot) }))
+      this.db.prepare('INSERT INTO snapshot_pair_receipts (idempotency_key, request_hash, result_json) VALUES (?, ?, ?)').run(input.idempotencyKey, digest, JSON.stringify(results))
+      return { results, replayed: false }
+    })
+    return transaction()
+  }
+
   /** إبطال اللقطة (إعادة تعيين المتجر) — الأثر في journal/audit/المجموعات باقٍ */
   deleteSnapshot(input: { storeName: string; expectedRevision: number }): { revision: number; updatedAt: string } {
     const updated = nowIso()
-    const result = this.db
-      .prepare('UPDATE snapshots SET revision = revision + 1, payload_json = NULL, idempotency_key = NULL, updated_at = ? WHERE store_name = ? AND revision = ?')
-      .run(updated, input.storeName, input.expectedRevision)
-    if (result.changes === 0) throw new Error(`تعارض حذف على ${input.storeName}: المراجعة ${input.expectedRevision} غير موجودة`)
-    const row = this.db.prepare('SELECT revision FROM snapshots WHERE store_name = ?').get(input.storeName) as { revision: number }
-    return { revision: row.revision, updatedAt: updated }
+    return this.db.transaction(() => {
+      const result = this.db
+        .prepare('UPDATE snapshots SET revision = revision + 1, payload_json = NULL, idempotency_key = NULL, updated_at = ? WHERE store_name = ? AND revision = ?')
+        .run(updated, input.storeName, input.expectedRevision)
+      if (result.changes === 0) throw new Error(`تعارض حذف على ${input.storeName}: المراجعة ${input.expectedRevision} غير موجودة`)
+      this.db.prepare('DELETE FROM snapshot_save_receipts WHERE store_name = ?').run(input.storeName)
+      const row = this.db.prepare('SELECT revision FROM snapshots WHERE store_name = ?').get(input.storeName) as { revision: number }
+      return { revision: row.revision, updatedAt: updated }
+    })()
   }
 
   /* ── الكتابة الانتقائية: فرق المجموعات → جدول لكل مجموعة ── */

@@ -99,6 +99,6 @@ export function renderItemLedgerHtml(a: ItemLedgerPrintArgs): string {
     <div class="sig"><div class="line"></div>المراجع</div>
     <div class="sig"><div class="line"></div>الإدارة</div>
   </div>
-  <div class="foot">دفتر حركة الصنف يُبنى من مستنداته الفعلية (شراء/بيع/مرتجعات/جرد/إنتاج/أذون صرف) — لا يقبل تعديلاً يدوياً</div>
+  <div class="foot">الرصيد الافتتاحي مشتق من الرصيد الحالي وقد يخفي حركات ناقصة؛ المخزن غير المثبت لا ينسب لمخزن محدد، والسجلات القديمة تحتاج مراجعة.</div>
 </body></html>`
 }

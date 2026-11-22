@@ -151,7 +151,7 @@ console.log('\n— م4) مقاولات: فاتورة مشروع + مصروف م�
   const file = st().custodyFiles.at(-1)
   st().fundCustodyFile({ fileId: file.id, amountMinor: 50000, treasury: '1101', description: 'تعزيز' })
   st().postPurchase({
-    supplierId: sup.id, date: '2026-09-17',
+    supplierId: sup.id, date: file.openedAt,
     lines: [{ itemId: cement.id, qty: 10, unitPriceMinor: 8000 }],
     expenses: [{ nameAr: 'نقل', amountMinor: 20000, method: 'qty', paidBy: 'custody', custodyFileId: file.id }],
     paidMinor: 0, notes: '',
@@ -161,7 +161,7 @@ console.log('\n— م4) مقاولات: فاتورة مشروع + مصروف م�
   ok('مصروف النقل خُصم من عهدة المندوب (500−200=300) وظهر في ملفه')
   // تجاوز رصيد العهدة يُرفض
   assert.throws(
-    () => st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: cement.id, qty: 1, unitPriceMinor: 8000 }], expenses: [{ nameAr: 'نقل', amountMinor: 99000, method: 'qty', paidBy: 'custody', custodyFileId: file.id }], paidMinor: 0, notes: '' }),
+    () => st().postPurchase({ supplierId: sup.id, date: file.openedAt, lines: [{ itemId: cement.id, qty: 1, unitPriceMinor: 8000 }], expenses: [{ nameAr: 'نقل', amountMinor: 99000, method: 'qty', paidBy: 'custody', custodyFileId: file.id }], paidMinor: 0, notes: '' }),
     /متبقيها/,
   )
   ok('مصروف أكبر من متبقي العهدة مرفوض قبل أي كتابة')

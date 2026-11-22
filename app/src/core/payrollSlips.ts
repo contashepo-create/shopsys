@@ -15,6 +15,7 @@
  */
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
+import type { PayrollProjectAllocationSnapshot } from './payrollProjectAllocation.ts'
 
 export type PayrollSlipStatus = 'accrued' | 'paid' | 'cancelled'
 
@@ -35,10 +36,14 @@ export interface PayrollSlip {
   /** الصافي المستحق للموظف */
   netMinor: Minor
   status: PayrollSlipStatus
+  /** قيد إلغاء قسيمة واحدة من استحقاق مجمع؛ السجلات القديمة قد تفتقده. */
+  cancellationEntryId?: number
   accruedAt: string
   /** وقت تسجيل الاستحقاق الفعلي، منفصل عن يوم المستند. */
   createdAt?: string
   accrualEntryId: number
+  /** إقرار المشاريع والنسب وقت الاستحقاق؛ لا يمثل قيداً أو مصروفاً إضافياً. */
+  projectAllocation?: PayrollProjectAllocationSnapshot
   paidAt?: string | null
   paidEntryId?: number | null
   paidFrom?: string | null

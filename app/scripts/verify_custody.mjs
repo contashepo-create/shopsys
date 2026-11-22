@@ -74,6 +74,8 @@ console.log('🧾 توزيع مستحق الزيادة على الملف الص�
   const runs = [{ id: 1, date: '2026-09-30', lines: [{ employeeId: 7, excessPaidMinor: 25000 }] }]
   const balances = summarizeCustodyExcessByFile(files, txs, runs)
   ok('المسير يسدد أقدم زيادة أولاً وينسب الرصيد لكل ملف دون تكرار إجمالي الموظف', balances.get(1)?.accruedMinor === 20000 && balances.get(1)?.paidMinor === 20000 && balances.get(1)?.remainingMinor === 0 && balances.get(2)?.accruedMinor === 30000 && balances.get(2)?.paidMinor === 5000 && balances.get(2)?.remainingMinor === 25000 && balances.get(3)?.remainingMinor === 50000)
+  const early = summarizeCustodyExcessByFile(files, txs, [{ id: 9, date: '2026-08-31', lines: [{ employeeId: 7, excessPaidMinor: 25000 }] }])
+  ok('لا يخصص صرف سابق لاستحقاقات ظهرت لاحقاً', early.get(1)?.paidMinor === 0 && early.get(2)?.paidMinor === 0)
 }
 
 console.log('🧾 المصروف من العهدة والزيادة عنها')
@@ -88,6 +90,10 @@ console.log('🧾 المصروف من العهدة والزيادة عنها')
   ok('مدين المصروف بكامل المبلغ', lines.some((l) => l.accountCode === '5110' && l.debit === 80000))
   ok('دائن 1108 بجزء العهدة', lines.some((l) => l.accountCode === CUSTODY_ACCOUNT && l.credit === 50000))
   ok('دائن 2107 بالزيادة (مستحق للموظف)', lines.some((l) => l.accountCode === CUSTODY_EXCESS_ACCOUNT && l.credit === 30000))
+  const vatLines = buildCustodyExpenseEntry('5110', 8000, 3500, 'فاتورة موقع', 1500)
+  ok('الضريبة القابلة للاسترداد تفصل من الإجمالي والقيد يبقى متوازناً', balanced(vatLines) && vatLines.some(l => l.accountCode === '5110' && l.debit === 10000) && vatLines.some(l => l.accountCode === '2102' && l.debit === 1500) && vatLines.some(l => l.accountCode === '1108' && l.credit === 8000) && vatLines.some(l => l.accountCode === '2107' && l.credit === 3500))
+  throws('ضريبة تساوي الإجمالي أو تتجاوزه تُرفض', () => buildCustodyExpenseEntry('5110', 8000, 3500, 'x', 11500), 'ضريبة')
+  throws('ضريبة بكسر تُرفض', () => buildCustodyExpenseEntry('5110', 8000, 3500, 'x', 10.5), 'صحيحة')
 }
 
 console.log('⚖️ التسوية: مرتجع + عجز')

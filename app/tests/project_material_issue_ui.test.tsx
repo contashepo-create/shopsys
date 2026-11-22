@@ -53,3 +53,10 @@ it('لا يسقط سطر كمية صفر بصمت', async () => {
  const { dialog, button } = open(); fireEvent.change(within(dialog).getByRole('spinbutton'), { target: { value: '0' } }); fireEvent.click(button)
  await waitFor(() => expect(screen.getByText(/كمية.*موجبة/)).toBeTruthy()); expect(S().materialRequisitions).toHaveLength(0)
 })
+it('لا يحذف سطر صنف غير مختار بصمت عند صرف سطر آخر', async () => {
+ const { dialog, button } = open()
+ fireEvent.click(within(dialog).getByRole('button', { name: /\+ صنف/ }))
+ fireEvent.click(button)
+ await waitFor(() => expect(screen.getByText(/اختر صنفاً لكل سطر/)).toBeTruthy())
+ expect(S().materialRequisitions).toHaveLength(0); expect(S().journal).toHaveLength(0); expect(S().items[0].stockQty).toBe(3)
+})

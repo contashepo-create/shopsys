@@ -240,3 +240,27 @@ it('يرفض التحديث المختلط بحقول صالحة وحقل محم
   expect(useRawDataStore.getState().quotations).toBe(before.quotations)
   expect(useRawDataStore.getState().quotations[0].titleAr).toBe('عرض أصلي')
 })
+
+it('أيقونة واتساب مميزة ويظهر ملف العميل الحالي في المحرر', () => {
+  useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 12, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '', customerType: 'company', contactPerson: 'مسؤول' }] })
+  mount()
+  const share = document.querySelector('[data-quotation-whatsapp]')!
+  expect(share.getAttribute('title')).toContain('واتساب')
+  expect(share.querySelector('[data-whatsapp-icon]')).toBeTruthy()
+  expect(screen.getByTitle('تقديم العرض').querySelector('[data-whatsapp-icon]')).toBeNull()
+  fireEvent.click(screen.getByTitle('فتح العرض وتعديله'))
+  expect(document.querySelector('[data-customer-profile-summary]')?.textContent).toContain('بيانات العميل الحالية: شركة · مسؤول التواصل: مسؤول')
+})
+
+it('إرسال عرض من المحرر يوجه المحادثة إلى هاتف العميل المرتبط لا اختيار عشوائي', () => {
+  useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 12, nameAr: 'عميل', phone: '0501234567', creditLimitMinor: 0, notes: '' }] })
+  const share = vi.fn().mockResolvedValue({ ok: true, copied: false })
+  vi.stubGlobal('shopsysPdfShare', share)
+  try {
+    mount()
+    fireEvent.click(screen.getByTitle('فتح العرض وتعديله'))
+    fireEvent.click(screen.getByTitle('يولّد PDF ويفتح مجلد الملف ومحادثة واتساب — اسحب الملف للمحادثة'))
+    expect(share).toHaveBeenCalledTimes(1)
+    expect(share.mock.calls[0][2]).toContain('wa.me/966501234567')
+  } finally { vi.unstubAllGlobals() }
+})
