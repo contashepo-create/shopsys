@@ -103,6 +103,19 @@ describe('سلامة لقطة التعارض قبل تطبيق السحابة', 
   })
 })
 
+it('يرفض سحباً يسقط حركة ماكينة مقدمة محفوظة ويحافظ على المراجعة', async () => {
+  const advance = { id: 1, projectId: 1, journalEntryId: 1, amountMinor: 500, recoveredMinor: 0 }
+  const charge = { id: 't', kind: 'charge', documentType: 'project_extract', documentId: 'advance:1:1', amountMinor: 500 }
+  useRawDataStore.setState({ clientAdvances: [advance], paymentTerminalTransactions: [charge] } as never)
+  useAppStore.getState().updateSync({ dirty: false })
+  syncOnceMock.mockResolvedValue({ action: 'pulled', newRev: 2, pulledData: JSON.stringify({ clientAdvances: [advance], paymentTerminalTransactions: [] }), message: 'سحب' })
+  const result = await runSyncCycle()
+  expect(result.ok).toBe(false)
+  expect(result.message).toMatch(/ماكينة.*مقدمة/)
+  expect(useRawDataStore.getState().paymentTerminalTransactions).toEqual([charge])
+  expect(useAppStore.getState().sync.lastKnownRev).toBe(1)
+})
+
 it('يرفض سحب تغير قيمة عقد بعد الختامي ولا يغير الحالة والمراجعة', async () => {
   const extract = { id: 1, projectId: 1, isFinal: true }
   const project = { id: 1, contractValueMinor: 1000, retentionPercent: 10 }

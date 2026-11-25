@@ -35,6 +35,19 @@ async function setup(oldData: unknown = baseData, newData: unknown = baseData, o
 }
 
 describe('حماية أدلة الاستعادة الملفية على قاعدتي SQLite', () => {
+  it('يرفض استعادة ملف يسقط حركة ماكينة مقدمة محفوظة دون إغلاق القاعدة الحالية', async () => {
+    const advance = { id: 1, projectId: 1, journalEntryId: 1, amountMinor: 500, recoveredMinor: 0 }
+    const charge = { id: 't', kind: 'charge', documentType: 'project_extract', documentId: 'advance:1:1', amountMinor: 500 }
+    const old = { ...baseData, clientAdvances: [advance], paymentTerminalTransactions: [charge] }
+    const incoming = { ...old, paymentTerminalTransactions: [] }
+    const { next, current } = await setup(old, incoming)
+    try {
+      expect(() => assertFileRestoreHistory(current.raw, next, key)).toThrow(/ماكينة.*مقدمة/)
+      expect(current.raw.open).toBe(true)
+      expect(current.getSnapshot('shopsys-data').payloadJson).toBe(wrap(old))
+    } finally { current.close() }
+  })
+
   it('يرفض ملف استعادة يغير قيمة عقد أو أمر معتمد بعد الختامي', async () => {
     const project = { id: 1, contractValueMinor: 1000, retentionPercent: 10 }
     const order = { id: 1, projectId: 1, status: 'approved', amountMinor: 200 }
