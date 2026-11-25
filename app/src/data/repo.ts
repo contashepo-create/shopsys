@@ -17147,6 +17147,7 @@ export const useRawDataStore = create<DataState>()(
         const projectKeys = new Set(['nameAr', 'clientName', 'clientId', 'contractValueMinor', 'retentionPercent', 'startDate', 'contractNumber', 'location', 'expectedEndDate', 'managerEmployeeId', 'notes', 'tags', 'actualHandoverDate', 'defectsLiabilityMonths'])
         if (!changes || Reflect.ownKeys(changes).some(key => typeof key !== 'string' || !projectKeys.has(key))) throw new Error('حقل تعديل مشروع غير مسموح')
         const hasExtracts = state.projectExtracts.some(row => row.projectId === id)
+        if (changes.retentionPercent !== undefined && changes.retentionPercent !== project.retentionPercent && state.projectExtracts.some(row => row.projectId === id && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا تتغير نسبة المحتجز قبل مراجعة إعادة الفتح')
         if (changes.clientId !== undefined && (changes.clientId ?? null) !== (project.clientId ?? null) && (hasExtracts || state.clientAdvances.some(row => row.projectId === id))) throw new Error('لا يمكن تغيير عميل المشروع بعد مستخلص أو دفعة مقدمة')
         let next = nextId(state.boqItems)
         const updatedItems = changed ? lines.map(line => {
@@ -17190,6 +17191,7 @@ export const useRawDataStore = create<DataState>()(
         const project = state.projects.find((p2) => p2.id === id)
         if (!project) throw new Error('المشروع غير موجود')
         const hasExtracts = state.projectExtracts.some((e) => e.projectId === id)
+        if (changes.retentionPercent !== undefined && changes.retentionPercent !== project.retentionPercent && state.projectExtracts.some(row => row.projectId === id && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا تتغير نسبة المحتجز قبل مراجعة إعادة الفتح')
         // ذمم المستخلصات وتوزيع تحصيلاتها يستنتجان العميل من المشروع؛ تغيير الرابط
         // بأثر رجعي ينقل الدين وحده ويترك التحصيل على العميل القديم.
         if (changes.clientId !== undefined && (changes.clientId ?? null) !== (project.clientId ?? null)

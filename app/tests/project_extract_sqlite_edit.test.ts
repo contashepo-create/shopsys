@@ -14,7 +14,7 @@ const original = useRawDataStore.getState(), app = useAppStore.getState(), S = (
 const beforeEntry: JournalEntry = { id: 1, entryNumber: 1, date: '2025-01-01', description: 'قيد أقدم مستقل', sourceType: 'manual', sourceId: null, lines: [{ accountCode: '1101', debit: 20000, credit: 0 }, { accountCode: '3101', debit: 0, credit: 20000 }], createdBy: 'م', createdAt: '2025-01-01', reversedByEntryId: null, reversesEntryId: null }
 const snap = () => {
  const s = S()
- return JSON.stringify({ state: { projects: s.projects, projectExtracts: s.projectExtracts, clientAdvances: s.clientAdvances, retentionReleases: s.retentionReleases, boqItems: s.boqItems, journal: s.journal } })
+ return JSON.stringify({ state: { projects: s.projects, projectExtracts: s.projectExtracts, clientAdvances: s.clientAdvances, retentionReleases: s.retentionReleases, boqItems: s.boqItems, changeOrders: s.changeOrders, journal: s.journal } })
 }
 function bridge(db: ShopsysDatabase): DesktopDatabaseBridge {
  return { getSnapshot: async name => db.getSnapshot(name), saveSnapshot: async input => db.saveSnapshot(input), deleteSnapshot: async input => db.deleteSnapshot(input), enqueueOutbox: async () => ({ created: true }), claimOutbox: async () => [], completeOutbox: async () => ({ updated: true }), integrityCheck: async () => ({ ok: true, message: 'ok' }), schemaVersion: async () => 1 }
@@ -122,6 +122,31 @@ it('يرفض حفظ تغيير جدول الكميات بعد الختامي و�
   S().editProjectExtract({ extractId: extract.id, payment: 'cash', description: 'تصحيح', vatPercent: 0, reason: 'حصر', extractQtyLines: [{ boqItemId: a.id, cumulativeQty: 60 }, { boqItemId: b.id, cumulativeQty: 40 }] })
   const after = snap()
   await storage.setItem('shopsys-data', after)
+  db.close(); db = await ShopsysDatabase.open(path)
+  expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 2, payloadJson: after })
+ } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('يحمي قيمة العقد وأمر التغيير المعتمد في حفظ SQLite غير المتعارض بعد الختامي', async () => {
+ const project = S().addProject({ nameAr: 'مشروع', clientName: '', contractValueMinor: 10000, retentionPercent: 10, startDate: '2025-01-01', notes: '' })
+ const order = S().addChangeOrder({ projectId: project.id, titleAr: 'إضافة', amountMinor: 2000 })
+ S().setChangeOrderStatus(order.id, 'approved')
+ S().addProjectExtract({ projectId: project.id, grossMinor: 12000, payment: 'cash', description: 'ختامي', vatPercent: 0, isFinal: true })
+ const dir = mkdtempSync(join(tmpdir(), 'shopsys-contract-final-')), path = join(dir, 'data.sqlite')
+ let db = await ShopsysDatabase.open(path)
+ try {
+  const storage = new DesktopStateStorage(bridge(db), null), before = snap()
+  await storage.setItem('shopsys-data', before)
+  for (const change of [
+   (state: { projects: { contractValueMinor: number }[] }) => { state.projects[0].contractValueMinor++ },
+   (state: { changeOrders: { amountMinor: number }[] }) => { state.changeOrders[0].amountMinor++ },
+  ]) {
+   const damaged = JSON.parse(before); change(damaged.state)
+   await expect(storage.setItem('shopsys-data', JSON.stringify(damaged))).rejects.toThrow(/ختامي/)
+   expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 1, payloadJson: before })
+  }
+  S().setChangeOrderStatus(order.id, 'invoiced')
+  const after = snap(); await storage.setItem('shopsys-data', after)
   db.close(); db = await ShopsysDatabase.open(path)
   expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 2, payloadJson: after })
  } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }

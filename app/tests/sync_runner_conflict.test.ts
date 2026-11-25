@@ -103,6 +103,19 @@ describe('سلامة لقطة التعارض قبل تطبيق السحابة', 
   })
 })
 
+it('يرفض سحب تغير قيمة عقد بعد الختامي ولا يغير الحالة والمراجعة', async () => {
+  const extract = { id: 1, projectId: 1, isFinal: true }
+  const project = { id: 1, contractValueMinor: 1000, retentionPercent: 10 }
+  useRawDataStore.setState({ projectExtracts: [extract], projects: [project] } as never)
+  useAppStore.getState().updateSync({ dirty: false })
+  syncOnceMock.mockResolvedValue({ action: 'pulled', newRev: 2, pulledData: JSON.stringify({ projectExtracts: [extract], projects: [{ ...project, contractValueMinor: 2000 }] }), message: 'سحب' })
+  const result = await runSyncCycle()
+  expect(result.ok).toBe(false)
+  expect(result.message).toContain('ختامي')
+  expect(useRawDataStore.getState().projects).toEqual([project])
+  expect(useAppStore.getState().sync.lastKnownRev).toBe(1)
+})
+
 it('يرفض سحب تغير كمية بند بعد الختامي ولا يغير الحالة والمراجعة', async () => {
   const extract = { id: 1, projectId: 1, isFinal: true }
   const item = { id: 1, projectId: 1, qty: 100, unitPriceMinor: 10, unit: 'م', progressPercent: 50 }

@@ -53,3 +53,13 @@ it('يقبل إعادة احتساب تقدم بندي في تعديل ختام�
  after.boqItems[0].progressPercent = 99
  expect(() => assertProjectFinancialHistoryPreserved(before, after)).toThrow(/ختامي/)
 })
+it('لا يسمح بتغيير نسبة المحتجز في أي محرر للمشروع بعد الختامي', () => {
+ const project = S().addProject({ nameAr: 'مشروع', clientName: '', contractValueMinor: 10000, retentionPercent: 10, startDate: '2025-01-01', notes: '' })
+ S().addProjectExtract({ projectId: project.id, grossMinor: 10000, payment: 'cash', description: 'ختامي', vatPercent: 0, isFinal: true })
+ const before = S()
+ expect(() => S().updateProject(project.id, { retentionPercent: 5 })).toThrow(/ختامي/)
+ expect(S()).toBe(before)
+ expect(() => S().updateProjectWithBoq({ id: project.id, expectedFingerprint: S().previewProjectEditFingerprint(project.id), changes: { retentionPercent: 5 }, sections: [], lines: [] })).toThrow(/ختامي/)
+ expect(S()).toBe(before)
+ expect(S().updateProject(project.id, { nameAr: 'تصحيح' }).nameAr).toBe('تصحيح')
+})

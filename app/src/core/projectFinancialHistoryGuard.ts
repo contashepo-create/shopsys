@@ -65,6 +65,11 @@ function assertFinalExtractsPreserved(previousExtracts: Row[], nextExtracts: Row
   const afterBoq = beforeBoq ? rows(incoming.boqItems, 'جدول الكميات الوارد') : undefined
   const nextBoqById = new Map(afterBoq?.map(row => [row.id, row]))
   const previousBoqById = new Map(beforeBoq?.map(row => [row.id, row]))
+  const beforeProjects = hasFinal && current.projects !== undefined ? rows(current.projects, 'سجل المشاريع المحلي') : undefined
+  const afterProjects = beforeProjects ? rows(incoming.projects, 'سجل المشاريع الوارد') : undefined
+  const beforeOrders = hasFinal && current.changeOrders !== undefined ? rows(current.changeOrders, 'سجل أوامر التغيير المحلي') : undefined
+  const afterOrders = beforeOrders ? rows(incoming.changeOrders, 'سجل أوامر التغيير الوارد') : undefined
+  const isEffective = (row: Row) => row.status === 'approved' || row.status === 'invoiced'
   // نصون هوية الختامي المحلي وأساسه عند بقاء قيده نفسه. لا يُثبت
   // اختلاف رقم القيد وحده صحة تعديل وارد؛ باقي حراسات الدفتر مستقلة.
   for (const old of previousExtracts) {
@@ -76,6 +81,23 @@ function assertFinalExtractsPreserved(previousExtracts: Row[], nextExtracts: Row
       const before = current.journal.find((entry: JournalEntry) => entry?.id === old.journalEntryId)
       const after = incoming.journal.find((entry: JournalEntry) => entry?.id === old.journalEntryId)
       if (before && before.reversedByEntryId == null && after?.reversedByEntryId != null) throw new Error(`النسخة تعكس قيد المستخلص الختامي #${String(old.id)} دون ربط القيد البديل — راجع التاريخ`)
+    }
+    const failContract = (): never => { throw new Error(`النسخة تغيّر أساس العقد بعد المستخلص الختامي #${String(old.id)} — راجع التاريخ`) }
+    if (beforeProjects && afterProjects) {
+      const priorProject = beforeProjects.find(row => row.id === old.projectId)
+      if (priorProject) {
+        const nextProject = afterProjects.find(row => row.id === old.projectId)
+        if (!nextProject || ['contractValueMinor', 'retentionPercent', 'branchId'].some(key => !same(priorProject[key], nextProject[key]))) return failContract()
+      }
+    }
+    if (beforeOrders && afterOrders) {
+      const priorEffective = beforeOrders.filter(row => row.projectId === old.projectId && isEffective(row))
+      const nextEffective = afterOrders.filter(row => row.projectId === old.projectId && isEffective(row))
+      if (priorEffective.length !== nextEffective.length) return failContract()
+      for (const order of priorEffective) {
+        const next = nextEffective.find(row => row.id === order.id)
+        if (!next || (order.status !== next.status && !(order.status === 'approved' && next.status === 'invoiced')) || ['projectId', 'amountMinor', 'quantityChange', 'approvedAt', 'date', 'number', 'createdAt'].some(key => !same(order[key], next[key]))) return failContract()
+      }
     }
     if (beforeBoq && afterBoq) {
       const fail = (): never => { throw new Error(`النسخة تغيّر أساس جدول الكميات بعد المستخلص الختامي #${String(old.id)} — راجع التاريخ`) }
