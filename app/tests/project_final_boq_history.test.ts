@@ -35,3 +35,11 @@ describe('حماية جدول الكميات المحلي بعد الختامي 
   expect(() => assertProjectFinancialHistoryPreserved(before, { ...before, boqItems: [before.boqItems[0], before.boqItems[0]] })).toThrow(/مكرر/)
  })
 })
+
+it('يرفض دمج إصدار ختامي متزامن مع تغيير أساس بنوده في الاتجاهين', async () => {
+ const { mergeConcurrentSnapshots } = await import('../src/data/persistentStorage.ts')
+ const finalState = baseline(), base = { ...finalState, projectExtracts: [] }
+ const changed = structuredClone(base); changed.boqItems[0].qty = 11
+ expect(() => mergeConcurrentSnapshots(wrap(base), wrap(finalState), wrap(changed))).toThrow(/ختامي|تعارض/)
+ expect(() => mergeConcurrentSnapshots(wrap(base), wrap(changed), wrap(finalState))).toThrow(/ختامي|تعارض/)
+})
