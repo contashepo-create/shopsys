@@ -36,7 +36,7 @@ const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dar
 
 /* ═══════════ جداول الكميات BOQ ═══════════ */
 export function BoqPage() {
-  const { projects, boqItems, addBoqItem, updateBoqItem, updateBoqProgress, removeBoqItem, getProjectWip } = useDataStore()
+  const { projects, boqItems, projectExtracts, addBoqItem, updateBoqItem, updateBoqProgress, removeBoqItem, getProjectWip } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -52,6 +52,7 @@ export function BoqPage() {
   const [editingItem, setEditingItem] = useState<BoqItem | null>(null)
 
   const items = boqItems.filter((b) => projectId !== '' && b.projectId === projectId)
+  const hasFinal = projectId !== '' && projectExtracts.some(extract => extract.projectId === projectId && extract.isFinal)
   const total = items.reduce((s, b) => s + boqItemTotal(b), 0)
   const wip = projectId !== '' && projects.find((p) => p.id === projectId) ? getProjectWip(projectId as number) : null
 
@@ -93,9 +94,10 @@ export function BoqPage() {
             <option value="">— اختر المشروع —</option>
             {projects.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
           </QuickSelect>
-          <Btn onClick={() => setOpen(true)} disabled={projectId === ''}><Plus className="w-4 h-4" /> بند جديد</Btn>
+          <Btn onClick={() => setOpen(true)} disabled={projectId === '' || hasFinal}><Plus className="w-4 h-4" /> بند جديد</Btn>
         </div>
       </div>
+      {hasFinal && <p className="text-sm text-amber-700" role="status">صدر مستخلص ختامي؛ تعديل أساس الكميات والتقدم وإضافة البنود أو حذفها يتطلب مراجعة إعادة الفتح.</p>}
 
       {wip && (
         <div className={`${card} p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-center anim-up`}>
@@ -131,15 +133,15 @@ export function BoqPage() {
                   <td className="px-4 py-3 font-bold">{fmt(boqItemTotal(b))}</td>
                   <td className="px-4 py-3 w-40">
                     <div className="flex items-center gap-2">
-                      <input type="range" min={0} max={100} step={5} value={b.progressPercent}
-                        onChange={(e) => updateBoqProgress(b.id, Number(e.target.value))} className="flex-1 accent-orange-500" />
+                      <input type="range" min={0} max={100} step={5} value={b.progressPercent} disabled={hasFinal}
+                        onChange={(e) => { try { updateBoqProgress(b.id, Number(e.target.value)) } catch (error) { toast.show((error as Error).message, 'error') } }} className="flex-1 accent-orange-500" />
                       <span className="text-[11px] font-bold w-9">{b.progressPercent}٪</span>
                     </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 justify-end">
                       <button onClick={() => openItemEdit(b)} data-boq-edit title={b.progressPercent > 0 ? 'تعديل الوصف/الوحدة/الكود — الكمية والسعر مقفولان (البند منفَّذ)' : 'تعديل البند'} className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Pencil size={13} /></button>
-                      <button onClick={() => removeBoqItem(b.id)} className="text-rose-500 text-[11px] font-bold hover:underline">حذف</button>
+                      <button disabled={hasFinal} onClick={() => { try { removeBoqItem(b.id) } catch (error) { toast.show((error as Error).message, 'error') } }} className="text-rose-500 text-[11px] font-bold hover:underline disabled:opacity-40">حذف</button>
                     </div>
                   </td>
                 </tr>

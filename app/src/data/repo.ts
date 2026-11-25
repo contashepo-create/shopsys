@@ -19502,6 +19502,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
+        if (state.projectExtracts.some(row => row.projectId === project.id && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا تُضاف بنود عقد قبل مراجعة إعادة الفتح')
         if (args.sectionId != null && !project.boqSections?.some(section => section.id === args.sectionId)) throw new Error('قسم بند المشروع غير موجود')
         const errors = validateBoqItem(args)
         const estCost = args.estCostMinor ?? 0
@@ -19516,8 +19517,12 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const boq = state.boqItems.find((b) => b.id === id)
         if (!boq) throw new Error('بند الكميات غير موجود')
+        const allowed = new Set(['code', 'descriptionAr', 'unit', 'qty', 'unitPriceMinor', 'estCostMinor'])
+        if (!changes || typeof changes !== 'object' || Array.isArray(changes) || Object.keys(changes).some(key => !allowed.has(key))) throw new Error('حقل تعديل بند الكميات غير مسموح')
+        if (changes.estCostMinor !== undefined && (!Number.isSafeInteger(changes.estCostMinor) || changes.estCostMinor < 0)) throw new Error('التكلفة التقديرية غير صحيحة')
         if (boq.quantityChange || state.boqItems.some(item => item.quantityChange?.originalBoqItemId === boq.id)) throw new Error('البند مرتبط بأمر تغيير كميات معتمد — لا يعدّل مباشرة')
         const priceQtyChange = (changes.qty !== undefined && changes.qty !== boq.qty) || (changes.unitPriceMinor !== undefined && changes.unitPriceMinor !== boq.unitPriceMinor)
+        if ((priceQtyChange || (changes.unit !== undefined && changes.unit !== boq.unit)) && state.projectExtracts.some(row => row.projectId === boq.projectId && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا يتغير أساس الكمية والسعر قبل مراجعة إعادة الفتح')
         if ((priceQtyChange || (changes.unit !== undefined && changes.unit !== boq.unit)) && state.projectSurveys.some(survey => survey.projectId === boq.projectId && survey.lines.some(line => line.boqItemId === id))) throw new Error('البند مرتبط بحصر محفوظ — لا تغير الكمية أو السعر أو الوحدة')
         if (priceQtyChange && (boq.progressPercent > 0 || state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id)))) throw new Error(`البند منفَّذ بنسبة ${boq.progressPercent}٪ — قيمته في مستخلصات مرحّلة؛ لا تُعدَّل الكمية ولا السعر (بند جديد أو أمر تغيير)`)
         if (changes.unit !== undefined && changes.unit !== boq.unit && state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id))) throw new Error('البند عليه حصر سابق — لا تغير وحدة القياس؛ أنشئ بنداً جديداً')
@@ -19528,13 +19533,17 @@ export const useRawDataStore = create<DataState>()(
         return merged
       },
       updateBoqProgress: (id, progressPercent) => {
-        if (progressPercent < 0 || progressPercent > 100) throw new Error('نسبة الإنجاز بين 0 و100')
+        if (!Number.isFinite(progressPercent) || progressPercent < 0 || progressPercent > 100) throw new Error('نسبة الإنجاز بين 0 و100')
+        const state = get(), boq = state.boqItems.find(b => b.id === id)
+        if (!boq) throw new Error('بند الكميات غير موجود')
+        if (progressPercent !== boq.progressPercent && state.projectExtracts.some(row => row.projectId === boq.projectId && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا يتغير التقدم قبل مراجعة إعادة الفتح')
         set((s) => ({ boqItems: s.boqItems.map((b) => (b.id === id ? { ...b, progressPercent } : b)) }))
       },
       removeBoqItem: (id) => {
         const state = get()
         const boq = state.boqItems.find((b) => b.id === id)
         if (!boq) throw new Error('بند الكميات غير موجود')
+        if (state.projectExtracts.some(row => row.projectId === boq.projectId && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا يُحذف بند قبل مراجعة إعادة الفتح')
         if (boq.quantityChange || state.boqItems.some(item => item.quantityChange?.originalBoqItemId === boq.id)) throw new Error('البند مرتبط بأمر تغيير كميات معتمد — لا يحذف مباشرة')
         if (state.projectSurveys.some(survey => survey.projectId === boq.projectId && survey.lines.some(line => line.boqItemId === id))) throw new Error('البند مرتبط بحصر محفوظ — لا يُحذف')
         // حارس الفئة (الحذف الآمن): بند بتقدم مرحَّل عليه مستخلصات — حذفه يشوه
