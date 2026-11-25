@@ -103,6 +103,19 @@ describe('سلامة لقطة التعارض قبل تطبيق السحابة', 
   })
 })
 
+it('يرفض سحب تغير كمية بند بعد الختامي ولا يغير الحالة والمراجعة', async () => {
+  const extract = { id: 1, projectId: 1, isFinal: true }
+  const item = { id: 1, projectId: 1, qty: 100, unitPriceMinor: 10, unit: 'م', progressPercent: 50 }
+  useRawDataStore.setState({ projectExtracts: [extract], boqItems: [item] } as never)
+  useAppStore.getState().updateSync({ dirty: false })
+  syncOnceMock.mockResolvedValue({ action: 'pulled', newRev: 2, pulledData: JSON.stringify({ projectExtracts: [extract], boqItems: [{ ...item, qty: 200 }] }), message: 'سحب' })
+  const result = await runSyncCycle()
+  expect(result.ok).toBe(false)
+  expect(result.message).toContain('ختامي')
+  expect(useRawDataStore.getState().boqItems).toEqual([item])
+  expect(useAppStore.getState().sync.lastKnownRev).toBe(1)
+})
+
 it('يرفض سحب حالة تسقط علامة المستخلص الختامي ولا يحدّث مراجعة السحابة', async () => {
   const extract = { id: 1, projectId: 1, isFinal: true }
   useRawDataStore.setState({ projectExtracts: [extract] } as never)

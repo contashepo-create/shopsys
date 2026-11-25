@@ -105,3 +105,24 @@ it('لا يعيد كتابة عكس تاريخي محفوظ بمصدر المس�
  expect(() => assertJournalHistoryPreserved([old, legacy], [old, legacy])).not.toThrow()
  expect(() => assertJournalHistoryPreserved([old, legacy], [old, { ...legacy, sourceId: 2 }])).toThrow(/تغيّر/)
 })
+
+it('يرفض حفظ تغيير جدول الكميات بعد الختامي ويحفظ تعديل حصر مثبت في SQLite', async () => {
+ const project = S().addProject({ nameAr: 'مشروع', clientName: '', contractValueMinor: 10000, retentionPercent: 0, startDate: '2025-01-01', notes: '' })
+ const a = S().addBoqItem({ projectId: project.id, code: '1', descriptionAr: 'أ', unit: 'م', qty: 100, unitPriceMinor: 100 })
+ const b = S().addBoqItem({ projectId: project.id, code: '2', descriptionAr: 'ب', unit: 'م', qty: 100, unitPriceMinor: 100 })
+ const extract = S().addProjectExtract({ projectId: project.id, payment: 'cash', description: 'ختامي', vatPercent: 0, isFinal: true, extractQtyLines: [{ boqItemId: a.id, cumulativeQty: 50 }, { boqItemId: b.id, cumulativeQty: 50 }] })
+ const dir = mkdtempSync(join(tmpdir(), 'shopsys-boq-final-')), path = join(dir, 'data.sqlite')
+ let db = await ShopsysDatabase.open(path)
+ try {
+  const storage = new DesktopStateStorage(bridge(db), null), before = snap()
+  await storage.setItem('shopsys-data', before)
+  const damaged = JSON.parse(before); damaged.state.boqItems[0].qty = 101
+  await expect(storage.setItem('shopsys-data', JSON.stringify(damaged))).rejects.toThrow(/ختامي/)
+  expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 1, payloadJson: before })
+  S().editProjectExtract({ extractId: extract.id, payment: 'cash', description: 'تصحيح', vatPercent: 0, reason: 'حصر', extractQtyLines: [{ boqItemId: a.id, cumulativeQty: 60 }, { boqItemId: b.id, cumulativeQty: 40 }] })
+  const after = snap()
+  await storage.setItem('shopsys-data', after)
+  db.close(); db = await ShopsysDatabase.open(path)
+  expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 2, payloadJson: after })
+ } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
+})

@@ -35,6 +35,18 @@ async function setup(oldData: unknown = baseData, newData: unknown = baseData, o
 }
 
 describe('حماية أدلة الاستعادة الملفية على قاعدتي SQLite', () => {
+  it('يرفض تغيير كمية بند بعد الختامي في ملف الاستعادة ويحافظ على القاعدة الحالية', async () => {
+    const extract = { id: 1, projectId: 1, isFinal: true }
+    const item = { id: 1, projectId: 1, qty: 100, unitPriceMinor: 10, unit: 'م', progressPercent: 50 }
+    const old = { ...baseData, projectExtracts: [extract], boqItems: [item] }
+    const incoming = { ...old, boqItems: [{ ...item, qty: 200 }] }
+    const { next, current } = await setup(old, incoming)
+    try {
+      expect(() => assertFileRestoreHistory(current.raw, next, key)).toThrow(/ختامي/)
+      expect(current.raw.open).toBe(true)
+      expect(current.getSnapshot('shopsys-data').payloadJson).toBe(wrap(old))
+    } finally { current.close() }
+  })
   it('يرفض إسقاط علامة المستخلص الختامي في ملف الاستعادة مع إبقاء القاعدة الأصلية مفتوحة', async () => {
     const extract = { id: 1, projectId: 1, isFinal: true }
     const old = { ...baseData, projectExtracts: [extract] }

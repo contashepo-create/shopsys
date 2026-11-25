@@ -482,10 +482,10 @@ export function newJournalEntries(nextPayloadJson: string, previousPayloadJson: 
   const next = persistedState(nextPayloadJson)
   const previous = persistedState(previousPayloadJson)
   // حماية ختامي محفوظ عند كتابة لقطة غير متعارضة أيضاً، لا عند الدمج فقط.
-  // نراجع فقط عند تغير المستخلصات أو اليومية ولا نختلق أساساً للسجلات القديمة.
+  // لا نختلق أساساً للسجلات القديمة، ونراجع أيضاً تغيّر جدول الكميات.
   if (previous && Array.isArray(previous.projectExtracts) && previous.projectExtracts.some(row => row && typeof row === 'object' && row.isFinal === true)) {
     if (!next) throw new Error('تعذّر قراءة اللقطة الجديدة للتحقق من المستخلص الختامي — لم يُحفظ التغيير')
-    if (JSON.stringify(previous.projectExtracts) !== JSON.stringify(next.projectExtracts) || JSON.stringify(previous.journal) !== JSON.stringify(next.journal)) assertProjectFinalHistoryPreserved(previous, next)
+    if (JSON.stringify(previous.projectExtracts) !== JSON.stringify(next.projectExtracts) || JSON.stringify(previous.journal) !== JSON.stringify(next.journal) || JSON.stringify(previous.boqItems) !== JSON.stringify(next.boqItems)) assertProjectFinalHistoryPreserved(previous, next)
   }
   // يحمي الحفظ غير المتعارض أيضاً من حذف أو تعديل تاريخ الدفتر في اللقطة.
   // البيانات التاريخية غير المتغيرة لا تُمنع من الحفظ بسبب تلف قديم؛ لكن

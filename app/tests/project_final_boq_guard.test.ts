@@ -40,3 +40,16 @@ it('يرفض حقول نقل البند أو تقدمه خارج قائمة ال
  expect(() => S().updateBoqProgress(item.id, NaN)).toThrow(/نسبة/)
  expect(() => S().updateBoqProgress(999, 50)).toThrow(/غير موجود/)
 })
+it('يقبل إعادة احتساب تقدم بندي في تعديل ختامي مثبت ويرفض تقدماً لا يطابق سطره', async () => {
+ const { assertProjectFinancialHistoryPreserved } = await import('../src/core/projectFinancialHistoryGuard.ts')
+ const project = S().addProject({ nameAr: 'مشروع', clientName: '', contractValueMinor: 10000, retentionPercent: 0, startDate: '2025-01-01', notes: '' })
+ const first = S().addBoqItem({ projectId: project.id, code: '1', descriptionAr: 'أ', unit: 'م', qty: 100, unitPriceMinor: 100 })
+ const second = S().addBoqItem({ projectId: project.id, code: '2', descriptionAr: 'ب', unit: 'م', qty: 100, unitPriceMinor: 100 })
+ const extract = S().addProjectExtract({ projectId: project.id, payment: 'cash', description: 'ختامي', vatPercent: 0, isFinal: true, extractQtyLines: [{ boqItemId: first.id, cumulativeQty: 50 }, { boqItemId: second.id, cumulativeQty: 50 }] })
+ const before = JSON.parse(JSON.stringify(S()))
+ S().editProjectExtract({ extractId: extract.id, payment: 'cash', description: 'تصحيح حصر', vatPercent: 0, reason: 'تصحيح', extractQtyLines: [{ boqItemId: first.id, cumulativeQty: 60 }, { boqItemId: second.id, cumulativeQty: 40 }] })
+ const after = JSON.parse(JSON.stringify(S()))
+ expect(() => assertProjectFinancialHistoryPreserved(before, after)).not.toThrow()
+ after.boqItems[0].progressPercent = 99
+ expect(() => assertProjectFinancialHistoryPreserved(before, after)).toThrow(/ختامي/)
+})

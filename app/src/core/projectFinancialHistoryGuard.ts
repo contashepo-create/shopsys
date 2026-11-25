@@ -58,6 +58,13 @@ function rows(value: unknown, label: string): Row[] {
 function assertFinalExtractsPreserved(previousExtracts: Row[], nextExtracts: Row[], current: Row, incoming: Row): void {
   const beforeExtracts = new Map(previousExtracts.map(row => [row.id, row]))
   const afterExtracts = new Map(nextExtracts.map(row => [row.id, row]))
+  // النسخ القديمة التي لا تتضمن المجموعة لا تُنشئ دليلاً مختلقاً؛ إن كانت
+  // محفوظة محلياً فلا يجوز إسقاطها أو تغيير أساسها بعد الختامي.
+  const hasFinal = previousExtracts.some(row => row.isFinal === true)
+  const beforeBoq = hasFinal && current.boqItems !== undefined ? rows(current.boqItems, 'جدول الكميات المحلي') : undefined
+  const afterBoq = beforeBoq ? rows(incoming.boqItems, 'جدول الكميات الوارد') : undefined
+  const nextBoqById = new Map(afterBoq?.map(row => [row.id, row]))
+  const previousBoqById = new Map(beforeBoq?.map(row => [row.id, row]))
   // نصون هوية الختامي المحلي وأساسه عند بقاء قيده نفسه. لا يُثبت
   // اختلاف رقم القيد وحده صحة تعديل وارد؛ باقي حراسات الدفتر مستقلة.
   for (const old of previousExtracts) {
@@ -69,6 +76,25 @@ function assertFinalExtractsPreserved(previousExtracts: Row[], nextExtracts: Row
       const before = current.journal.find((entry: JournalEntry) => entry?.id === old.journalEntryId)
       const after = incoming.journal.find((entry: JournalEntry) => entry?.id === old.journalEntryId)
       if (before && before.reversedByEntryId == null && after?.reversedByEntryId != null) throw new Error(`النسخة تعكس قيد المستخلص الختامي #${String(old.id)} دون ربط القيد البديل — راجع التاريخ`)
+    }
+    if (beforeBoq && afterBoq) {
+      const fail = (): never => { throw new Error(`النسخة تغيّر أساس جدول الكميات بعد المستخلص الختامي #${String(old.id)} — راجع التاريخ`) }
+      const fields = ['projectId', 'branchId', 'qty', 'unitPriceMinor', 'unit', 'quantityChange']
+      for (const item of beforeBoq.filter(row => row.projectId === old.projectId)) {
+        const next = nextBoqById.get(item.id)
+        if (!next || fields.some(key => !same(item[key], next[key]))) return fail()
+        if (!same(item.progressPercent, next.progressPercent)) {
+          // تعديل الختامي المشروع يعيد حساب التقدم؛ نتأكد من السطر البديل
+          // أو نسبة ما قبل السطر القديم عند حذفه من إعادة الحساب.
+          if (same(old.journalEntryId, candidate.journalEntryId) || !Array.isArray(candidate.lines) || candidate.lines.length === 0) return fail()
+          const lines = candidate.lines.filter((line: Row) => line && line.boqItemId === item.id)
+          const prior = Array.isArray(old.lines) ? old.lines.filter((line: Row) => line && line.boqItemId === item.id) : []
+          if (lines.length > 1 || prior.length > 1) return fail()
+          const expected = lines[0]?.newProgressPercent ?? prior[0]?.prevProgressPercent ?? item.progressPercent
+          if (!same(next.progressPercent, expected)) return fail()
+        }
+      }
+      if (afterBoq.some(row => row.projectId === old.projectId && previousBoqById.get(row.id)?.projectId !== old.projectId)) return fail()
     }
     const financialFields = ['date', 'payment', 'totals', 'lines', 'advanceRecoveryMinor', 'advanceAllocations']
     if (financialFields.some(key => !same(old[key], candidate[key]))) {
