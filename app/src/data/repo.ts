@@ -69,7 +69,7 @@ import { closeoutLines, closeoutNetLines, type ProjectCloseout } from '../core/p
 import { reviseProjectSurvey, assertSurveyIntegrity, exactBilledQuantities, type ProjectSurvey, type SurveyLine } from '../core/projectSurvey.ts'
 import { assertProjectExtractOriginalIntegrity, assertProjectExtractRefundIntegrity, netProjectExtractTotals } from '../core/projectExtractRefundIntegrity.ts'
 import { creditedProjectRetention } from '../core/projectExtractNet.ts'
-import { fullRetentionAllocations, type RetentionExtractAllocation } from '../core/projectRetentionAllocation.ts'
+import { fullRetentionAllocations, planRetentionAllocations, type RetentionExtractAllocation } from '../core/projectRetentionAllocation.ts'
 import { projectNetQuantityHistory, type ProjectNetQuantityReport } from '../core/projectNetQuantityHistory.ts'
 import { assertAdvanceRecoveryBasis, allocateProjectAdvance, undoProjectAdvanceRecovery, type ProjectAdvanceAllocation } from '../core/projectAdvanceRecovery.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
@@ -19324,7 +19324,9 @@ export const useRawDataStore = create<DataState>()(
         assertTreasuryForPosting(state, treasury, 'receipt', remaining)
         const id = nextId(state.retentionReleases)
         const entryId = nextId(state.journal)
-        const allocations = fullRetentionAllocations(extracts, entryId)
+        // المخطط يدعم مراجعة توزيع تحصيلات سابقة في الاختبارات، لكن هذا
+        // المسار لا يسمح إلا بالتحصيل الكامل الأول وفق الحظر أعلاه.
+        const allocations = planRetentionAllocations(extracts, [], entryId, remaining)
         const allocated = allocations.reduce((sum, row) => sum + row.amountMinor, 0)
         if (!Number.isSafeInteger(allocated) || allocated !== remaining) throw new FinancialDataReviewError('توزيع تحصيل المحتجز', 'محتجز المستخلصات لا يطابق المبلغ المراد تحصيله')
         const entry: JournalEntry = {
