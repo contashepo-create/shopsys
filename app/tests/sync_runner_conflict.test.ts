@@ -127,6 +127,18 @@ it('يرفض سحب تغيير أساس الختامي دون قيد بديل و
   expect(useAppStore.getState().sync.lastKnownRev).toBe(1)
 })
 
+it('يرفض سحب تغيير قيد الختامي إلى مرجع مختلق ويحافظ على المراجعة', async () => {
+  const extract = { id: 1, projectId: 1, isFinal: true, extractNumber: 'PRX-0001', journalEntryId: 1, payment: 'cash', totals: { grossMinor: 100, dueMinor: 100 } }
+  useRawDataStore.setState({ projectExtracts: [extract] } as never)
+  useAppStore.getState().updateSync({ dirty: false })
+  syncOnceMock.mockResolvedValue({ action: 'pulled', newRev: 2, pulledData: JSON.stringify({ journal: [], treasuries: [], projectExtracts: [{ ...extract, journalEntryId: 999, totals: { grossMinor: 50, dueMinor: 50 } }] }), message: 'سحب' })
+  const result = await runSyncCycle()
+  expect(result.ok).toBe(false)
+  expect(result.message).toContain('ختامي')
+  expect(useRawDataStore.getState().projectExtracts).toEqual([extract])
+  expect(useAppStore.getState().sync.lastKnownRev).toBe(1)
+})
+
 it('يرفض سحب حالة تعيد فتح مشروع محصل المحتجز ولا يحدّث مراجعة السحابة', async () => {
   const project = { id: 1, status: 'completed', completedAt: '2026-11-15T10:00:00', branchId: 1 }
   const release = { id: 1, projectId: 1 }

@@ -59,6 +59,17 @@ describe('حماية أدلة الاستعادة الملفية على قاعد�
       } finally { current.close() }
     }
   })
+  it('يرفض مرجع قيد بديل مختلق لختامي في ملف الاستعادة', async () => {
+    const extract = { id: 1, projectId: 1, isFinal: true, extractNumber: 'PRX-0001', journalEntryId: 1, payment: 'cash', totals: { grossMinor: 100, dueMinor: 100 } }
+    const old = { ...baseData, projectExtracts: [extract] }
+    const incoming = { ...old, projectExtracts: [{ ...extract, journalEntryId: 999, totals: { grossMinor: 50, dueMinor: 50 } }] }
+    const { next, current } = await setup(old, incoming)
+    try {
+      expect(() => assertFileRestoreHistory(current.raw, next, key)).toThrow(/ختامي/)
+      expect(current.raw.open).toBe(true)
+      expect(current.getSnapshot('shopsys-data').payloadJson).toBe(wrap(old))
+    } finally { current.close() }
+  })
   it('يرفض إعادة فتح مشروع محصل المحتجز في ملف الاستعادة دون إغلاق القاعدة الحالية', async () => {
     const project = { id: 1, status: 'completed', completedAt: '2026-11-15T10:00:00', branchId: 1 }
     const release = { id: 1, projectId: 1 }

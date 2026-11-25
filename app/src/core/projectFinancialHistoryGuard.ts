@@ -1,4 +1,36 @@
+import { assertJournalHistoryPreserved } from './ledgerHistoryGuard.ts'
+import { assertProjectExtractOriginalIntegrity } from './projectExtractRefundIntegrity.ts'
+import type { JournalEntry } from './ledger.ts'
+
 type Row = Record<string, unknown>
+
+/** يتحقق فقط من انتقال ختامي محلي بين قيديه؛ لا يعيد بناء أساس كل تعديل وسيط. */
+function assertFinalEditEvidence(old: Row, candidate: Row, current: Row, incoming: Row): void {
+  const fail = (): never => { throw new Error(`تسلسل تعديل المستخلص الختامي #${String(old.id)} غير مثبت — راجع الأدلة`) }
+  if (!Number.isSafeInteger(old.journalEntryId) || (old.journalEntryId as number) <= 0 || !Number.isSafeInteger(candidate.journalEntryId) || (candidate.journalEntryId as number) <= 0 || !Array.isArray(current.journal) || !Array.isArray(incoming.journal)) return fail()
+  const previous = current.journal as JournalEntry[], next = incoming.journal as JournalEntry[]
+  try { assertJournalHistoryPreserved(previous, next) } catch { return fail() }
+  const oldEntries = previous.filter(row => row?.id === old.journalEntryId)
+  if (oldEntries.length !== 1 || oldEntries[0].sourceType !== 'project_extract' || oldEntries[0].sourceId !== old.id || oldEntries[0].reversedByEntryId != null || oldEntries[0].reversesEntryId != null) return fail()
+  let entry = oldEntries[0], lastReversal: number | undefined
+  const visited = new Set<number>()
+  while (entry.id !== candidate.journalEntryId) {
+    if (visited.has(entry.id)) return fail()
+    visited.add(entry.id)
+    const position = next.findIndex(row => row?.id === entry.id)
+    const marked = next[position]
+    const reversalPosition = next.findIndex(row => row?.id === marked?.reversedByEntryId)
+    const reversal = next[reversalPosition], replacement = next[reversalPosition + 1]
+    if (position < 0 || reversalPosition < previous.length || reversalPosition <= position || !reversal || !replacement || reversal.id >= Number.MAX_SAFE_INTEGER || replacement.id !== reversal.id + 1 || replacement.sourceType !== 'project_extract' || replacement.sourceId !== old.id || (replacement.sourceCollection != null && replacement.sourceCollection !== 'projectExtracts') || replacement.reversesEntryId != null || (replacement.branchId ?? null) !== (entry.branchId ?? null)) return fail()
+    try { assertJournalHistoryPreserved([{ ...entry, reversedByEntryId: null }], [marked, reversal]) } catch { return fail() }
+    lastReversal = reversal.id
+    entry = replacement
+  }
+  if (lastReversal == null || candidate.editReversalEntryId !== lastReversal || entry.reversedByEntryId != null || typeof candidate.date !== 'string' || candidate.date.slice(0, 10) !== entry.date) return fail()
+  try {
+    assertProjectExtractOriginalIntegrity(candidate as unknown as Parameters<typeof assertProjectExtractOriginalIntegrity>[0], new Map(next.map(row => [row.id, row])))
+  } catch { return fail() }
+}
 
 function same(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true
@@ -94,6 +126,7 @@ export function assertProjectFinancialHistoryPreserved(current: Row, incoming: R
     if (old.isFinal !== true) continue
     const candidate = afterExtracts.get(old.id)
     if (!candidate || candidate.isFinal !== true || !same(old.projectId, candidate.projectId) || !same(old.branchId, candidate.branchId) || !same(old.extractNumber, candidate.extractNumber) || !same(old.createdAt, candidate.createdAt)) throw new Error(`النسخة تسقط أو تغيّر هوية المستخلص الختامي #${String(old.id)} — راجع التاريخ`)
+    if (!same(old.journalEntryId, candidate.journalEntryId)) assertFinalEditEvidence(old, candidate, current, incoming)
     const financialFields = ['date', 'payment', 'totals', 'lines', 'advanceRecoveryMinor', 'advanceAllocations']
     if (financialFields.some(key => !same(old[key], candidate[key]))) {
       const before = old.journalEntryId, after = candidate.journalEntryId
