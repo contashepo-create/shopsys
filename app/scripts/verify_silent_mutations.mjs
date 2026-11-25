@@ -72,7 +72,6 @@ const DOCUMENTED_SILENT = new Map([
   ['updateVehicle', 'تحرير مركبة — مرشح للحارس'],
   ['updateEquipment', 'تحرير معدة — مرشح للحارس'],
   ['updateLabPatient', 'تحرير مريض مختبر — مرشح للحارس'],
-  ['updateBoqProgress', 'تحديث نسبة بند BOQ — مرشح للحارس'],
   ['updateMaintenanceService', 'تحرير بند صيانة — مرشح للحارس'],
   ['isProjectCloseoutCurrent', 'استعلام (لا تحوير) — الجواب false لمعرّف مجهول'],
 ])
