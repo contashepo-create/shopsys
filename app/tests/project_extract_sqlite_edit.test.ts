@@ -151,3 +151,46 @@ it('يحمي قيمة العقد وأمر التغيير المعتمد في ح�
   expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 2, payloadJson: after })
  } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
 })
+
+it('يحمي أصل المقدمة ويسمح بإصدار وتعديل استرداد موزع في SQLite ثم يرفض تغييره وحده', async () => {
+ const project = S().addProject({ nameAr: 'مشروع', clientName: '', contractValueMinor: 10000, retentionPercent: 0, startDate: '2025-01-01', notes: '' })
+ S().receiveClientAdvance({ projectId: project.id, amountMinor: 1000, treasury: '1101' })
+ const dir = mkdtempSync(join(tmpdir(), 'shopsys-advance-history-')), path = join(dir, 'data.sqlite')
+ let db = await ShopsysDatabase.open(path)
+ try {
+  const storage = new DesktopStateStorage(bridge(db), null), before = snap(); await storage.setItem('shopsys-data', before)
+  const damaged = JSON.parse(before); damaged.state.clientAdvances[0].amountMinor = 999
+  await expect(storage.setItem('shopsys-data', JSON.stringify(damaged))).rejects.toThrow(/المقدمة/)
+  expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 1, payloadJson: before })
+  const extract = S().addProjectExtract({ projectId: project.id, grossMinor: 2000, payment: 'cash', vatPercent: 0, description: 'أعمال', advanceRecoveryMinor: 500 })
+  await storage.setItem('shopsys-data', snap())
+  S().editProjectExtract({ extractId: extract.id, grossMinor: 2000, payment: 'cash', vatPercent: 0, description: 'تعديل', reason: 'تصحيح', advanceRecoveryMinor: 300 })
+  const after = snap(); await storage.setItem('shopsys-data', after)
+  const corrupted = JSON.parse(after); corrupted.state.clientAdvances[0].recoveredMinor = 301
+  await expect(storage.setItem('shopsys-data', JSON.stringify(corrupted))).rejects.toThrow(/استرداد|توزيع/)
+  db.close(); db = await ShopsysDatabase.open(path)
+  expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 3, payloadJson: after })
+ } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('يحمي تحصيل المحتجز المثبت ومستخلصه في حفظ SQLite بعد الترحيل', async () => {
+ const project = S().addProject({ nameAr: 'مشروع', clientName: '', contractValueMinor: 10000, retentionPercent: 10, startDate: '2025-01-01', notes: '' })
+ S().addProjectExtract({ projectId: project.id, grossMinor: 10000, payment: 'cash', vatPercent: 0, description: 'أعمال' })
+ S().releaseRetention(project.id)
+ const dir = mkdtempSync(join(tmpdir(), 'shopsys-retention-history-')), path = join(dir, 'data.sqlite')
+ let db = await ShopsysDatabase.open(path)
+ try {
+  const storage = new DesktopStateStorage(bridge(db), null), before = snap(); await storage.setItem('shopsys-data', before)
+  for (const change of [
+   (state: { retentionReleases: unknown[] }) => { state.retentionReleases = [] },
+   (state: { projectExtracts: unknown[] }) => { state.projectExtracts = [] },
+   (state: { projects: { status: string }[] }) => { state.projects[0].status = 'active' },
+  ]) {
+   const damaged = JSON.parse(before); change(damaged.state)
+   await expect(storage.setItem('shopsys-data', JSON.stringify(damaged))).rejects.toThrow(/المحتجز/)
+   expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 1, payloadJson: before })
+  }
+  db.close(); db = await ShopsysDatabase.open(path)
+  expect(db.getSnapshot('shopsys-data').payloadJson).toBe(before)
+ } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
+})

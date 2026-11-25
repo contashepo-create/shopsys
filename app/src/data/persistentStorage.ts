@@ -487,6 +487,17 @@ export function newJournalEntries(nextPayloadJson: string, previousPayloadJson: 
     if (!next) throw new Error('تعذّر قراءة اللقطة الجديدة للتحقق من المستخلص الختامي — لم يُحفظ التغيير')
     if (JSON.stringify(previous.projectExtracts) !== JSON.stringify(next.projectExtracts) || JSON.stringify(previous.journal) !== JSON.stringify(next.journal) || JSON.stringify(previous.boqItems) !== JSON.stringify(next.boqItems) || JSON.stringify(previous.projects) !== JSON.stringify(next.projects) || JSON.stringify(previous.changeOrders) !== JSON.stringify(next.changeOrders)) assertProjectFinalHistoryPreserved(previous, next)
   }
+  // نفس حارس أدلة المقدمة والإشعار والمحتجز المستعمل في الدمج والاستعادة
+  // يلزم أيضاً حفظ اللقطة غير المتعارض؛ لا نكتفي بحراسة القيد الختامي.
+  const hasProjectFinancialHistory = (state: Record<string, unknown>) =>
+    (Array.isArray(state.clientAdvances) && state.clientAdvances.length > 0) ||
+    (Array.isArray(state.retentionReleases) && state.retentionReleases.length > 0) ||
+    (Array.isArray(state.projectExtracts) && state.projectExtracts.some(row => row && typeof row === 'object' && (Array.isArray(row.refunds) && row.refunds.length > 0 || (row.refundedMinor ?? 0) !== 0 || (row.advanceRecoveryMinor ?? 0) !== 0)))
+  if (previous && (hasProjectFinancialHistory(previous) || (next && hasProjectFinancialHistory(next)))) {
+    if (!next) throw new Error('تعذّر قراءة اللقطة الجديدة للتحقق من تاريخ المشروع المالي — لم يُحفظ التغيير')
+    const financialKeys = ['clientAdvances', 'projectExtracts', 'retentionReleases', 'projects', 'journal', 'paymentTerminalTransactions']
+    if (financialKeys.some(key => JSON.stringify(previous[key]) !== JSON.stringify(next[key]))) assertProjectFinancialHistoryPreserved(previous, next)
+  }
   // يحمي الحفظ غير المتعارض أيضاً من حذف أو تعديل تاريخ الدفتر في اللقطة.
   // البيانات التاريخية غير المتغيرة لا تُمنع من الحفظ بسبب تلف قديم؛ لكن
   // تعديل دفتر تالف يتطلب مراجعة. لا يُفترض تاريخ عند أول استيراد.
