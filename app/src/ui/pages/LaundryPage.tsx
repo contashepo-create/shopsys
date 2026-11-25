@@ -1,3 +1,4 @@
+import { openCustomerWhatsapp } from '../components/openCustomerWhatsapp.ts'
 import { WhatsappIcon } from '../components/WhatsappIcon.tsx'
 import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
@@ -38,7 +39,7 @@ const STATUS_STYLE: Record<LaundryStatus, string> = {
 interface DraftLine { desc: string; service: LaundryService; qty: string; price: string; byWeight?: boolean }
 
 export function LaundryPage() {
-  const { laundryOrders, customers, journal, paymentTerminals, paymentTerminalTransactions, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack, logLaundryNotificationSent } = useDataStore()
+  const { laundryOrders, customers, journal, paymentTerminals, paymentTerminalTransactions, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack } = useDataStore()
   const { setup, reportPrint, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -333,11 +334,8 @@ export function LaundryPage() {
               <div className="flex items-center gap-2">
                 {viewing.phone.trim() && (
                   <button
-                    onClick={() => {
-                      window.open(laundryWhatsappLink(viewing.phone, buildLaundryStatusMessage(viewing, setup.shopName || 'المغسلة', { symbol: cur.symbol, decimals: cur.decimals })), '_blank', 'noopener')
-                      try { logLaundryNotificationSent(viewing.id, viewing.status) } catch { /* لا يمنع الإرسال */ }
-                    }}
-                    title="إبلاغ العميل بحالة أمر الغسيل عبر واتساب — يُسجَّل في سجل الأمر أنه أُرسل"
+                    onClick={() => openCustomerWhatsapp(() => laundryWhatsappLink(viewing.phone, buildLaundryStatusMessage(viewing, setup.shopName || 'المغسلة', { symbol: cur.symbol, decimals: cur.decimals }), setup.countryCode), toast)}
+                    title="إبلاغ العميل بحالة أمر الغسيل عبر واتساب — فتح المحادثة لا يؤكد الإرسال"
                     className="px-3 py-1.5 rounded-lg text-[12px] font-bold bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 transition-all flex items-center gap-1.5"
                   >
                     <WhatsappIcon size={13} /> إبلاغ العميل واتساب
@@ -350,7 +348,7 @@ export function LaundryPage() {
             </div>
             {(viewing.notifications ?? []).length > 0 && (
               <div className="text-[11px] text-slate-400">
-                📨 إشعارات واتساب مُرسَلة: {(viewing.notifications ?? []).map((n, i) => (
+                📨 سجل محاولات واتساب السابقة (لا يؤكد الإرسال): {(viewing.notifications ?? []).map((n, i) => (
                   <span key={i}>{i > 0 ? ' · ' : ''}{LAUNDRY_STATUS_LABELS[n.status]} ({localDateTimeLabel(n.at)})</span>
                 ))}
               </div>

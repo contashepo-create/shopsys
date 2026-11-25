@@ -12,6 +12,7 @@
  * - إفراج محتجز: 1101 ← 1105
  */
 import { addCalendarMonths } from './time.ts'
+import { isValidExpiryDate } from './batches.ts'
 import { addMinor, type Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 import { creditedProjectRetention } from './projectExtractNet.ts'
@@ -76,16 +77,13 @@ export function validateProject(p: Pick<Project, 'nameAr' | 'contractValueMinor'
   return errors
 }
 
-/**
- * تاريخ استحقاق الإفراج عن المحتجز = التسليم الفعلي + فترة الضمان (سد فجوة
- * تقرير النشاط #11 — لا مرجعية زمنية كانت موجودة لتذكير صاحب القرار).
- * null لو لا تاريخ تسليم أو لا فترة ضمان مُسجَّلة.
- */
+/** نهاية تقويمية استرشادية فقط: لا تثبت التسليم أو حق التحصيل التعاقدي. */
 export function retentionReleaseDueDate(p: Pick<Project, 'actualHandoverDate' | 'defectsLiabilityMonths'>): string | null {
-  if (!p.actualHandoverDate || !p.defectsLiabilityMonths || p.defectsLiabilityMonths <= 0) return null
-  const handover = p.actualHandoverDate.slice(0, 10)
-  if (Number.isNaN(new Date(`${handover}T00:00:00Z`).getTime())) return null
-  return addCalendarMonths(handover, p.defectsLiabilityMonths)
+  const date = p.actualHandoverDate, months = p.defectsLiabilityMonths
+  // Date.UTC يعيد تفسير السنوات 0–99 كـ1900–1999؛ لا نخمّن تاريخاً تاريخياً هنا.
+  if (typeof date !== 'string' || !isValidExpiryDate(date) || Number(date.slice(0, 4)) < 100 || typeof months !== 'number' || !Number.isInteger(months) || months < 0 || months > 1200) return null
+  const result = addCalendarMonths(date, months)
+  return isValidExpiryDate(result) ? result : null
 }
 
 export interface RetentionDueWarning {
@@ -96,50 +94,50 @@ export interface RetentionDueWarning {
   remainingRetentionMinor: Minor
 }
 
-/**
- * مشروعات تستحق أو اقتربت من استحقاق الإفراج عن محتجزها المتبقي — يُغذّي
- * جرس التنبيهات المركزي (سد فجوة تقرير النشاط #11 — Immediate #3).
- * remainingRetentionMinor بالخارج محسوبة من فروق extracts.retentionMinor −
- * retentionReleases (نفس حساب releaseRetention في المتجر) — تُمرَّر جاهزة.
- */
-export function retentionDueWarnings(
-  projects: readonly (Pick<Project, 'id' | 'nameAr' | 'actualHandoverDate' | 'defectsLiabilityMonths'>)[],
-  remainingRetentionByProject: (projectId: number) => Minor,
-  todayIso: string,
-  warnDays = 30,
-): RetentionDueWarning[] {
-  const today = todayIso.slice(0, 10)
-  const todayMs = Date.parse(`${today}T00:00:00Z`)
-  const out: RetentionDueWarning[] = []
-  for (const p of projects) {
-    const dueDate = retentionReleaseDueDate(p)
-    if (!dueDate) continue
-    const remaining = remainingRetentionByProject(p.id)
-    if (remaining <= 0) continue
-    const daysLeft = Math.round((Date.parse(`${dueDate}T00:00:00Z`) - todayMs) / 86_400_000)
-    if (daysLeft <= warnDays) out.push({ projectId: p.id, projectNameAr: p.nameAr, dueDate, daysLeft, remainingRetentionMinor: remaining })
-  }
-  return out.sort((a, b) => a.daysLeft - b.daysLeft)
-}
+type RetentionProject = Pick<Project, 'id' | 'nameAr' | 'actualHandoverDate' | 'defectsLiabilityMonths'>
+type RetentionReviewProject = { projectId: number; projectNameAr: string }
 
-/** تنبيه المراجعة لا يخمّن قيمة المحتجز ولا يعطّل تنبيهات المشاريع السليمة. */
-export function retentionWarningsWithReview(
-  projects: readonly (Pick<Project, 'id' | 'nameAr' | 'actualHandoverDate' | 'defectsLiabilityMonths'>)[],
+/** تاريخ نهاية الضمان المدخل مؤشر لا إثبات استحقاق؛ القيم المالية مصدرها المستدعي. */
+export function retentionDueWarnings(
+  projects: readonly RetentionProject[],
   remaining: (projectId: number) => Minor,
   todayIso: string,
   warnDays = 30,
-): { due: RetentionDueWarning[]; review: { projectId: number; projectNameAr: string }[] } {
-  const review: { projectId: number; projectNameAr: string }[] = []
-  const byId = new Map(projects.map(project => [project.id, project]))
-  const due = retentionDueWarnings(projects, id => {
-    try { return remaining(id) } catch (error) {
-      if (!(error instanceof FinancialDataReviewError)) throw error
-      const project = byId.get(id)!
-      review.push({ projectId: id, projectNameAr: project.nameAr })
-      return 0 // استبعاد التنبيه المالي فقط، وليس اعتماد رصيد صفري
+  reviewSink?: { review: RetentionReviewProject[]; scheduleReview: RetentionReviewProject[] },
+): RetentionDueWarning[] {
+  const due: RetentionDueWarning[] = []
+  const today = typeof todayIso === 'string' ? todayIso.slice(0, 10) : ''
+  const validToday = isValidExpiryDate(today) && Number.isSafeInteger(warnDays) && warnDays >= 0
+  for (const project of projects) {
+    const ref = { projectId: project.id, projectNameAr: project.nameAr }
+    let amount: number
+    try {
+      amount = remaining(project.id)
+      if (!Number.isSafeInteger(amount) || amount < 0) throw new FinancialDataReviewError('محتجز المشروع')
+    } catch (error) {
+      if (!(error instanceof FinancialDataReviewError) || !reviewSink) throw error
+      reviewSink.review.push(ref)
+      continue
     }
-  }, todayIso, warnDays)
-  return { due, review }
+    if (amount === 0) continue
+    const dueDate = retentionReleaseDueDate(project)
+    if (!dueDate || !validToday) { reviewSink?.scheduleReview.push(ref); continue }
+    const daysLeft = Math.round((Date.parse(`${dueDate}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000)
+    if (daysLeft <= warnDays) due.push({ ...ref, dueDate, daysLeft, remainingRetentionMinor: amount })
+  }
+  return due.sort((a, b) => a.daysLeft - b.daysLeft)
+}
+
+/** يفحص كل المشاريع حتى لو كان تاريخ التسليم مجهولاً؛ لا يحوّل فشل الأدلة إلى رصيد صفر. */
+export function retentionWarningsWithReview(
+  projects: readonly RetentionProject[],
+  remaining: (projectId: number) => Minor,
+  todayIso: string,
+  warnDays = 30,
+): { due: RetentionDueWarning[]; review: RetentionReviewProject[]; scheduleReview: RetentionReviewProject[] } {
+  const sink: { review: RetentionReviewProject[]; scheduleReview: RetentionReviewProject[] } = { review: [], scheduleReview: [] }
+  const due = retentionDueWarnings(projects, remaining, todayIso, warnDays, sink)
+  return { due, ...sink }
 }
 
 /**

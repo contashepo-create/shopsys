@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
 import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { ProjectExtractsPage } from '../src/ui/pages/ContractingPages.tsx'
+import { ProjectExtractsPage, ProjectsPage } from '../src/ui/pages/ContractingPages.tsx'
 import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 const data = useRawDataStore.getState(), app = useAppStore.getState(), S = () => useRawDataStore.getState()
@@ -86,4 +86,26 @@ it('يدعم المعالج السريع الحصر التراكمي ويطلب 
  fireEvent.click(button)
  await waitFor(() => expect(S().projectExtracts[0]?.lines?.[0].newExecutedQty).toBe(1000))
  expect(S().projectExtracts[0].isFinal).toBe(true)
+})
+
+it('يمنع إزالة علامة الختامي في محرر صفحة المستخلصات', () => {
+ const p = S().projects[0]
+ S().addProjectExtract({ projectId: p.id, description: 'ختامي', payment: 'credit', vatPercent: 0, grossMinor: p.contractValueMinor, isFinal: true })
+ render(<MemoryRouter><ProjectExtractsPage /></MemoryRouter>)
+ fireEvent.click(screen.getByTitle('تعديل المستخلص'))
+ const checkbox = screen.getByLabelText(/مستخلص ختامي للمشروع/) as HTMLInputElement
+ expect(checkbox.checked).toBe(true); expect(checkbox.disabled).toBe(true)
+ expect(screen.getByText(/لا يُحوّل إلى جزئي بالتعديل/)).toBeTruthy()
+})
+
+it('يمنع إزالة علامة الختامي والتعبئة الجزئية في محرر تفاصيل المشروع', () => {
+ const p = S().projects[0]
+ S().addProjectExtract({ projectId: p.id, description: 'ختامي', payment: 'credit', vatPercent: 0, grossMinor: p.contractValueMinor, isFinal: true })
+ render(<MemoryRouter><ProjectsPage /></MemoryRouter>)
+ fireEvent.click(screen.getByTitle('التفاصيل والقيود'))
+ fireEvent.click(screen.getByTitle('تعديل المستخلص — قيد عاكس وإعادة بناء بنفس الرقم'))
+ expect((screen.getByRole('button', { name: 'مستخلص جاري / جزئي' }) as HTMLButtonElement).disabled).toBe(true)
+ expect((screen.getByLabelText('ختامي — لا مستخلصات بعده') as HTMLInputElement).disabled).toBe(true)
+ expect((screen.getByRole('button', { name: '+10٪ جزئي' }) as HTMLButtonElement).disabled).toBe(true)
+ expect(screen.getByText(/لا يمكن تحويل المستخلص الختامي الصادر/)).toBeTruthy()
 })

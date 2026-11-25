@@ -185,6 +185,7 @@ export function Header({ title }: { title: string }) {
       })),
       // مشروعات تستحق/تقترب من استحقاق الإفراج عن المحتجز بعد فترة الضمان (سد فجوة تقرير النشاط #11 — Future #1)
       retentionReviewProjects: retentionWarnings.review,
+      retentionScheduleReviewProjects: retentionWarnings.scheduleReview,
       retentionDueProjects: retentionWarnings.due.map((r) => ({
         projectId: r.projectId, projectNameAr: r.projectNameAr, dueDate: r.dueDate, daysLeft: r.daysLeft, remainingMinor: r.remainingRetentionMinor,
       })),

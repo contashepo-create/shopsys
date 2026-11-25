@@ -17,23 +17,33 @@ interface RetentionExtract {
  */
 export function fullRetentionAllocations(extracts: readonly RetentionExtract[], beforeEntryId: number): RetentionExtractAllocation[] {
   const fail = (): never => { throw new FinancialDataReviewError('توزيع تحصيل المحتجز', 'تعذر إثبات محتجز المستخلصات عند التحصيل') }
-  if (!Number.isSafeInteger(beforeEntryId) || beforeEntryId <= 0) return fail()
+  if (!Array.isArray(extracts) || !Number.isSafeInteger(beforeEntryId) || beforeEntryId <= 0) return fail()
   const ids = new Set<number>(), entries = new Set<number>()
-  const result: RetentionExtractAllocation[] = []
   for (const extract of extracts) {
-    if (!Number.isSafeInteger(extract.id) || extract.id <= 0 || ids.has(extract.id) || !Number.isSafeInteger(extract.journalEntryId) || extract.journalEntryId <= 0 || entries.has(extract.journalEntryId)) return fail()
+    if (!extract || typeof extract !== 'object' || !Number.isSafeInteger(extract.id) || extract.id <= 0 || ids.has(extract.id) || !Number.isSafeInteger(extract.journalEntryId) || extract.journalEntryId <= 0 || entries.has(extract.journalEntryId)) return fail()
     ids.add(extract.id); entries.add(extract.journalEntryId)
+  }
+  const result: RetentionExtractAllocation[] = []
+  let allocated = 0
+  for (const extract of extracts) {
     if (extract.journalEntryId >= beforeEntryId) continue
     const held = extract.totals?.retentionMinor
-    if (!Number.isSafeInteger(held) || held < 0) return fail()
+    if (!Number.isSafeInteger(held) || held < 0 || (extract.quantityCreditVersion != null && extract.quantityCreditVersion !== 1 && extract.quantityCreditVersion !== 2)) return fail()
     let credited = 0
-    if (extract.quantityCreditVersion === 2) for (const refund of extract.refunds ?? []) {
-      if (!Number.isSafeInteger(refund.journalEntryId) || refund.journalEntryId <= extract.journalEntryId || !Number.isSafeInteger(refund.retentionMinor) || refund.retentionMinor! < 0) return fail()
-      if (refund.journalEntryId < beforeEntryId) credited += refund.retentionMinor!
-      if (!Number.isSafeInteger(credited)) return fail()
+    if (extract.quantityCreditVersion === 2) {
+      if (!Array.isArray(extract.refunds) || extract.refunds.length === 0) return fail()
+      let previousEntryId = extract.journalEntryId
+      for (const refund of extract.refunds) {
+        if (!refund || !Number.isSafeInteger(refund.journalEntryId) || refund.journalEntryId <= previousEntryId || entries.has(refund.journalEntryId) || !Number.isSafeInteger(refund.retentionMinor) || refund.retentionMinor! < 0) return fail()
+        entries.add(refund.journalEntryId); previousEntryId = refund.journalEntryId
+        if (refund.journalEntryId < beforeEntryId) credited += refund.retentionMinor!
+        if (!Number.isSafeInteger(credited)) return fail()
+      }
     }
     const remaining = held - credited
     if (!Number.isSafeInteger(remaining) || remaining < 0) return fail()
+    allocated += remaining
+    if (!Number.isSafeInteger(allocated)) return fail()
     if (remaining) result.push({ extractId: extract.id, journalEntryId: extract.journalEntryId, amountMinor: remaining })
   }
   return result.sort((a, b) => a.journalEntryId - b.journalEntryId)

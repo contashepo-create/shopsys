@@ -96,7 +96,7 @@ describe('الفجوة ③ — إشعار حالة التذكرة عبر وات�
   })
 
   it('رابط واتساب: رقم مصري يتحول للصيغة الدولية والرسالة مرمّزة', () => {
-    const link = ticketWhatsappLink('01012345678', 'جاهز للتسليم')
+    const link = ticketWhatsappLink('01012345678', 'جاهز للتسليم', 'EG')
     expect(link).toContain('https://wa.me/201012345678?text=')
     expect(decodeURIComponent(link.split('text=')[1])).toBe('جاهز للتسليم')
     // رقم دولي مباشر بلا صفر بادئ

@@ -60,7 +60,7 @@ describe('purchaseWaParty — طرف فاتورة الشراء', () => {
 describe('الرابط الناتج من الرقم المسجّل', () => {
   it('الرقم المصري يتحول إلى +20 في رابط wa.me', () => {
     const party = saleWaParty({ customerId: 1 }, parties)!
-    expect(waChatLink(party.phone, 'مرحبا')).toBe(`https://wa.me/201012345678?text=${encodeURIComponent('مرحبا')}`)
+    expect(waChatLink(party.phone, 'مرحبا', 'EG')).toBe(`https://wa.me/201012345678?text=${encodeURIComponent('مرحبا')}`)
   })
 })
 

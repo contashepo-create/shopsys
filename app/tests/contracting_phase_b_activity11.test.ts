@@ -22,7 +22,7 @@ describe('سد فجوة النشاط #11 — retentionReleaseDueDate', () => {
   it('null بلا تاريخ تسليم أو بلا فترة ضمان', () => {
     expect(retentionReleaseDueDate({ actualHandoverDate: null, defectsLiabilityMonths: 12 })).toBeNull()
     expect(retentionReleaseDueDate({ actualHandoverDate: '2026-01-01', defectsLiabilityMonths: null })).toBeNull()
-    expect(retentionReleaseDueDate({ actualHandoverDate: '2026-01-01', defectsLiabilityMonths: 0 })).toBeNull()
+    expect(retentionReleaseDueDate({ actualHandoverDate: '2026-01-01', defectsLiabilityMonths: 0 })).toBe('2026-01-01')
   })
   it('يضيف فترة الضمان بالشهور لتاريخ التسليم الفعلي', () => {
     expect(retentionReleaseDueDate({ actualHandoverDate: '2026-01-15', defectsLiabilityMonths: 6 })).toBe('2026-07-15')

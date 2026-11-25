@@ -8,8 +8,8 @@ import { ConfirmHost } from '../src/ui/components/ConfirmDialog.tsx'
 import { useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { createLetterWord } from '../src/core/letterWord.ts'
-import { applySavedLetterTemplate, captureLetterTemplate, createLetterLayout, getLetterBoxes, letterLayoutItems, LETTER_TEMPLATES } from '../src/core/letterLayout.ts'
-import { newLetterParagraph, validateLetter, type Letter } from '../src/core/letters.ts'
+import { applyCompleteLetterTemplate, applySavedLetterTemplate, captureLetterTemplate, createLetterLayout, getLetterBoxes, letterLayoutItems, LETTER_TEMPLATES } from '../src/core/letterLayout.ts'
+import { newLetterParagraph, validLetterObjects, validateLetter, type Letter, type LetterObject } from '../src/core/letters.ts'
 import { mergeConcurrentSnapshots } from '../src/data/persistentStorage.ts'
 import * as confirmStore from '../src/ui/components/confirmStore.ts'
 import { guardNavigation } from '../src/ui/components/navigationGuard.ts'
@@ -506,7 +506,7 @@ it('يتحكم في القالب والخلفية ويخزن قالباً لإع
  expect((document.querySelector('[data-letter-background]') as HTMLImageElement).style.opacity).toBe('0.28')
  fireEvent.click(screen.getByLabelText('تحريك التاريخ'))
  fireEvent.change(screen.getByLabelText('الموضع الأفقي بالملليمتر'), { target: { value: '55' } })
- fireEvent.click(screen.getByLabelText('حفظ نصوص الخطاب وصور التوقيع والختم في القالب'))
+ fireEvent.click(screen.getByLabelText('حفظ نصوص الخطاب والصور والجداول في القالب'))
  fireEvent.change(screen.getByLabelText('اسم القالب المخصص'), { target: { value: 'قالب شركتي' } })
  fireEvent.click(screen.getByText('حفظ التصميم كقالب'))
  await waitFor(() => expect(useRawDataStore.getState().letterTemplates).toHaveLength(1))
@@ -737,7 +737,7 @@ it('يثبت تصميم الخطاب الحالي مع الخطوط فقط، و�
  fireEvent.change(screen.getByLabelText('الموضع الرأسي بالملليمتر'), { target: { value: '125' } })
  fireEvent.click(screen.getByLabelText('تحريك التاريخ'))
  fireEvent.change(screen.getByLabelText('الموضع الأفقي بالملليمتر'), { target: { value: '55' } })
- fireEvent.click(screen.getByLabelText('حفظ نصوص الخطاب وصور التوقيع والختم في القالب'))
+ fireEvent.click(screen.getByLabelText('حفظ نصوص الخطاب والصور والجداول في القالب'))
  fireEvent.change(screen.getByLabelText('اسم القالب المخصص'), { target: { value: 'تصميم جديد' } })
  fireEvent.click(screen.getByText('حفظ التصميم كقالب'))
  await waitFor(() => expect(useRawDataStore.getState().letterTemplates).toHaveLength(1))
@@ -804,7 +804,7 @@ it('يحفظ القالب المسمى ويحدثه مع كامل التنسيق
  fireEvent.click(screen.getByLabelText('خط مائل'))
  fireEvent.change(screen.getByLabelText('خلفية الصفحة'), { target: { value: 'formal' } })
  fireEvent.change(screen.getByLabelText('درجة شفافية الخلفية'), { target: { value: '66' } })
- expect((screen.getByLabelText('حفظ نصوص الخطاب وصور التوقيع والختم في القالب') as HTMLInputElement).checked).toBe(true)
+ expect((screen.getByLabelText('حفظ نصوص الخطاب والصور والجداول في القالب') as HTMLInputElement).checked).toBe(true)
  fireEvent.change(screen.getByLabelText('اسم القالب المخصص'), { target: { value: 'قالب متكامل' } })
  fireEvent.click(screen.getByText('حفظ التصميم كقالب'))
  await waitFor(() => expect(useRawDataStore.getState().letterTemplates).toHaveLength(1))
@@ -850,7 +850,8 @@ it('يتحقق من خيارات إخفاء الترويسة ويحتفظ بصو
  const source = { ...letter, layout, signatureImage: 'data:image/png;base64,iVBORw0KGgoB', stampImage: 'data:image/jpeg;base64,AQID', fieldStyles: { headerPhone: { align: 'center' as const, size: 15, color: '#445566', bold: true, italic: true, underline: true, font: 'Tahoma' as const } } }
  const template = captureLetterTemplate(source, 'قالب', 'id', true, true)
  expect(validSavedLetterTemplate(template)).toBe(true)
- expect(validSavedLetterTemplate({ ...template, hiddenHeader: ['footerBlock'] })).toBe(false)
+ expect(validSavedLetterTemplate({ ...template, hiddenHeader: ['footerBlock'] })).toBe(true)
+ expect(validSavedLetterTemplate({ ...template, hiddenHeader: ['unknownFooter'] })).toBe(false)
  expect(validSavedLetterTemplate({ ...template, content: { ...template.content!, signatureImage: 'https://invalid' } })).toBe(false)
  const fresh = { ...letter, recipient: 'مستلم جديد', signatureImage: undefined, paragraphs: [newLetterParagraph('محتوى مختلف')] }
  const applied = applyLetterTemplateContent(applyLetterTemplateFormatting(fresh, template), template)
@@ -981,4 +982,539 @@ it('لوحة التوقيع لا تسمح باستخدام رسم فارغ وت�
  expect((screen.getByText('استخدام التوقيع') as HTMLButtonElement).disabled).toBe(true)
  fireEvent.click(screen.getByText('إلغاء الرسم'))
  expect(onUse).not.toHaveBeenCalled(); expect(onClose).toHaveBeenCalledOnce()
+})
+
+
+it('يحافظ على الكتابة المباشرة عند تبديل الأدوات ويحفظ الحالة والتذييل', async () => {
+ render(<LettersPage />); fireEvent.click(screen.getByText('إنشاء خطاب جديد'))
+ fireEvent.click(screen.getByText('بيانات الخطاب'))
+ fireEvent.change(screen.getByLabelText('موضوع الخطاب'), { target: { value: 'مراسلة جديدة' } })
+ fireEvent.change(screen.getByLabelText('الجهة الموجه إليها'), { target: { value: 'شركة الاختبار' } })
+ fireEvent.change(screen.getByLabelText('حالة المراسلة'), { target: { value: 'sent' } })
+ fireEvent.click(screen.getByText('إغلاق الأدوات'))
+ const paragraph = document.querySelector<HTMLElement>('[data-letter-box^="paragraph:"]')!
+ fireEvent.doubleClick(paragraph)
+ fireEvent.change(screen.getByLabelText('تحرير الفقرة داخل الخطاب'), { target: { value: 'محتوى لم يضع عند تبديل القوائم' } })
+ fireEvent.blur(screen.getByLabelText('تحرير الفقرة داخل الخطاب'))
+ fireEvent.click(screen.getByText('الترويسة والتذييل'))
+ fireEvent.click(screen.getByLabelText('إظهار تذييل المنشأة الثابت'))
+ fireEvent.click(screen.getByText('القوالب والخلفية'))
+ fireEvent.click(screen.getByText('إغلاق الأدوات'))
+ expect(document.querySelector('[data-letter-box="footerBlock"]')).toBeNull()
+ expect(paragraph.textContent).toContain('محتوى لم يضع')
+ fireEvent.click(screen.getByText('حفظ'))
+ await waitFor(() => expect(useRawDataStore.getState().letters).toHaveLength(1))
+ const saved = useRawDataStore.getState().letters[0]
+ expect(saved.status).toBe('sent'); expect(saved.paragraphs[0].text).toBe('محتوى لم يضع عند تبديل القوائم')
+ expect(saved.layout?.hiddenHeader).toContain('footerBlock')
+ fireEvent.click(screen.getByText('السجل'))
+ fireEvent.change(screen.getByLabelText('تصفية حالة الخطاب'), { target: { value: 'draft' } })
+ expect(screen.getByText('لا توجد نتائج مطابقة')).toBeTruthy()
+ fireEvent.change(screen.getByLabelText('تصفية حالة الخطاب'), { target: { value: 'sent' } })
+ fireEvent.change(screen.getByLabelText('البحث في نص الخطاب'), { target: { value: 'تبديل' } })
+ expect(screen.getByText('مراسلة جديدة')).toBeTruthy()
+})
+
+it('يحفظ إخفاء التذييل في القالب وWord دون حذف بيانات المنشأة', async () => {
+ const source = { ...letter, layout: createLetterLayout(letter, 'classic') }
+ source.layout.hiddenHeader = ['bottomRule', 'footerBlock']
+ expect(validateLetter(source)).toEqual([])
+ const template = captureLetterTemplate(source, 'قالب', 'footer', true, true)
+ expect(applySavedLetterTemplate(source, template).hiddenHeader).toEqual(['bottomRule', 'footerBlock'])
+ const blob = await createLetterWord(source)
+ const buffer = await new Promise<ArrayBuffer>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result as ArrayBuffer); reader.onerror = reject; reader.readAsArrayBuffer(blob) })
+ const main = strFromU8(unzipSync(new Uint8Array(buffer))['word/document.xml'])
+ expect(main).not.toContain('هاتف: 123   |')
+ const visibleBlob = await createLetterWord({ ...source, layout: { ...source.layout, hiddenHeader: [] } })
+ const visibleBuffer = await new Promise<ArrayBuffer>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result as ArrayBuffer); reader.onerror = reject; reader.readAsArrayBuffer(visibleBlob) })
+ expect(strFromU8(unzipSync(new Uint8Array(visibleBuffer))['word/document.xml'])).toContain('هاتف: 123   |')
+ expect(source.identity.address).toBe('الرياض')
+ expect(validateLetter({ ...source, status: 'invalid' as never })).toContain('حالة الخطاب غير صالحة')
+})
+
+
+it('يضيف جدولاً وصورة ويحركهما ويحفظهما ويعيد فتحهما', async () => {
+ vi.stubGlobal('Image', class { src = ''; naturalWidth = 10; naturalHeight = 10; async decode() {} })
+ render(<LettersPage />); fireEvent.click(screen.getByText('إنشاء خطاب جديد'))
+ fireEvent.click(screen.getByText('بيانات الخطاب'))
+ fireEvent.change(screen.getByLabelText('الجهة الموجه إليها'), { target: { value: 'شركة الجدول' } })
+ fireEvent.change(screen.getByLabelText('موضوع الخطاب'), { target: { value: 'تفاصيل الأسعار' } })
+ fireEvent.click(screen.getByText('إدراج صورة أو جدول'))
+ fireEvent.click(screen.getByText('إضافة جدول'))
+ fireEvent.change(screen.getByLabelText('خلية صف 1 عمود 1'), { target: { value: 'الصنف' } })
+ fireEvent.change(screen.getByLabelText('خلية صف 2 عمود 2'), { target: { value: '250 ريال' } })
+ fireEvent.click(screen.getByText('+ صف'))
+ expect(screen.getByLabelText('خلية صف 3 عمود 1')).toBeTruthy()
+ expect(document.querySelector('.letters-canvas-table')?.textContent).toContain('250 ريال')
+ fireEvent.click(screen.getByText('الموضع والصفحات'))
+ fireEvent.change(screen.getByLabelText('الموضع الأفقي بالملليمتر'), { target: { value: '35' } })
+ fireEvent.click(screen.getByText('إدراج صورة أو جدول'))
+ const file = new File([Uint8Array.from([137,80,78,71,13,10,26,10,1])], 'image.png', { type: 'image/png' })
+ fireEvent.change(screen.getByLabelText('إضافة صورة للخطاب'), { target: { files: [file] } })
+ await waitFor(() => expect(document.querySelector('[data-letter-box^="object:"] img')).toBeTruthy())
+ fireEvent.click(screen.getByText('الموضع والصفحات'))
+ fireEvent.change(screen.getByLabelText('ارتفاع الصورة بالملليمتر'), { target: { value: '30' } })
+ fireEvent.click(screen.getByText('إغلاق الأدوات')); fireEvent.click(screen.getByText('حفظ'))
+ await waitFor(() => expect(useRawDataStore.getState().letters).toHaveLength(1))
+ const saved = useRawDataStore.getState().letters[0]
+ expect(saved.objects).toHaveLength(2)
+ expect(saved.objects?.[0]).toMatchObject({ kind: 'table', box: { x: 35 }, cells: [['الصنف', ''], ['', '250 ريال'], ['', '']] })
+ expect(saved.objects?.[1]).toMatchObject({ kind: 'image', box: { height: 30 } })
+ expect(validateLetter(saved)).toEqual([])
+ fireEvent.click(screen.getByText('السجل'))
+ fireEvent.change(screen.getByLabelText('البحث في نص الخطاب'), { target: { value: '250 ريال' } })
+ expect(screen.getByText('تفاصيل الأسعار')).toBeTruthy()
+ fireEvent.click(screen.getByText('فتح ومعاينة'))
+ expect(document.querySelector('.letters-canvas-table')?.textContent).toContain('250 ريال')
+ expect(document.querySelector('[data-letter-box^="object:"] img')).toBeTruthy()
+})
+
+it('ينسخ عناصر القالب فقط عند تضمين المحتوى ويحافظ على العناصر عند استعمال قالب قديم', () => {
+ const table: LetterObject = { id: 'table-a', kind: 'table', box: { x: 25, y: 110, width: 120, page: 2 }, cells: [['بيان', 'مبلغ'], ['طلب', '10']] }
+ const original: Letter = { ...letter, layout: { ...createLetterLayout(letter, 'classic'), pageCount: 2 }, objects: [table] }
+ const full = captureLetterTemplate(original, 'المحتوى', 'full', true, true, true)
+ const design = captureLetterTemplate(original, 'الشكل', 'design', true, false, true)
+ expect(full.content?.objects).toEqual([table]); expect(design.content).toBeUndefined()
+ const fresh = { ...letter, objects: undefined }
+ expect(applyCompleteLetterTemplate(fresh, full).objects).toEqual([table])
+ expect(applyCompleteLetterTemplate(fresh, design).objects).toBeUndefined()
+ const old = { ...full, pageCount: 1, content: { ...full.content!, objects: undefined } }
+ const retained = applyCompleteLetterTemplate(original, old)
+ expect(retained.objects?.[0].box.page).toBe(1); expect(retained.objects?.[0]).toMatchObject({ kind: 'table', cells: table.cells })
+ expect(original.objects?.[0].box.page).toBe(2)
+})
+
+it('يرفض عناصر غير صالحة ويصدر جدول Word حقيقياً وصورة مستقلة', async () => {
+ vi.stubGlobal('Image', class { src = ''; naturalWidth = 10; naturalHeight = 10; async decode() {} })
+ const objects: LetterObject[] = [
+  { id: 'table-a', kind: 'table', box: { x: 20, y: 145, width: 100, page: 1 }, cells: [['البيان', 'المبلغ'], ['خدمة', '250']] },
+  { id: 'image-a', kind: 'image', box: { x: 30, y: 200, width: 40, height: 20 }, data: 'data:image/png;base64,iVBORw0KGgoB' },
+ ]
+ expect(validLetterObjects(objects, 1)).toBe(true)
+ expect(validLetterObjects([...objects, objects[0]], 1)).toBe(false)
+ expect(validLetterObjects([{ ...objects[0], cells: [['a'], ['b', 'c']] } as LetterObject], 1)).toBe(false)
+ expect(validLetterObjects([{ ...objects[1], data: 'https://example.test/image.png' } as LetterObject], 1)).toBe(false)
+ expect(validLetterObjects([{ ...objects[1], box: { x: 200, y: 0, width: 40, height: 20 } } as LetterObject], 1)).toBe(false)
+ const source = { ...letter, layout: createLetterLayout(letter, 'classic'), objects }
+ const blob = await createLetterWord(source)
+ const buffer = await new Promise<ArrayBuffer>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result as ArrayBuffer); reader.onerror = reject; reader.readAsArrayBuffer(blob) })
+ const zip = unzipSync(new Uint8Array(buffer)), main = strFromU8(zip['word/document.xml'])
+ expect(main).toContain('<w:tbl>'); expect(main).toContain('<w:tblpPr'); expect(main).toContain('البيان'); expect(main).toContain('250'); expect(main).toContain('w:drawing')
+ expect(Object.keys(zip).some(key => key.startsWith('word/media/'))).toBe(true)
+})
+
+it('يتيح حجم العنصر والحذف والتراجع والإعادة دون اعتراض Delete داخل الحقول', async () => {
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic') }] })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
+ fireEvent.click(screen.getByText('إدراج صورة أو جدول')); fireEvent.click(screen.getByText('إضافة جدول'))
+ fireEvent.change(screen.getByLabelText('خلية صف 1 عمود 1'), { target: { value: 'محتوى' } })
+ fireEvent.change(screen.getByLabelText('نمط الجدول'), { target: { value: 'teal' } })
+ const table = document.querySelector<HTMLElement>('[data-letter-box^="object:"]')!
+ expect(table.querySelector('td')?.style.backgroundColor).toBe('rgb(23, 107, 117)')
+ fireEvent.click(within(table).getByLabelText(/تغيير حجم/))
+ const width = parseFloat(table.style.width)
+ fireEvent.click(within(table).getByLabelText('تصغير العنصر'))
+ expect(parseFloat(table.style.width)).toBeLessThan(width)
+ fireEvent.click(screen.getByLabelText('تراجع'))
+ expect(parseFloat(table.style.width)).toBeCloseTo(width)
+ fireEvent.click(screen.getByLabelText('إعادة'))
+ expect(parseFloat(table.style.width)).toBeLessThan(width)
+ fireEvent.keyDown(screen.getByLabelText('خلية صف 1 عمود 1'), { key: 'Delete' })
+ expect(document.querySelector('.letters-canvas-table')).toBeTruthy()
+ fireEvent.keyDown(table, { key: 'Delete' })
+ await waitFor(() => expect(document.querySelector('.letters-canvas-table')).toBeNull())
+ fireEvent.keyDown(screen.getByLabelText('تراجع'), { key: 'z', ctrlKey: true })
+ expect(document.querySelector('.letters-canvas-table')?.textContent).toContain('محتوى')
+ fireEvent.keyDown(screen.getByLabelText('تراجع'), { key: 'y', ctrlKey: true })
+ expect(document.querySelector('.letters-canvas-table')).toBeNull()
+})
+
+it('يحفظ نمط الجدول ضمن القالب ويصدره في Word ويرفض النمط غير المعروف', async () => {
+ const table: LetterObject = { id: 'table-style', kind: 'table', box: { x: 20, y: 140, width: 100 }, cells: [['عنوان'], ['بيان']], style: 'navy' }
+ const source = { ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }
+ expect(validLetterObjects([table], 1)).toBe(true)
+ expect(validLetterObjects([{ ...table, style: 'unknown' } as never], 1)).toBe(false)
+ expect(applyCompleteLetterTemplate(letter, captureLetterTemplate(source, 'نمط', 'style', true, true, true)).objects).toEqual([table])
+ const blob = await createLetterWord(source)
+ const buffer = await new Promise<ArrayBuffer>((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result as ArrayBuffer); r.onerror = reject; r.readAsArrayBuffer(blob) })
+ const main = strFromU8(unzipSync(new Uint8Array(buffer))['word/document.xml'])
+ expect(main).toContain('243F60'); expect(main).toContain('عنوان'); expect(main).toContain('w:shd')
+})
+
+it('يخفي الحقل المرتبط دون حذف بياناته ويسمح بإظهاره أو التراجع، ويمسح الفقرة فعلياً', async () => {
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic') }] })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
+ const subject = screen.getByLabelText('تحريك الموضوع')
+ fireEvent.click(subject); fireEvent.click(within(subject).getByLabelText('إخفاء الموضوع'))
+ await waitFor(() => expect(screen.queryByLabelText('تحريك الموضوع')).toBeNull())
+ fireEvent.click(screen.getByText('الترويسة والتذييل'))
+ fireEvent.click(screen.getByText('إظهار الموضوع'))
+ expect(screen.getByLabelText('تحريك الموضوع').textContent).toContain('طلب رسمي')
+ const para = screen.getByLabelText('تحريك فقرة 1')
+ fireEvent.click(para); fireEvent.click(within(para).getByLabelText('حذف فقرة 1'))
+ await waitFor(() => expect(screen.queryByLabelText('تحريك فقرة 1')).toBeNull())
+ fireEvent.click(screen.getByLabelText('تراجع'))
+ expect(screen.getByLabelText('تحريك فقرة 1').textContent).toContain('النص العربي')
+})
+
+it('يعيد التراجع حالة الترقيم التلقائي كما يعيد رقم المرجع', () => {
+ render(<LettersPage />); fireEvent.click(screen.getByText('إنشاء خطاب جديد'))
+ fireEvent.click(screen.getByText('بيانات الخطاب'))
+ const reference = screen.getByLabelText('رقم الخطاب / المرجع') as HTMLInputElement
+ const suggested = reference.value
+ expect(screen.getByText(/رقم مقترح حسب سنة التاريخ/)).toBeTruthy()
+ fireEvent.change(reference, { target: { value: 'يدوي' } })
+ expect(screen.getByText(/رقم يدوي أو محفوظ/)).toBeTruthy()
+ fireEvent.keyDown(reference, { key: 'z', ctrlKey: true })
+ expect(reference.value).toBe(suggested)
+ expect(screen.getByText(/رقم مقترح حسب سنة التاريخ/)).toBeTruthy()
+ fireEvent.keyDown(reference, { key: 'y', ctrlKey: true })
+ expect(reference.value).toBe('يدوي'); expect(screen.getByText(/رقم يدوي أو محفوظ/)).toBeTruthy()
+})
+
+it('ينسخ الجدول مع نمطه ومحتواه ويتيح التراجع عن النسخة', () => {
+ render(<LettersPage />); fireEvent.click(screen.getByText('إنشاء خطاب جديد'))
+ fireEvent.click(screen.getByText('إدراج صورة أو جدول')); fireEvent.click(screen.getByText('إضافة جدول'))
+ fireEvent.change(screen.getByLabelText('خلية صف 1 عمود 1'), { target: { value: 'نسخة' } })
+ fireEvent.click(screen.getByLabelText('تطبيق نمط رسمي كحلي'))
+ fireEvent.click(screen.getByText('نسخ العنصر المحدد'))
+ expect(document.querySelectorAll('.letters-canvas-table')).toHaveLength(2)
+ expect(screen.getByLabelText('خلية صف 1 عمود 1')).toHaveProperty('value', 'نسخة')
+ expect(screen.getByLabelText('نمط الجدول')).toHaveProperty('value', 'navy')
+ fireEvent.click(screen.getByLabelText('تراجع'))
+ expect(document.querySelectorAll('.letters-canvas-table')).toHaveLength(1)
+})
+
+it('لا يطبع أدوات العنصر ويطبع النص الجاري تحريره ولون نمط الجدول', async () => {
+ print.mockClear(); vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ const table: LetterObject = { id: 'table-print', kind: 'table', style: 'navy', box: { x: 20, y: 150, width: 100 }, cells: [['العنوان'], ['نص']] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
+ fireEvent.doubleClick(screen.getByLabelText('تحريك فقرة 1'))
+ fireEvent.change(screen.getByLabelText('تحرير الفقرة داخل الخطاب'), { target: { value: 'نص يحرر الآن' } })
+ fireEvent.click(screen.getByText('طباعة'))
+ await waitFor(() => expect(print).toHaveBeenCalledOnce())
+ const html = print.mock.calls[0][0] as string
+ expect(html).toContain('نص يحرر الآن'); expect(html).toContain('rgb(36, 63, 96)')
+ expect(html).not.toContain('letters-item-tools'); expect(html).not.toContain('letters-canvas-edit')
+})
+
+it('يمسح سجل الإعادة عند تغيير جديد ويبدأ سجل التراجع من جديد بعد الحفظ', async () => {
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic') }] })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة')); fireEvent.click(screen.getByText('بيانات الخطاب'))
+ const subject = screen.getByLabelText('موضوع الخطاب')
+ fireEvent.change(subject, { target: { value: 'واحد' } }); fireEvent.click(screen.getByLabelText('تراجع'))
+ expect((screen.getByLabelText('إعادة') as HTMLButtonElement).disabled).toBe(false)
+ fireEvent.change(subject, { target: { value: 'اثنان' } })
+ expect((screen.getByLabelText('إعادة') as HTMLButtonElement).disabled).toBe(true)
+ fireEvent.click(screen.getByText('حفظ'))
+ await waitFor(() => expect(useRawDataStore.getState().letters[0].subject).toBe('اثنان'))
+ expect((screen.getByLabelText('تراجع') as HTMLButtonElement).disabled).toBe(true)
+})
+
+it('يحرر خلايا الجدول داخل الورقة ويتراجع دون حذف الجدول عند Delete', async () => {
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ const table: LetterObject = { id: 'edit-cells', kind: 'table', box: { x: 20, y: 150, width: 100 }, cells: [['عنوان', 'ثمن'], ['خدمة', '50']] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
+ const cell = document.querySelector('[data-letter-box="object:edit-cells"] td[data-row="1"][data-column="1"]')!
+ fireEvent.doubleClick(cell)
+ const editor = screen.getByLabelText('تحرير خلية الجدول صف 2 عمود 2') as HTMLTextAreaElement
+ fireEvent.change(editor, { target: { value: '125' } })
+ fireEvent.keyDown(editor, { key: 'Delete' }); expect(document.querySelector('.letters-canvas-table')).toBeTruthy()
+ fireEvent.keyDown(editor, { key: 'z', ctrlKey: true }); expect(editor.value).toBe('50')
+ fireEvent.change(editor, { target: { value: '125' } }); fireEvent.blur(editor)
+ fireEvent.click(screen.getByText('إدراج صورة أو جدول'))
+ expect(screen.getByLabelText('خلية صف 2 عمود 2')).toHaveProperty('value', '125')
+ expect(screen.getByText('الخلية المحددة: صف 2، عمود 2')).toBeTruthy()
+})
+
+it('يدرج ويحذف الصف والعمود المحددين مع تأكيد وتراجع عن الحذف', async () => {
+ const confirm = vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ const table: LetterObject = { id: 'rows-columns', kind: 'table', box: { x: 20, y: 150, width: 100 }, cells: [['أ', 'ب'], ['ج', 'د']] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة')); fireEvent.click(screen.getByText('إدراج صورة أو جدول')); fireEvent.click(screen.getByRole('button', { name: 'جدول 1' }))
+ fireEvent.focus(screen.getByLabelText('خلية صف 2 عمود 2'))
+ fireEvent.click(screen.getByText('إدراج صف قبل'))
+ expect(screen.getByLabelText('خلية صف 3 عمود 2')).toHaveProperty('value', 'د')
+ fireEvent.click(screen.getByText('إدراج عمود بعد'))
+ expect(screen.getByLabelText('خلية صف 1 عمود 2')).toHaveProperty('value', 'ب')
+ fireEvent.click(screen.getByText('حذف العمود المحدد'))
+ await waitFor(() => expect(screen.queryByLabelText('خلية صف 1 عمود 3')).toBeNull())
+ expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('العمود 3') }))
+ fireEvent.click(screen.getByLabelText('تراجع'))
+ expect(screen.getByLabelText('خلية صف 1 عمود 3')).toBeTruthy()
+ fireEvent.click(screen.getByText('حذف الصف المحدد'))
+ await waitFor(() => expect(screen.queryByLabelText('خلية صف 3 عمود 1')).toBeNull())
+ fireEvent.click(screen.getByLabelText('تراجع'))
+ expect(screen.getByLabelText('خلية صف 3 عمود 2')).toHaveProperty('value', 'د')
+})
+
+it('يتحقق من خيارات تنسيق الجدول ويطبقها في المعاينة والقالب وWord', async () => {
+ const table: LetterObject = { id: 'format-table', kind: 'table', box: { x: 20, y: 150, width: 100 }, cells: [['عنوان'], ['قيمة']], style: 'navy', format: { align: 'center', fontSize: 18, header: false, striped: false } }
+ expect(validLetterObjects([table], 1)).toBe(true)
+ expect(validLetterObjects([{ ...table, format: { fontSize: 200 } }], 1)).toBe(false)
+ expect(validLetterObjects([{ ...table, format: { align: 'unknown' } } as never], 1)).toBe(false)
+ const source = { ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }
+ expect(applyCompleteLetterTemplate(letter, captureLetterTemplate(source, 'جدول', 'fmt', true, true, true)).objects).toEqual([table])
+ const blob = await createLetterWord(source)
+ const buffer = await new Promise<ArrayBuffer>((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result as ArrayBuffer); r.onerror = reject; r.readAsArrayBuffer(blob) })
+ const xml = strFromU8(unzipSync(new Uint8Array(buffer))['word/document.xml'])
+ expect(xml).toContain('w:val="center"'); expect(xml).toContain('w:val="36"'); expect(xml).not.toContain('w:fill="243F60"')
+ useRawDataStore.setState({ letters: [source] }); render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
+ const el = document.querySelector<HTMLTableElement>('.letters-canvas-table')!
+ expect(el.style.textAlign).toBe('center'); expect(el.style.fontSize).toBe('18pt'); expect(el.querySelector('td')?.style.backgroundColor).toBe('rgb(255, 255, 255)')
+})
+
+it('يصدر نص الخلية أثناء تحريرها ولا يطبع مربع التحرير', async () => {
+ print.mockClear(); vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ const table: LetterObject = { id: 'print-cell', kind: 'table', box: { x: 20, y: 150, width: 100 }, cells: [['قديم']] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
+ fireEvent.doubleClick(document.querySelector('[data-letter-box="object:print-cell"] td')!)
+ fireEvent.change(screen.getByLabelText('تحرير خلية الجدول صف 1 عمود 1'), { target: { value: 'تحرير مباشر الآن' } })
+ fireEvent.click(screen.getByText('طباعة'))
+ await waitFor(() => expect(print).toHaveBeenCalledOnce())
+ const html = print.mock.calls[0][0] as string
+ expect(html).toContain('تحرير مباشر الآن'); expect(html).not.toContain('letters-table-cell-edit')
+})
+
+it('يتحقق من الدمج وتنسيق الخلايا ويرفض فقد البيانات والتداخل', () => {
+ const table: LetterObject = { id: 'merge', kind: 'table', box: { x: 20, y: 150, width: 120 }, cells: [['رئيسي', ''], ['', '']], merges: [{ row: 0, column: 0, rows: 2, columns: 2 }], cellFormats: { '0:0': { bold: true, color: '#123456', background: '#abcdef', fontSize: 18, align: 'center' } } }
+ expect(validLetterObjects([table], 1)).toBe(true)
+ expect(validLetterObjects([{ ...table, cells: [['رئيسي', 'لا تحذف'], ['', '']] }], 1)).toBe(false)
+ expect(validLetterObjects([{ ...table, merges: [...table.merges!, { row: 0, column: 1, rows: 2, columns: 1 }] }], 1)).toBe(false)
+ expect(validLetterObjects([{ ...table, cellFormats: { '2:1': { bold: true } } }], 1)).toBe(false)
+ expect(validLetterObjects([{ ...table, cellFormats: { '0:0': { color: 'red' } } }], 1)).toBe(false)
+})
+
+it('يدمج ويفك خلايا فارغة ويحفظ تنسيق الخلية ويمنع تغييرات البنية أثناء الدمج', async () => {
+ const table: LetterObject = { id: 'merge-ui', kind: 'table', box: { x: 20, y: 150, width: 120 }, cells: [['عنوان', ''], ['', '']] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة')); fireEvent.click(screen.getByText('إدراج صورة أو جدول')); fireEvent.click(screen.getByRole('button', { name: 'جدول 1' }))
+ fireEvent.change(screen.getByLabelText('محاذاة الخلية المحددة'), { target: { value: 'center' } })
+ fireEvent.change(screen.getByLabelText('حجم خط الخلية المحددة'), { target: { value: '18' } })
+ fireEvent.change(screen.getByLabelText('لون خلفية الخلية المحددة'), { target: { value: '#abcdef' } })
+ fireEvent.change(screen.getByLabelText('عدد صفوف الدمج'), { target: { value: '2' } })
+ fireEvent.click(screen.getByText('دمج من الخلية المحددة'))
+ const cell = document.querySelector<HTMLTableCellElement>('.letters-canvas-table td')!
+ expect(cell.rowSpan).toBe(2); expect(cell.colSpan).toBe(2); expect(cell.style.textAlign).toBe('center'); expect(cell.style.fontSize).toBe('18pt')
+ expect((screen.getByLabelText('خلية صف 2 عمود 2') as HTMLInputElement).disabled).toBe(true)
+ fireEvent.click(screen.getByText('+ صف')); expect(screen.queryByLabelText('خلية صف 3 عمود 1')).toBeNull()
+ fireEvent.click(screen.getByText('فك دمج الخلية')); expect(document.querySelectorAll('.letters-canvas-table td')).toHaveLength(4)
+ fireEvent.click(screen.getByLabelText('تراجع')); expect(document.querySelector<HTMLTableCellElement>('.letters-canvas-table td')?.rowSpan).toBe(2)
+ fireEvent.click(screen.getByText('حفظ'))
+ await waitFor(() => expect(useRawDataStore.getState().letters[0].objects?.[0]).toMatchObject({ merges: [{ row: 0, column: 0, rows: 2, columns: 2 }], cellFormats: { '0:0': { align: 'center', fontSize: 18, background: '#abcdef' } } }))
+})
+
+it('ينقل تنسيق الخلايا عند إدراج وحذف الصفوف والأعمدة', async () => {
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ const table: LetterObject = { id: 'shift-style', kind: 'table', box: { x: 20, y: 150, width: 120 }, cells: [['أ', 'ب'], ['ج', 'د']], cellFormats: { '1:1': { color: '#123456' } } }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة')); fireEvent.click(screen.getByText('إدراج صورة أو جدول')); fireEvent.click(screen.getByRole('button', { name: 'جدول 1' }))
+ fireEvent.click(screen.getByText('إدراج صف قبل')); fireEvent.click(screen.getByText('إدراج عمود قبل'))
+ const td = document.querySelector<HTMLTableCellElement>('.letters-canvas-table td[data-row="2"][data-column="2"]')!
+ expect(td.textContent).toBe('د'); expect(td.style.color).toBe('rgb(18, 52, 86)')
+ fireEvent.click(screen.getByText('حفظ'))
+ await waitFor(() => expect(useRawDataStore.getState().letters[0].objects?.[0]).toMatchObject({ cellFormats: { '2:2': { color: '#123456' } } }))
+})
+
+it('يصدر الدمج وتنسيق الخلية في Word ويستعيدهما من القالب', async () => {
+ const table: LetterObject = { id: 'merge-word', kind: 'table', box: { x: 20, y: 150, width: 120 }, cells: [['عنوان', ''], ['', '']], merges: [{ row: 0, column: 0, rows: 2, columns: 2 }], cellFormats: { '0:0': { bold: true, color: '#123456', background: '#abcdef', fontSize: 18, align: 'center' } } }
+ const source = { ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }
+ expect(applyCompleteLetterTemplate(letter, captureLetterTemplate(source, 'دمج', 'merged', true, true, true)).objects).toEqual([table])
+ const blob = await createLetterWord(source)
+ const buffer = await new Promise<ArrayBuffer>((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result as ArrayBuffer); r.onerror = reject; r.readAsArrayBuffer(blob) })
+ const xml = strFromU8(unzipSync(new Uint8Array(buffer))['word/document.xml'])
+ expect(xml).toContain('w:gridSpan'); expect(xml).toContain('w:vMerge'); expect(xml).toContain('abcdef'); expect(xml).toContain('123456'); expect(xml).toContain('w:val="36"'); expect(xml).toContain('w:val="center"')
+})
+
+it('يوزع جدولاً مقاساً إلى أجزاء مع تكرار العنوان وتنسيقه، ويتراجع في خطوة واحدة', async () => {
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ const table: LetterObject = { id: 'paginate', kind: 'table', box: { x: 20, y: 160, width: 120, page: 1 }, cells: [['رأس'], ['أ'], ['ب'], ['ج']], cellFormats: { '0:0': { bold: true }, '2:0': { color: '#123456' } } }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+   const height = this.classList.contains('letters-canvas') ? 297 : this.tagName === 'TR' ? ((this as HTMLTableRowElement).rowIndex === 0 ? 20 : 70) : 0
+   return { x: 0, y: 0, left: 0, top: 0, right: 210, bottom: height, width: 210, height, toJSON: () => ({}) } as DOMRect
+ })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة')); fireEvent.click(screen.getByText('إدراج صورة أو جدول')); fireEvent.click(screen.getByRole('button', { name: 'جدول 1' }))
+ fireEvent.click(screen.getByText('توزيع الجدول على الصفحات'))
+ await waitFor(() => expect(document.querySelectorAll('.letters-canvas-table')).toHaveLength(2))
+ const tables = [...document.querySelectorAll('.letters-canvas-table')]
+ expect(tables[0].textContent).toContain('أ'); expect(tables[1].textContent).toContain('رأس'); expect(tables[1].textContent).toContain('ب'); expect(tables[1].textContent).toContain('ج')
+ expect(tables[1].querySelectorAll('tr')[1].querySelector('td')?.style.color).toBe('rgb(18, 52, 86)')
+ fireEvent.click(screen.getByLabelText('تراجع')); expect(document.querySelectorAll('.letters-canvas-table')).toHaveLength(1)
+ expect(document.querySelector('.letters-canvas-table')?.textContent).toContain('ج')
+})
+
+it('لا يدمج فوق محتوى موجود', async () => {
+ const table: LetterObject = { id: 'guard-merge', kind: 'table', box: { x: 20, y: 150, width: 120, page: 1 }, cells: [['أ', 'ب'], ['', '']] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة')); fireEvent.click(screen.getByText('إدراج صورة أو جدول')); fireEvent.click(screen.getByRole('button', { name: 'جدول 1' }))
+ fireEvent.click(screen.getByText('دمج من الخلية المحددة'))
+ expect(document.querySelectorAll('.letters-canvas-table td')).toHaveLength(4)
+ expect(screen.getByLabelText('خلية صف 1 عمود 2')).toHaveProperty('value', 'ب')
+ fireEvent.change(screen.getByLabelText('خلية صف 1 عمود 2'), { target: { value: '' } })
+ fireEvent.focus(screen.getByLabelText('خلية صف 1 عمود 1')); fireEvent.click(screen.getByText('دمج من الخلية المحددة'))
+ expect(document.querySelector<HTMLTableCellElement>('.letters-canvas-table td')?.colSpan).toBe(2)
+})
+
+it('لا يوزع الجدول إذا تجاوز حد الصفحات ويحافظ على المحتوى', () => {
+ const confirm = vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ const table: LetterObject = { id: 'page-limit', kind: 'table', box: { x: 20, y: 160, width: 120, page: 10 }, cells: [['رأس'], ['بيان'], ['آخر']] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: { ...createLetterLayout(letter, 'classic'), pageCount: 10 }, objects: [table] }] })
+ vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+   const height = this.classList.contains('letters-canvas') ? 297 : this.tagName === 'TR' ? ((this as HTMLTableRowElement).rowIndex === 0 ? 20 : 70) : 0
+   return { x: 0, y: 0, left: 0, top: 0, right: 210, bottom: height, width: 210, height, toJSON: () => ({}) } as DOMRect
+ })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة')); fireEvent.click(screen.getByText('إدراج صورة أو جدول')); fireEvent.click(screen.getByRole('button', { name: 'جدول 1' }))
+ fireEvent.click(screen.getByText('توزيع الجدول على الصفحات'))
+ expect(confirm).not.toHaveBeenCalled(); expect(document.querySelectorAll('.letters-canvas-table')).toHaveLength(1); expect(document.querySelector('.letters-canvas-table')?.textContent).toContain('آخر')
+})
+
+it('يوزع جدولاً بدمج أفقي وعمودي دون فصل الصفوف أو تغيير تظليلها ويحفظه', async () => {
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ const table: LetterObject = { id: 'merged-paging', kind: 'table', style: 'navy', box: { x: 20, y: 160, width: 120, page: 1 }, cells: [['رأس', ''], ['أ', 'نص'], ['دمج', 'ب'], ['', 'ج'], ['آخر', 'نهاية']], merges: [{ row: 0, column: 0, rows: 1, columns: 2 }, { row: 2, column: 0, rows: 2, columns: 1 }], cellFormats: { '2:0': { color: '#123456' }, '3:0': { bold: true } } }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+   const height = this.classList.contains('letters-canvas') ? 297 : this.tagName === 'TR' ? [20, 40, 60, 40, 30][(this as HTMLTableRowElement).rowIndex] : 0
+   return { x: 0, y: 0, left: 0, top: 0, right: 210, bottom: height, width: 210, height, toJSON: () => ({}) } as DOMRect
+ })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة')); fireEvent.click(screen.getByText('إدراج صورة أو جدول')); fireEvent.click(screen.getByRole('button', { name: 'جدول 1' }))
+ fireEvent.click(screen.getByText('توزيع الجدول على الصفحات'))
+ await waitFor(() => expect(document.querySelectorAll('.letters-canvas-table')).toHaveLength(2))
+ const [first, second] = [...document.querySelectorAll('.letters-canvas-table')]
+ expect(first.querySelector('td')?.colSpan).toBe(2); expect(second.querySelector('td')?.colSpan).toBe(2)
+ const merged = second.querySelector<HTMLTableCellElement>('td[data-row="1"][data-column="0"]')!
+ expect(merged.rowSpan).toBe(2); expect(merged.textContent).toBe('دمج'); expect(merged.style.color).toBe('rgb(18, 52, 86)'); expect(merged.style.backgroundColor).toBe('rgb(239, 244, 249)')
+ expect(second.textContent).toContain('ج'); expect(second.textContent).toContain('نهاية')
+ fireEvent.click(screen.getByText('حفظ'))
+ await waitFor(() => expect(useRawDataStore.getState().letters[0].objects).toHaveLength(2))
+ const saved = useRawDataStore.getState().letters[0]
+ expect(validLetterObjects(saved.objects, 2)).toBe(true)
+ expect(saved.objects?.[1]).toMatchObject({ merges: [{ row: 0, column: 0, rows: 1, columns: 2 }, { row: 1, column: 0, rows: 2, columns: 1 }], cellFormats: { '1:0': { color: '#123456' }, '2:0': { bold: true } }, format: { stripeOffset: 1 } })
+ const blob = await createLetterWord(saved)
+ const buffer = await new Promise<ArrayBuffer>((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result as ArrayBuffer); r.onerror = reject; r.readAsArrayBuffer(blob) })
+ const xml = strFromU8(unzipSync(new Uint8Array(buffer))['word/document.xml'])
+ expect(xml).toContain('w:gridSpan'); expect(xml).toContain('w:vMerge'); expect(xml).toContain('123456'); expect(xml).toContain('EFF4F9')
+})
+
+it('ينقل الجدول كاملاً للصفحة التالية إذا لم يتسع أول صف بيانات', async () => {
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ const table: LetterObject = { id: 'move-whole', kind: 'table', box: { x: 20, y: 245, width: 120, page: 1 }, cells: [['العنوان'], ['البيان']] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+   const height = this.classList.contains('letters-canvas') ? 297 : this.tagName === 'TR' ? 20 : 0
+   return { x: 0, y: 0, left: 0, top: 0, right: 210, bottom: height, width: 210, height, toJSON: () => ({}) } as DOMRect
+ })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة')); fireEvent.click(screen.getByText('إدراج صورة أو جدول')); fireEvent.click(screen.getByRole('button', { name: 'جدول 1' }))
+ fireEvent.click(screen.getByText('توزيع الجدول على الصفحات'))
+ await waitFor(() => expect(document.querySelector('[data-letter-page="2"] .letters-canvas-table')?.textContent).toContain('البيان'))
+ expect(document.querySelector('[data-letter-page="1"] .letters-canvas-table')).toBeNull()
+ fireEvent.click(screen.getByLabelText('تراجع'))
+ expect(document.querySelector('[data-letter-page="1"] .letters-canvas-table')?.textContent).toContain('البيان')
+})
+
+it('يوزع صفاً مغطى بالكامل بدمج حتى إن كان قياسه صفراً', async () => {
+ vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ const table: LetterObject = { id: 'zero-covered', kind: 'table', box: { x: 20, y: 207, width: 120 }, format: { header: false }, cells: [['أ', ''], ['', ''], ['ب', 'ج']], merges: [{ row: 0, column: 0, rows: 2, columns: 2 }] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+   const height = this.classList.contains('letters-canvas') ? 297 : this.tagName === 'TR' ? [20, 0, 90][(this as HTMLTableRowElement).rowIndex] : 0
+   return { x: 0, y: 0, left: 0, top: 0, right: 210, bottom: height, width: 210, height, toJSON: () => ({}) } as DOMRect
+ })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة')); fireEvent.click(screen.getByText('إدراج صورة أو جدول')); fireEvent.click(screen.getByRole('button', { name: 'جدول 1' })); fireEvent.click(screen.getByText('توزيع الجدول على الصفحات'))
+ await waitFor(() => expect(document.querySelectorAll('.letters-canvas-table')).toHaveLength(2))
+ expect(document.querySelector<HTMLTableCellElement>('.letters-canvas-table td')?.rowSpan).toBe(2)
+ expect(document.querySelector('[data-letter-page="2"] .letters-canvas-table')?.textContent).toContain('ج')
+})
+
+it('يعيد التدفق التلقائي توزيع جدول واحد بعد التحرير ويعيده بالتراجع ويحفظ المصدر', async () => {
+ const table: LetterObject = { id: 'live-flow', kind: 'table', autoFlow: true, box: { x: 20, y: 160, width: 120 }, cells: [['عنوان'], ['صف طويل أ'], ['صف طويل ب'], ['صف طويل ج']] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+   const height = this.classList.contains('letters-canvas') ? 297 : this.tagName === 'TR' ? (this.textContent?.includes('طويل') ? 70 : 20) : 0
+   return { x: 0, y: 0, left: 0, top: 0, right: 210, bottom: height, width: 210, height, toJSON: () => ({}) } as DOMRect
+ })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
+ const preview = document.querySelector('.letters-preview-frame')!
+ expect(preview.querySelectorAll('.letters-canvas-table')).toHaveLength(2)
+ const continuation = preview.querySelector('[data-letter-page="2"] .letters-canvas-table tr:nth-child(2) td')!
+ expect(continuation.textContent).toBe('صف طويل ب')
+ fireEvent.doubleClick(continuation)
+ const editor = within(preview as HTMLElement).getByLabelText('تحرير خلية الجدول صف 3 عمود 1')
+ fireEvent.change(editor, { target: { value: 'ب معدل' } })
+ // لا تتغير عناوين الصفوف أثناء الكتابة داخل الخلية، حتى لا ينقلب المؤشر إلى خلية أخرى.
+ expect(preview.querySelectorAll('.letters-canvas-table')).toHaveLength(2)
+ fireEvent.blur(editor)
+ fireEvent.click(screen.getByText('إدراج صورة أو جدول'))
+ expect(screen.getByLabelText('خلية صف 3 عمود 1')).toHaveProperty('value', 'ب معدل')
+ fireEvent.change(screen.getByLabelText('خلية صف 2 عمود 1'), { target: { value: 'أ' } })
+ fireEvent.change(screen.getByLabelText('خلية صف 4 عمود 1'), { target: { value: 'ج' } })
+ expect(preview.querySelectorAll('.letters-canvas-table')).toHaveLength(1)
+ fireEvent.click(screen.getByLabelText('تراجع')); expect(preview.querySelectorAll('.letters-canvas-table')).toHaveLength(2)
+ fireEvent.click(screen.getByText('حفظ'))
+ await waitFor(() => expect(useRawDataStore.getState().letters[0].objects?.[0]).toMatchObject({ autoFlow: true, cells: [['عنوان'], ['أ'], ['ب معدل'], ['صف طويل ج']] }))
+ expect(useRawDataStore.getState().letters[0].objects).toHaveLength(1)
+ fireEvent.click(screen.getByText('السجل')); fireEvent.click(screen.getByText('فتح ومعاينة'))
+ expect(document.querySelectorAll('.letters-preview-frame .letters-canvas-table')).toHaveLength(2)
+})
+
+it('يمنع تصدير التدفق إذا تعذر القياس مع بقاء المصدر وحفظه متاحاً', async () => {
+ print.mockClear()
+ const table: LetterObject = { id: 'bad-flow', kind: 'table', autoFlow: true, box: { x: 20, y: 160, width: 120 }, cells: [['عنوان'], ['محتوى']] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
+ expect(screen.getByRole('alert').textContent).toContain('تعذر قياس')
+ fireEvent.click(screen.getByText('طباعة')); expect(print).not.toHaveBeenCalled()
+ fireEvent.click(screen.getByText('حفظ'))
+ await waitFor(() => expect(useRawDataStore.getState().letters[0].objects?.[0]).toMatchObject({ cells: table.cells, autoFlow: true }))
+})
+
+it('يطبع صفحات التدفق المشتقة ويصدرها Word دون تكرار صفوف البيانات', async () => {
+ print.mockClear(); vi.spyOn(confirmStore, 'confirmDialog').mockResolvedValue(true)
+ const table: LetterObject = { id: 'print-flow', kind: 'table', autoFlow: true, box: { x: 20, y: 160, width: 120 }, cells: [['عنوان مشترك'], ['أ طويل'], ['ب طويل'], ['ج طويل']] }
+ const source = { ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }
+ useRawDataStore.setState({ letters: [source] })
+ vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+   const height = this.classList.contains('letters-canvas') ? 297 : this.tagName === 'TR' ? (this.textContent?.includes('طويل') ? 70 : 20) : 0
+   return { x: 0, y: 0, left: 0, top: 0, right: 210, bottom: height, width: 210, height, toJSON: () => ({}) } as DOMRect
+ })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة')); fireEvent.click(screen.getByText('طباعة'))
+ await waitFor(() => expect(print).toHaveBeenCalledOnce())
+ const doc = new DOMParser().parseFromString(print.mock.calls[0][0] as string, 'text/html')
+ expect(doc.querySelectorAll('.letters-canvas-table')).toHaveLength(2)
+ expect(doc.body.textContent?.match(/عنوان مشترك/g)).toHaveLength(2)
+ for (const text of ['أ طويل', 'ب طويل', 'ج طويل']) expect(doc.body.textContent?.match(new RegExp(text, 'g'))).toHaveLength(1)
+ const { expandLetterTableFlows, letterFlowFingerprint } = await import('../src/core/letterTableFlow.ts')
+ if (table.kind !== 'table') throw new Error('table')
+ const expanded = expandLetterTableFlows(source, { 'print-flow': { fingerprint: letterFlowFingerprint(source, table), plan: { groups: [{ pageOffset: 0, rows: [0, 1] }, { pageOffset: 1, rows: [0, 2, 3] }] } } })
+ await expect(createLetterWord(source)).rejects.toThrow(/قياس توزيع الجدول/)
+ const blob = await createLetterWord(expanded.letter)
+ const buffer = await new Promise<ArrayBuffer>((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result as ArrayBuffer); r.onerror = reject; r.readAsArrayBuffer(blob) })
+ const xml = strFromU8(unzipSync(new Uint8Array(buffer))['word/document.xml'])
+ expect(xml.match(/<w:tbl[ >]/g)).toHaveLength(2)
+ for (const text of ['أ طويل', 'ب طويل', 'ج طويل']) expect(xml.match(new RegExp(text, 'g'))).toHaveLength(1)
+})
+
+it('يحرر العنوان المكرر من صفحة لاحقة في مصدر الجدول الوحيد', async () => {
+ const table: LetterObject = { id: 'flow-heading', kind: 'table', autoFlow: true, box: { x: 20, y: 160, width: 120 }, cells: [['عنوان أول'], ['أ طويل'], ['ب طويل'], ['ج طويل']] }
+ useRawDataStore.setState({ letters: [{ ...letter, layout: createLetterLayout(letter, 'classic'), objects: [table] }] })
+ vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+   const height = this.classList.contains('letters-canvas') ? 297 : this.tagName === 'TR' ? (this.textContent?.includes('طويل') ? 70 : 20) : 0
+   return { x: 0, y: 0, left: 0, top: 0, right: 210, bottom: height, width: 210, height, toJSON: () => ({}) } as DOMRect
+ })
+ render(<LettersPage />); fireEvent.click(screen.getByText('فتح ومعاينة'))
+ const preview = document.querySelector('.letters-preview-frame')!
+ const header = preview.querySelector('[data-letter-page="2"] .letters-canvas-table tr:first-child td')!
+ fireEvent.doubleClick(header)
+ const editor = within(preview as HTMLElement).getByLabelText('تحرير خلية الجدول صف 1 عمود 1')
+ fireEvent.change(editor, { target: { value: 'عنوان موحّد' } }); fireEvent.blur(editor)
+ expect([...preview.querySelectorAll('.letters-canvas-table tr:first-child td')].map(node => node.textContent)).toEqual(['عنوان موحّد', 'عنوان موحّد'])
+ fireEvent.click(screen.getByText('حفظ'))
+ await waitFor(() => expect(useRawDataStore.getState().letters[0].objects?.[0]).toMatchObject({ autoFlow: true, cells: [['عنوان موحّد'], ['أ طويل'], ['ب طويل'], ['ج طويل']] }))
+ const saved = useRawDataStore.getState().letters[0]
+ expect(applyCompleteLetterTemplate(letter, captureLetterTemplate(saved, 'تدفق', 'flow-template', true, true, true)).objects).toEqual(saved.objects)
 })

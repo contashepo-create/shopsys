@@ -37,7 +37,7 @@ check('① البوت يمنح وحدة booking للمفاتيح (MODULES)', rea
 
 /* ─── ② إشعار حالة التذكرة ─── */
 const maintenance = read('src/core/maintenance.ts')
-check('② بناء رسالة حالة عربية لكل حالة + رابط واتساب بتحويل الرقم المصري', maintenance.includes('buildTicketStatusMessage') && maintenance.includes('ticketWhatsappLink') && maintenance.includes("`2${digits}`"))
+check('② بناء رسالة حالة عربية لكل حالة + رابط واتساب حسب بلد المنشأة أو رقم دولي', maintenance.includes('buildTicketStatusMessage') && maintenance.includes('ticketWhatsappLink') && maintenance.includes('waChatLink(phone, message, countryCode)'))
 const maintPage = read('src/ui/pages/MaintenancePage.tsx')
 check('② زر واتساب بكل تذكرة برقم العميل (بلا سحابة — نمط RepairShopr)', maintPage.includes('ticketWhatsappLink') && maintPage.includes('إبلاغ العميل بحالة الجهاز عبر واتساب'))
 

@@ -7,6 +7,8 @@
  * وقطع الغيار المستهلكة تكلفةً: 5101 / 1103 (بمتوسط التكلفة المرجح — القرار 14).
  * نواة خالصة بلا واجهات — كل الأموال أعداد صحيحة (Minor).
  */
+import { waChatLink } from './whatsapp.ts'
+
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 import { localDateTimeLabel, localIsoTimestamp } from './time.ts'
@@ -308,11 +310,10 @@ export function buildTicketStatusMessage(
   return `عميلنا العزيز ${ticket.customerName}،\n${statusLine[ticket.status]}${promised}\n— ${shopName}`
 }
 
-/** رابط واتساب جاهز برقم العميل ورسالة الحالة — رقم مصري 01xxxxxxxxx أو دولي بلا + */
-export function ticketWhatsappLink(phone: string, message: string): string {
-  const digits = phone.replace(/\D/g, '')
-  const intl = digits.startsWith('0') ? `2${digits}` : digits // مصر: 20 + الرقم بلا الصفر
-  return `https://wa.me/${intl}?text=${encodeURIComponent(message)}`
+/** رابط للعميل المحدد فقط، مع بلد المنشأة أو رقم دولي صريح. */
+export function ticketWhatsappLink(phone: string, message: string, countryCode?: string | null): string {
+  if (!phone.trim()) throw new Error('رقم واتساب مطلوب للعميل')
+  return waChatLink(phone, message, countryCode)
 }
 
 /* ─── تقرير متوسط زمن الإصلاح لكل نوع عطل (سد فجوة النشاط #3: موبايلات وصيانة) ───

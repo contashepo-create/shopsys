@@ -1,3 +1,4 @@
+import { openCustomerWhatsapp } from '../components/openCustomerWhatsapp.ts'
 import { WhatsappIcon } from '../components/WhatsappIcon.tsx'
 /**
  * المواعيد والحجوزات (سد الفجوة العالمية 1 — نمط Fresha/Booksy/CleanCloud):
@@ -170,7 +171,7 @@ export function BookingsPage() {
                       <div className="text-[12px]"><b dir="ltr">{b.time}</b> · {b.customerName} <span className="text-slate-400">— {b.serviceName}</span></div>
                       <div className="flex gap-1.5">
                         <Btn variant="ghost" onClick={() => { void navigator.clipboard.writeText(b.phone).then(() => toast.show('نُسخ الرقم 📋')).catch(() => toast.show(b.phone)) }}><Copy size={13} /></Btn>
-                        <Btn variant="primary" onClick={() => window.open(bookingWhatsappLink(b.phone, msg), '_blank', 'noopener')}><WhatsappIcon size={14} /> تذكير</Btn>
+                        <Btn variant="primary" onClick={() => openCustomerWhatsapp(() => bookingWhatsappLink(b.phone, msg, setup.countryCode), toast)}><WhatsappIcon size={14} /> تذكير</Btn>
                       </div>
                     </div>
                   )

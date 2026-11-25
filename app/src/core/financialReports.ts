@@ -158,12 +158,14 @@ export function incomeStatement(
   // لتظل قائمة الدخل تعرض الأداء الحقيقي لأي فترة حتى بعد إقفال ثم إعادة فتح ثم إقفال جديد.
   // قيد الرصيد الافتتاحي يثبت أرصدة سابقة بتاريخ الإدخال، فلا يصير أداء الفترة؛
   // لكن المركز المالي يطلبه صراحةً لاحتساب الأرباح/الخسائر المدخلة ضمن الأرباح المرحلة.
-  const closingIds = closingMechanismIds(journal)
-  const sourceOf = economicSourceResolver(journal)
+  // لا يجوز لقيد أو رابط مستقبلي تغيير تفسير تقرير سابق لتاريخ قطعه.
+  const visibleJournal = journal.filter(entry => entry.date <= p.to)
+  const closingIds = closingMechanismIds(visibleJournal)
+  const sourceOf = economicSourceResolver(visibleJournal)
   const openingRelatedIds = options.includeOpeningBalances
     ? null
-    : new Set(journal.filter((entry) => sourceOf(entry) === 'opening').map((entry) => entry.id))
-  const tb = trialBalance(journal.filter((e) => !closingIds.has(e.id) && (!openingRelatedIds || !openingRelatedIds.has(e.id))), p, extraNames)
+    : new Set(visibleJournal.filter((entry) => sourceOf(entry) === 'opening').map((entry) => entry.id))
+  const tb = trialBalance(visibleJournal.filter((e) => !closingIds.has(e.id) && (!openingRelatedIds || !openingRelatedIds.has(e.id))), p, extraNames)
   const revenues = tb.rows
     .filter((r) => r.rootType === 'revenue')
     .map((r) => ({ code: r.code, nameAr: r.nameAr, amountMinor: r.creditMinor - r.debitMinor }))
@@ -233,9 +235,10 @@ export function balanceSheet(journal: readonly JournalEntry[], asOf: string, ext
   // ما أُقفل رسمياً في 3102 صار ضمن حقوق الملكية أعلاه — يُطرح من نتيجة الفترة الجارية.
   // يحسب صافي آلية الإقفال كاملة (قيود الإقفال + عواكسها): الأصلي المعكوس يلغيه عكسه
   // تلقائياً فيبقى الصافي صحيحاً حتى بعد إعادة فتح وإقفال جديد
-  const closingIds = closingMechanismIds(journal)
-  const closedNetMinor = journal
-    .filter((e) => closingIds.has(e.id) && e.date <= asOf)
+  const visibleJournal = journal.filter(entry => entry.date <= asOf)
+  const closingIds = closingMechanismIds(visibleJournal)
+  const closedNetMinor = visibleJournal
+    .filter((e) => closingIds.has(e.id))
     .reduce((a, e) => a + e.lines.filter((l) => l.accountCode === '3102').reduce((x, l) => x + l.credit - l.debit, 0), 0)
   const retainedEarningsMinor = inc.netProfitMinor - closedNetMinor
   const totalAssetsMinor = assets.reduce((a, r) => a + r.amountMinor, 0)
@@ -278,7 +281,7 @@ export function generalLedger(
   const root = rootOf(accountCode)
   let opening = 0
   const rows: GeneralLedgerRow[] = []
-  const sorted = [...journal].sort((a, b) => (a.date === b.date ? a.id - b.id : a.date.localeCompare(b.date)))
+  const sorted = journal.filter(entry => entry.date <= p.to).sort((a, b) => (a.date === b.date ? a.id - b.id : a.date.localeCompare(b.date)))
   for (const e of sorted) {
     for (const l of e.lines) {
       if (l.accountCode !== accountCode) continue
@@ -349,12 +352,13 @@ export function cashFlowReport(
   const inMap = new Map<string, CashFlowRow>()
   const outMap = new Map<string, CashFlowRow>()
   let operatingNetMinor = 0, investingNetMinor = 0, financingNetMinor = 0
-  const sourceOf = economicSourceResolver(journal)
+  const visibleJournal = journal.filter(entry => entry.date <= p.to)
+  const sourceOf = economicSourceResolver(visibleJournal)
   // A transfer can be removed from gross movement only if both cash legs are
   // inside this period and included in the selected cash accounts. Across a
   // boundary retain each leg: otherwise opening/closing cash becomes fictional.
   const pairedTransfers = new Set<number>()
-  for (const group of pairedInterBranchTransferGroups(journal.filter(entry => inP(entry.date, p)))) {
+  for (const group of pairedInterBranchTransferGroups(visibleJournal.filter(entry => inP(entry.date, p)))) {
     const safe = group.every(entry => {
       if (sourceOf(entry) === 'opening') return false
       const dueLines = entry.lines.filter(line => (line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE) && line.relatedBranchId != null)
@@ -370,7 +374,7 @@ export function cashFlowReport(
     })
     if (safe) group.forEach(entry => pairedTransfers.add(entry.id))
   }
-  for (const e of journal) {
+  for (const e of visibleJournal) {
     const rawCashDelta = e.lines.reduce((a, l) => a + (cashSet.has(l.accountCode) ? l.debit - l.credit : 0), 0)
     // In the company-wide view, matched due-to/due-from lines identify the
     // internal principal. Remove that amount from gross cash movement while
@@ -468,8 +472,9 @@ const VAT_SETTLEMENT_SOURCES = new Set(['payment_voucher', 'receipt_voucher', 'y
  */
 export function vatReport(journal: readonly JournalEntry[], p: FinPeriod, vatCode = '2102'): VatReport {
   let output = 0, input = 0, settled = 0
-  const sourceOf = economicSourceResolver(journal)
-  const byId = new Map(journal.map(entry => [entry.id, entry]))
+  const visibleJournal = journal.filter(entry => entry.date <= p.to)
+  const sourceOf = economicSourceResolver(visibleJournal)
+  const byId = new Map(visibleJournal.map(entry => [entry.id, entry]))
   const custodyVatOrigin = (entry: JournalEntry): boolean => {
     const seen = new Set<number>()
     let current = entry
@@ -482,7 +487,7 @@ export function vatReport(journal: readonly JournalEntry[], p: FinPeriod, vatCod
     }
     return current.sourceType === 'payment_voucher' && current.sourceCollection === 'custodyTxs' && Number.isSafeInteger(current.custodyInputVatMinor) && (current.custodyInputVatMinor ?? 0) > 0
   }
-  for (const e of journal) {
+  for (const e of visibleJournal) {
     if (!inP(e.date, p) || sourceOf(e) === 'opening') continue
     let credit = 0, debit = 0
     for (const l of e.lines) {

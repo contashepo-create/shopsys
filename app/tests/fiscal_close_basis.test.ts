@@ -66,3 +66,49 @@ describe('أساس قيد الإقفال التاريخي', () => {
     }
   })
 })
+
+it('يرفض إنشاء إقفال لا يمكن إثبات أساسه عند إعادة الفتح بسبب اختلاف إسناد عكس قديم', () => {
+  const branches = [
+    { id: 1, nameAr: 'الرئيسي', isMain: true, active: true, warehouseId: 1, treasuryCode: '1101' },
+    { id: 2, nameAr: 'الثاني', isMain: false, active: true, warehouseId: 2, treasuryCode: '1102' },
+  ]
+  const branchYear = { ...year, branchId: 2 }
+  const first = { ...activity, branchId: 2 }
+  const reversal: JournalEntry = { ...activity, id: 2, entryNumber: 2, sourceType: 'reversal', sourceId: 1, reversesEntryId: 1, lines: activity.lines.map(line => ({ ...line, debit: line.credit, credit: line.debit })) }
+  const later = { ...activity, id: 3, entryNumber: 3, branchId: 2, lines: activity.lines.map(line => ({ ...line, debit: line.debit * 2, credit: line.credit * 2 })) }
+  const journal = [first, reversal, later]
+  useAppStore.setState({ fiscalYears: [branchYear] })
+  useRawDataStore.setState({ branches, activeBranchId: 2, journal })
+  expect(() => S().closeFiscalYear(branchYear, [branchYear])).toThrow(/أساس الإقفال.*إسناد/)
+  expect(S().journal).toBe(journal)
+  expect(useAppStore.getState().fiscalYears[0].status).toBe('open')
+})
+
+it('لا يربط السنة القديمة أو يغيّر اليومية عندما يختلف الأساس في الفرع الرئيسي', () => {
+  const branches = [
+    { id: 1, nameAr: 'الرئيسي', isMain: true, active: true, warehouseId: 1, treasuryCode: '1101' },
+    { id: 2, nameAr: 'الثاني', isMain: false, active: true, warehouseId: 2, treasuryCode: '1102' },
+  ]
+  const other = { ...activity, branchId: 2 }
+  const reversal: JournalEntry = { ...activity, id: 2, entryNumber: 2, sourceType: 'reversal', sourceId: 1, reversesEntryId: 1, lines: activity.lines.map(line => ({ ...line, debit: line.credit, credit: line.debit })) }
+  const local = { ...activity, id: 3, entryNumber: 3, branchId: 1, lines: activity.lines.map(line => ({ ...line, debit: line.debit * 2, credit: line.credit * 2 })) }
+  const journal = [other, reversal, local]
+  useRawDataStore.setState({ branches, activeBranchId: 1, journal })
+  expect(() => S().closeFiscalYear(year, [year])).toThrow(/أساس الإقفال.*إسناد/)
+  expect(S().journal).toBe(journal)
+  expect(useAppStore.getState().fiscalYears[0]).toEqual(year)
+})
+
+it('يسمح بإقفال الفرع ثم إعادة فتحه عندما يثبت أساس القيود المسندة', () => {
+  const branches = [
+    { id: 1, nameAr: 'الرئيسي', isMain: true, active: true, warehouseId: 1, treasuryCode: '1101' },
+    { id: 2, nameAr: 'الثاني', isMain: false, active: true, warehouseId: 2, treasuryCode: '1102' },
+  ]
+  const branchYear = { ...year, branchId: 2 }
+  useAppStore.setState({ fiscalYears: [branchYear] })
+  useRawDataStore.setState({ branches, activeBranchId: 2, journal: [{ ...activity, branchId: 2 }] })
+  expect(S().closeFiscalYear(branchYear, [branchYear]).netProfitMinor).toBe(100)
+  const closed = useAppStore.getState().fiscalYears[0]
+  S().reopenFiscalYear(closed, [closed])
+  expect(useAppStore.getState().fiscalYears[0].status).toBe('open')
+})

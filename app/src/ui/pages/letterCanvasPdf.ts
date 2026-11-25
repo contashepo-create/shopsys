@@ -8,7 +8,7 @@ export async function exportLetterCanvasPdf(pages: HTMLElement[], filename: stri
   for (const [index, page] of pages.entries()) {
     const canvas = await html2canvas(page, {
       scale: 2, useCORS: false, backgroundColor: '#ffffff',
-      onclone: document => { document.querySelectorAll('.letters-canvas-item').forEach(node => { node.classList.remove('is-selected'); (node as HTMLElement).style.outline = 'none' }) },
+      onclone: document => { document.querySelectorAll<HTMLTextAreaElement>('.letters-canvas-edit, .letters-table-cell-edit').forEach(node => node.replaceWith(document.createTextNode(node.value))); document.querySelectorAll('.letters-item-tools').forEach(node => node.remove()); document.querySelectorAll('.letters-canvas-item').forEach(node => { node.classList.remove('is-selected'); (node as HTMLElement).style.outline = 'none' }) },
     })
     if (index) pdf.addPage('a4', 'portrait')
     pdf.addImage(canvas.toDataURL('image/jpeg', 0.98), 'JPEG', 0, 0, 210, 297)

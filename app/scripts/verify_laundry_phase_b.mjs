@@ -73,7 +73,7 @@ const msgReady = buildLaundryStatusMessage({ orderNumber: 'LN-0099', customerNam
 ok(msgReady.includes('جاهز للاستلام') && msgReady.includes('B-2') && msgReady.includes('70'), 'رسالة الجاهزية تذكر الرف والمتبقي التقريبي')
 const msgDelivered = buildLaundryStatusMessage({ orderNumber: 'LN-0099', customerName: 'أحمد', status: 'delivered', totalMinor: 10000, prepaidMinor: 10000 }, 'مغسلة النظافة')
 ok(msgDelivered.includes('تم تسليم') && msgDelivered.includes('مغسلة النظافة'), 'رسالة التسليم تشكر باسم المحل')
-ok(laundryWhatsappLink('01012345678', 'نص').startsWith('https://wa.me/201012345678?'), 'تحويل الرقم المصري المحلي لصيغة واتساب الدولية صحيح')
+ok(laundryWhatsappLink('01012345678', 'نص', 'EG').startsWith('https://wa.me/201012345678?'), 'تحويل الرقم المصري المحلي لصيغة واتساب الدولية صحيح')
 
 // مراجعة الفرع: رسالة الرف/المتبقي كانت تثبّت «ج.م» دوماً — مغسلة في بلد خليجي
 // (ريال سعودي مثلاً) كانت ترسل لعميلها مبلغاً بعملة مصر خطأً. التصحيح: رمز
@@ -96,7 +96,7 @@ ok(S().laundryOrders.find((o) => o.id === opened.id).notifications.length === 2,
 console.log('— ⑦ لا كود ميت: التوصيل الفعلي بالواجهة —')
 const { readFileSync } = await import('node:fs')
 const page = readFileSync(new URL('../src/ui/pages/LaundryPage.tsx', import.meta.url), 'utf8')
-ok(page.includes('buildLaundryStatusMessage') && page.includes('laundryWhatsappLink') && page.includes('logLaundryNotificationSent'), 'شاشة المغسلة تستدعي بناء الرسالة وإرسالها وتسجيلها')
+ok(page.includes('buildLaundryStatusMessage') && page.includes('laundryWhatsappLink') && page.includes('openCustomerWhatsapp') && !page.includes('logLaundryNotificationSent'), 'شاشة المغسلة تستدعي بناء الرسالة ومحاولة فتح المحادثة بلا ادعاء تسجيل إرسال')
 ok(page.includes('byWeight'), 'شاشة المغسلة تعرض مفتاح التسعير بالوزن في محرر البنود')
 const core = readFileSync(new URL('../src/core/laundry.ts', import.meta.url), 'utf8')
 ok(core.includes('weightKg'), 'نواة المغسلة تُخرج وزن الكجم في التقرير')

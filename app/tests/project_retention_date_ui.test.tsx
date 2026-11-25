@@ -46,8 +46,11 @@ it('يحذر ويغلق النافذة بعد تعذر تأكيد الحفظ ب�
 })
 
 it('نافذة التحصيل تبين حدود الإقفال ونقص الاستحقاق دون تغيير السلوك المالي', () => {
+ const id = S().projects[0].id
+ useRawDataStore.setState({ projectTasks: [{ id: 1, projectId: id, nameAr: 'مهمة', startDate: '2025-01-01', endDate: '2025-01-31', progressPercent: 0, status: 'pending', boqItemId: null }], subContracts: [{ id: 1, projectId: id, status: 'active' }] as never, custodyFiles: [{ id: 1, projectId: id, status: 'open' }] as never })
  open()
- expect(screen.getByRole('region', { name: 'مراجعة حالة إقفال المشروع' }).textContent).toContain('ليست موافقة أو إثباتاً للإقفال')
+ const review = screen.getByRole('region', { name: 'مراجعة حالة إقفال المشروع' }).textContent!
+ for (const phrase of ['ليست موافقة أو إثباتاً للإقفال', 'مهام غير منجزة', 'عقود باطن', 'ملفات عهدة']) expect(review).toContain(phrase)
  expect(screen.getByText(/لا يمكن استنتاج استحقاق المحتجز/)).toBeTruthy()
  expect(screen.getByText(/لا يظهر مستخلص ختامي/)).toBeTruthy()
  expect(screen.queryByText(/ضمان انتهى أجله/)).toBeNull()

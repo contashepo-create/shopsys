@@ -27,16 +27,14 @@ export function documentWaPhone(phone: string, countryCode?: string | null): str
   // رقم صريح يبدأ بمفتاح الدولة وطوله الدولي أطول من الرقم المحلي.
   if (digits.startsWith(code) && digits.length > example.length && digits.length <= 15) return digits
   if (digits.length !== example.length || (example.startsWith('0') !== digits.startsWith('0'))) throw new Error('رقم واتساب لا يطابق طول الرقم المحلي للبلد — أدخل الرقم الدولي مبتدئاً بعلامة +')
-  return code + (example.startsWith('0') ? digits.slice(1) : digits)
+  const national = example.startsWith('0') ? digits.slice(1) : digits
+  if (!/^[1-9]/.test(national)) throw new Error('رقم واتساب المحلي غير صالح — راجع الرقم')
+  return code + national
 }
 
-/** يطبّع الرقم لمسار wa.me: يقبل 01x المصري ويرفقه 2، ويمرر الدولي كما هو */
-export function normalizeWaPhone(phone: string): string {
-  const digits = (phone || '').replace(/\D/g, '')
-  if (!digits) return ''
-  if (digits.startsWith('00')) return digits.slice(2)
-  if (digits.startsWith('0')) return `2${digits}`
-  return digits
+/** الرقم المحلي يتبع بلد المنشأة؛ إن غاب البلد يلزم رمز دولي صريح. */
+export function normalizeWaPhone(phone: string, countryCode?: string | null): string {
+  return documentWaPhone(phone, countryCode)
 }
 
 /**
@@ -44,8 +42,8 @@ export function normalizeWaPhone(phone: string): string {
  * • برقم → https://wa.me/<دولي>?text=…
  * • بلا رقم → https://wa.me/?text=… (يفتح واتساب لاختيار الجهة بعد الإرسال)
  */
-export function waChatLink(phone: string, message: string): string {
-  const intl = normalizeWaPhone(phone)
+export function waChatLink(phone: string, message: string, countryCode?: string | null): string {
+  const intl = normalizeWaPhone(phone, countryCode)
   const text = encodeURIComponent(message)
   return intl ? `https://wa.me/${intl}?text=${text}` : `https://wa.me/?text=${text}`
 }

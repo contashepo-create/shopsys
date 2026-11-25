@@ -84,7 +84,11 @@ const NAME_OVERRIDES: Record<string, (modules: readonly BusinessModule[]) => str
 /** أكواد الحسابات التي عليها حركة فعلية — صمام أمان الشجرة */
 export function usedAccountCodes(journal: readonly { lines: readonly { accountCode: string }[] }[]): Set<string> {
   const s = new Set<string>()
-  for (const e of journal) for (const l of e.lines) s.add(l.accountCode)
+  // عرض الشجرة ليس فحص سلامة الدفتر؛ تجنب تعطل الواجهة قبل أن يظهر
+  // فحص التقرير رسالة القيد التالف، ولا تُنشئ كوداً من سطر مشوه.
+  for (const e of journal) for (const l of Array.isArray(e?.lines) ? e.lines : []) {
+    if (l && typeof l.accountCode === 'string' && l.accountCode) s.add(l.accountCode)
+  }
   return s
 }
 

@@ -10,6 +10,8 @@
  * ومدة وحالة. التداخل الزمني يُكشف ويُحذَّر به ولا يُمنع (صالون بأكثر من
  * كرسي/فني يسمح بتزامن موعدين — القرار للمستخدم).
  */
+import { waChatLink } from './whatsapp.ts'
+
 export type BookingStatus = 'scheduled' | 'done' | 'cancelled' | 'no_show'
 
 export const BOOKING_STATUS_LABELS: Record<BookingStatus, string> = {
@@ -81,12 +83,11 @@ export function bookingDayStats(list: readonly Booking[], date: string): { sched
 
 /* ─── سد الاقتراح 3: تذكير العميل بموعده عبر واتساب (بلا سحابة) ─── */
 export function buildBookingReminderMessage(b: Pick<Booking, 'customerName' | 'serviceName' | 'date' | 'time'>, shopName: string): string {
-  return `عميلنا العزيز ${b.customerName}،\nنذكّركم بموعدكم غداً ${b.date} الساعة ${b.time} — ${b.serviceName}.\nبانتظاركم 🌟\n— ${shopName}`
+  return `عميلنا العزيز ${b.customerName}،\nنذكّركم بموعدكم بتاريخ ${b.date} الساعة ${b.time} — ${b.serviceName}.\nبانتظاركم 🌟\n— ${shopName}`
 }
 
-/** رابط واتساب برقم مصري/دولي — نفس تحويل رقم الصيانة */
-export function bookingWhatsappLink(phone: string, message: string): string {
-  const digits = phone.replace(/\D/g, '')
-  const intl = digits.startsWith('0') ? `2${digits}` : digits
-  return `https://wa.me/${intl}?text=${encodeURIComponent(message)}`
+/** رابط للعميل المحدد فقط، مع بلد المنشأة أو رقم دولي صريح. */
+export function bookingWhatsappLink(phone: string, message: string, countryCode?: string | null): string {
+  if (!phone.trim()) throw new Error('رقم واتساب مطلوب للعميل')
+  return waChatLink(phone, message, countryCode)
 }

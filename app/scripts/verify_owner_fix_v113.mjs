@@ -33,7 +33,7 @@ check('الجسر: shopsysPdfShare مكشوف للعارض بأمان (contextBr
 
 /* ─── النواة الموحدة: أرقام وروابط وأسماء ملفات ─── */
 const wa = read('src/core/whatsapp.ts')
-check('النواة: تطبيع الرقم المصري والدولي (0→2 · 00 تُقشر) — نمط المواعيد نفسه', wa.includes('`2${digits}`') && wa.includes('digits.slice(2)'))
+check('النواة: تطبيع حسب بلد المنشأة أو رقم دولي صريح بلا افتراض مصر', wa.includes('return documentWaPhone(phone, countryCode)') && wa.includes('digits.slice(2)') && wa.includes('CALLING_CODES[countryCode]'))
 check('النواة: بلا رقم يفتح قائمة اختيار الجهة بدل الفشل الصامت', wa.includes('https://wa.me/?text='))
 check('النواة: أسماء الملفات لاتينية آمنة للمشاركة (بلا عربية/مسافات/رموز)', wa.includes('replace(/[^A-Za-z0-9._-]+/g'))
 

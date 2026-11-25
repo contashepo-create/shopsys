@@ -264,3 +264,13 @@ it('إرسال عرض من المحرر يوجه المحادثة إلى هات�
     expect(share.mock.calls[0][2]).toContain('wa.me/966501234567')
   } finally { vi.unstubAllGlobals() }
 })
+
+it('يعرّف تاريخ صلاحية العرض لقارئات الشاشة ويبقى قابلاً للتعديل', () => {
+  mount()
+  fireEvent.click(screen.getByTitle('فتح العرض وتعديله'))
+  const date = screen.getByLabelText('ساري حتى') as HTMLInputElement
+  expect(date.type).toBe('date')
+  expect(date.value).toBe('2099-01-01')
+  fireEvent.change(date, { target: { value: '2099-02-01' } })
+  expect(date.value).toBe('2099-02-01')
+})

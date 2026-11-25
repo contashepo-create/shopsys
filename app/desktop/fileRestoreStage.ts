@@ -1,6 +1,6 @@
 /** تجهيز استعادة ملفية في مجلد القاعدة قبل أي استبدال. لا يراجع محتوى الدفتر. */
-import { constants, copyFileSync, existsSync, lstatSync, openSync, closeSync, realpathSync, renameSync, statSync, unlinkSync } from 'node:fs'
-import { randomBytes } from 'node:crypto'
+import { constants, copyFileSync, existsSync, lstatSync, openSync, closeSync, readSync, realpathSync, renameSync, statSync, unlinkSync } from 'node:fs'
+import { createHash, randomBytes } from 'node:crypto'
 import { probeShopsysDatabase } from './dbLocation.ts'
 
 function removeIfPresent(path: string): void {
@@ -49,14 +49,31 @@ export function stageFileRestore(target: string, dbPath: string): string {
   }
 }
 
+/** بصمة ملف تدريجية لتجنب تحميل قاعدة كبيرة كاملة في الذاكرة. */
+export function fingerprintRestoreFile(path: string): string {
+  const fd = openSync(path, 'r')
+  try {
+    const hash = createHash('sha256'), chunk = Buffer.allocUnsafe(1024 * 1024)
+    let count: number
+    while ((count = readSync(fd, chunk, 0, chunk.length, null)) > 0) hash.update(chunk.subarray(0, count))
+    return hash.digest('hex')
+  } finally { closeSync(fd) }
+}
+
 /**
  * بعد إغلاق الاتصال فقط: لا نمس WAL نشطاً، وننشئ نسخة أمان باسم حصري قبل
  * استبدال المسار بتغيير اسم الملف المؤقت. لا يضمن ذلك سلامة نوافذ/عمليات أخرى.
  */
-export function replaceWithStagedBackup(dbPath: string, staged: string, beforePath: string): void {
+export function replaceWithStagedBackup(dbPath: string, staged: string, beforePath: string, expectedStage: string, verifyBackup: (path: string) => void): void {
   cleanStagedProbeFiles(staged)
+  if (fingerprintRestoreFile(staged) !== expectedStage) throw new Error('تغير ملف النسخة بعد فحصه — لم تُستبدل القاعدة')
   if (hasPendingJournal(dbPath)) throw new Error('ما زال WAL أو سجل معاملات للقاعدة الحالية موجوداً بعد الإغلاق — لم تُستبدل القاعدة')
   copyFileSync(dbPath, beforePath, constants.COPYFILE_EXCL)
+  // تحقق مجدداً من أدلة النسخة المأخوذة بعد الإغلاق، لا من القراءة السابقة وحدها.
+  verifyBackup(beforePath)
+  if (hasPendingJournal(dbPath)) throw new Error('ظهر WAL أو سجل معاملات للقاعدة الحالية قبل الاستبدال — لم تُستبدل القاعدة')
+  if (fingerprintRestoreFile(dbPath) !== fingerprintRestoreFile(beforePath)) throw new Error('تغيرت قاعدة التشغيل أثناء تجهيز الاستعادة — لم تُستبدل القاعدة')
+  if (fingerprintRestoreFile(staged) !== expectedStage) throw new Error('تغير ملف النسخة بعد فحصه — لم تُستبدل القاعدة')
   // SHM بلا WAL ملف فهرس مؤقت؛ إذا تعذر إزالته نتوقف قبل الاستبدال.
   removeIfPresent(dbPath + '-shm')
   if (hasPendingJournal(dbPath)) throw new Error('ظهر WAL أو سجل معاملات للقاعدة الحالية قبل الاستبدال — لم تُستبدل القاعدة')

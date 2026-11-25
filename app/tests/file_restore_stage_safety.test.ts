@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { ShopsysDatabase } from '../desktop/sqlite/storage.ts'
-import { discardStagedBackup, replaceWithStagedBackup, stageFileRestore } from '../desktop/fileRestoreStage.ts'
+import { discardStagedBackup, fingerprintRestoreFile, replaceWithStagedBackup, stageFileRestore } from '../desktop/fileRestoreStage.ts'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -29,7 +29,7 @@ describe('تهيئة استعادة SQLite قبل استبدال الملف', ()
   it('ينسخ ويفحص نسخة مؤقتة ثم يحتفظ بالقاعدة الحالية ويستبدلها', async () => {
     const s = await setup(), staged = stageFileRestore(s.target, s.live)
     expect(await read(s.live)).toBe(state('current'))
-    replaceWithStagedBackup(s.live, staged, s.before)
+    replaceWithStagedBackup(s.live, staged, s.before, fingerprintRestoreFile(staged), () => {})
     expect(existsSync(staged)).toBe(false); expect(await read(s.live)).toBe(state('backup'))
     expect(await read(s.before)).toBe(state('current')); expect(await read(s.target)).toBe(state('backup'))
   })
@@ -62,7 +62,7 @@ describe('تهيئة استعادة SQLite قبل استبدال الملف', ()
       db.saveSnapshot({ storeName: 'shopsys-data', expectedRevision: 1, payloadJson: state('pending WAL') })
       db.close()
       expect(existsSync(s.live + '-wal')).toBe(true)
-      expect(() => replaceWithStagedBackup(s.live, staged, s.before)).toThrow('WAL')
+      expect(() => replaceWithStagedBackup(s.live, staged, s.before, fingerprintRestoreFile(staged), () => {})).toThrow('WAL')
       expect(existsSync(s.live + '-wal')).toBe(true); expect(existsSync(s.before)).toBe(false)
       other.exec('COMMIT')
       expect((other.prepare("SELECT payload_json AS payload FROM snapshots WHERE store_name='shopsys-data'").get() as { payload: string }).payload).toBe(state('pending WAL'))
@@ -72,15 +72,15 @@ describe('تهيئة استعادة SQLite قبل استبدال الملف', ()
   it('فشل إنشاء نسخة الأمان الحصرية لا يغير القاعدة أو النسخة السابقة', async () => {
     const s = await setup(), staged = stageFileRestore(s.target, s.live)
     writeFileSync(s.before, 'keep previous')
-    expect(() => replaceWithStagedBackup(s.live, staged, s.before)).toThrow()
+    expect(() => replaceWithStagedBackup(s.live, staged, s.before, fingerprintRestoreFile(staged), () => {})).toThrow()
     expect(readFileSync(s.before, 'utf8')).toBe('keep previous'); expect(await read(s.live)).toBe(state('current'))
     discardStagedBackup(staged)
   })
-  it('فشل تبديل الاسم بعد نسخة الأمان لا يقطع الملف الأصلي', async () => {
+  it('فقد ملف المرحلة قبل الاستبدال لا يقطع الملف الأصلي', async () => {
     const s = await setup(), staged = stageFileRestore(s.target, s.live)
     discardStagedBackup(staged)
-    expect(() => replaceWithStagedBackup(s.live, staged, s.before)).toThrow()
-    expect(await read(s.live)).toBe(state('current')); expect(await read(s.before)).toBe(state('current'))
+    expect(() => replaceWithStagedBackup(s.live, staged, s.before, fingerprintRestoreFile(staged), () => {})).toThrow()
+    expect(await read(s.live)).toBe(state('current')); expect(existsSync(s.before)).toBe(false)
   })
   it('يرفض اختيار قاعدة التشغيل نفسها حتى عبر رابط', async () => {
     const s = await setup(), alias = join(s.dir, 'alias.db')
@@ -98,7 +98,7 @@ describe('تهيئة استعادة SQLite قبل استبدال الملف', ()
   it('لا يزيل WAL غير فارغ للمرحلة ولا يستبدل الملف', async () => {
     const s = await setup(), staged = stageFileRestore(s.target, s.live)
     writeFileSync(staged + '-wal', 'unresolved')
-    expect(() => replaceWithStagedBackup(s.live, staged, s.before)).toThrow('WAL غير فارغ')
+    expect(() => replaceWithStagedBackup(s.live, staged, s.before, fingerprintRestoreFile(staged), () => {})).toThrow('WAL غير فارغ')
     expect(() => discardStagedBackup(staged)).toThrow('WAL غير فارغ')
     expect(readFileSync(staged + '-wal', 'utf8')).toBe('unresolved')
     expect(await read(s.live)).toBe(state('current')); expect(existsSync(s.before)).toBe(false)
@@ -120,7 +120,42 @@ describe('تهيئة استعادة SQLite قبل استبدال الملف', ()
   it('تعديل النسخة الأصلية بعد تجهيزها لا يغير ملف المرحلة', async () => {
     const s = await setup(), staged = stageFileRestore(s.target, s.live)
     copyFileSync(s.live, s.target)
-    replaceWithStagedBackup(s.live, staged, s.before)
+    replaceWithStagedBackup(s.live, staged, s.before, fingerprintRestoreFile(staged), () => {})
     expect(await read(s.live)).toBe(state('backup')); expect(await read(s.before)).toBe(state('current'))
   })
+  it('يرفض تغيير ملف المرحلة بعد فحصه حتى لو ظل قاعدة SQLite صالحة', async () => {
+    const s = await setup(), staged = stageFileRestore(s.target, s.live), fingerprint = fingerprintRestoreFile(staged)
+    copyFileSync(s.live, staged)
+    expect(() => replaceWithStagedBackup(s.live, staged, s.before, fingerprint, () => {})).toThrow('تغير ملف النسخة')
+    expect(await read(s.live)).toBe(state('current')); expect(existsSync(s.before)).toBe(false)
+    discardStagedBackup(staged)
+  })
+  it('يرفض تغير القاعدة بعد نسخها وقبل الاستبدال ويحتفظ بنسخة الأمان', async () => {
+    const s = await setup(), staged = stageFileRestore(s.target, s.live), fingerprint = fingerprintRestoreFile(staged)
+    expect(() => replaceWithStagedBackup(s.live, staged, s.before, fingerprint, () => {
+      const db = new Database(s.live)
+      try { db.prepare("UPDATE snapshots SET payload_json = ? WHERE store_name = 'shopsys-data'").run(state('late')) } finally { db.close() }
+    })).toThrow('تغيرت قاعدة التشغيل')
+    expect(await read(s.live)).toBe(state('late')); expect(await read(s.before)).toBe(state('current'))
+    discardStagedBackup(staged)
+  })
+  it('يرفض تغير المرحلة خلال فحص نسخة الأمان دون استبدال القاعدة', async () => {
+    const s = await setup(), staged = stageFileRestore(s.target, s.live), fingerprint = fingerprintRestoreFile(staged)
+    expect(() => replaceWithStagedBackup(s.live, staged, s.before, fingerprint, () => copyFileSync(s.live, staged))).toThrow('تغير ملف النسخة')
+    expect(await read(s.live)).toBe(state('current')); expect(await read(s.before)).toBe(state('current'))
+    discardStagedBackup(staged)
+  })
+  it('يتوقف إذا فشل فحص نسخة الأمان ويحفظ الملفين للمراجعة', async () => {
+    const s = await setup(), staged = stageFileRestore(s.target, s.live), fingerprint = fingerprintRestoreFile(staged)
+    expect(() => replaceWithStagedBackup(s.live, staged, s.before, fingerprint, () => { throw new Error('دليل ناقص') })).toThrow('دليل ناقص')
+    expect(await read(s.live)).toBe(state('current')); expect(await read(s.before)).toBe(state('current'))
+    expect(await read(staged)).toBe(state('backup')); discardStagedBackup(staged)
+  })
+
+  it('إذا اختفى ملف المرحلة بعد نسخ الأمان يبقى ملف التشغيل ونسخته كما هما', async () => {
+    const s = await setup(), staged = stageFileRestore(s.target, s.live), fingerprint = fingerprintRestoreFile(staged)
+    expect(() => replaceWithStagedBackup(s.live, staged, s.before, fingerprint, () => discardStagedBackup(staged))).toThrow()
+    expect(await read(s.live)).toBe(state('current')); expect(await read(s.before)).toBe(state('current'))
+  })
+
 })

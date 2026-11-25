@@ -378,7 +378,7 @@ export function QuotationsPage() {
                 </div>
               </Field>
               <Field label="ساري حتى *">
-                <input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className={inputCls} dir="ltr" />
+                <input type="date" aria-label="ساري حتى" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className={inputCls} dir="ltr" />
               </Field>
               <Field label="احتمالية الفوز ٪" hint="أساس القيمة المتوقعة">
                 <input value={winProb} onChange={(e) => setWinProb(e.target.value)} inputMode="numeric" className={inputCls} />

@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { ShopsysDatabase, type JournalEntryDto } from '../desktop/sqlite/storage.ts'
-import { assertFileRestoreHistory } from '../desktop/fileRestoreHistory.ts'
-import { cleanStagedProbeFiles, discardStagedBackup, replaceWithStagedBackup, stageFileRestore } from '../desktop/fileRestoreStage.ts'
+import { assertBackupRestoreHistory, assertFileRestoreHistory } from '../desktop/fileRestoreHistory.ts'
+import { cleanStagedProbeFiles, discardStagedBackup, fingerprintRestoreFile, replaceWithStagedBackup, stageFileRestore } from '../desktop/fileRestoreStage.ts'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -35,13 +35,49 @@ async function setup(oldData: unknown = baseData, newData: unknown = baseData, o
 }
 
 describe('حماية أدلة الاستعادة الملفية على قاعدتي SQLite', () => {
+  it('يرفض إسقاط علامة المستخلص الختامي في ملف الاستعادة مع إبقاء القاعدة الأصلية مفتوحة', async () => {
+    const extract = { id: 1, projectId: 1, isFinal: true }
+    const old = { ...baseData, projectExtracts: [extract] }
+    const incoming = { ...old, projectExtracts: [{ ...extract, isFinal: false }] }
+    const { next, current } = await setup(old, incoming)
+    try {
+      expect(() => assertFileRestoreHistory(current.raw, next, key)).toThrow(/ختامي/)
+      expect(current.raw.open).toBe(true)
+      expect(current.getSnapshot('shopsys-data').payloadJson).toBe(wrap(old))
+    } finally { current.close() }
+  })
+  it('يرفض تغيير رقم أو أساس الختامي مع القيد نفسه في قاعدة الاستعادة ويبقي الحالية مفتوحة', async () => {
+    const extract = { id: 1, projectId: 1, isFinal: true, extractNumber: 'PRX-0001', journalEntryId: 1, payment: 'cash', totals: { grossMinor: 100, dueMinor: 100 } }
+    const old = { ...baseData, projectExtracts: [extract] }
+    for (const patch of [{ extractNumber: 'PRX-آخر' }, { totals: { grossMinor: 50, dueMinor: 50 } }]) {
+      const incoming = { ...old, projectExtracts: [{ ...extract, ...patch }] }
+      const { next, current } = await setup(old, incoming)
+      try {
+        expect(() => assertFileRestoreHistory(current.raw, next, key)).toThrow(/ختامي/)
+        expect(current.raw.open).toBe(true)
+        expect(current.getSnapshot('shopsys-data').payloadJson).toBe(wrap(old))
+      } finally { current.close() }
+    }
+  })
+  it('يرفض إعادة فتح مشروع محصل المحتجز في ملف الاستعادة دون إغلاق القاعدة الحالية', async () => {
+    const project = { id: 1, status: 'completed', completedAt: '2026-11-15T10:00:00', branchId: 1 }
+    const release = { id: 1, projectId: 1 }
+    const old = { ...baseData, projects: [project], retentionReleases: [release] }
+    const incoming = { ...old, projects: [{ ...project, status: 'active' }] }
+    const { next, current } = await setup(old, incoming)
+    try {
+      expect(() => assertFileRestoreHistory(current.raw, next, key)).toThrow(/إقفال المشروع/)
+      expect(current.raw.open).toBe(true)
+      expect(current.getSnapshot('shopsys-data').payloadJson).toBe(wrap(old))
+    } finally { current.close() }
+  })
   it('يقبل الأدلة المطابقة ويسمح بتجهيز النسخة واستبدالها وإعادة فتحها', async () => {
     const { live, next, current } = await setup({ ...baseData, journal: [entry] }, { ...baseData, journal: [entry] }, baseApp, baseApp, entry, entry)
     const stage = stageFileRestore(next, live)
     try {
       expect(() => assertFileRestoreHistory(current.raw, stage, key)).not.toThrow()
       cleanStagedProbeFiles(stage); current.close()
-      replaceWithStagedBackup(live, stage, live + '.before')
+      replaceWithStagedBackup(live, stage, live + '.before', fingerprintRestoreFile(stage), backup => { try { assertBackupRestoreHistory(backup, stage, key) } finally { cleanStagedProbeFiles(backup); cleanStagedProbeFiles(stage) } })
       const db = await ShopsysDatabase.open(live)
       try { expect(JSON.parse(db.getSnapshot('shopsys-data').payloadJson!).state.journal).toEqual([entry]) } finally { db.close() }
     } finally { if (current.raw.open) current.close() }
@@ -222,4 +258,23 @@ it('يرفض الاستعادة الملفية التي تخفض عداد خطا
     expect(() => assertFileRestoreHistory(current.raw, next, key)).toThrow('عداد الخطابات')
     expect(current.getSnapshot('shopsys-data').payloadJson).toBe(wrap(local))
   } finally { current.close() }
+})
+
+
+it('يرفض تغير اليومية بعد فحصها الأول بفضل فحص نسخة الأمان بعد إغلاق القاعدة', async () => {
+  const { live, next, current } = await setup()
+  const stage = stageFileRestore(next, live), fingerprint = fingerprintRestoreFile(stage), before = live + '.before'
+  try {
+    assertFileRestoreHistory(current.raw, stage, key)
+    cleanStagedProbeFiles(stage)
+    current.saveSnapshot({ storeName: 'shopsys-data', expectedRevision: 1, payloadJson: wrap({ ...baseData, journal: [entry] }), journalEntries: [entry] })
+    current.close()
+    expect(() => replaceWithStagedBackup(live, stage, before, fingerprint, backup => {
+      try { assertBackupRestoreHistory(backup, stage, key) } finally { cleanStagedProbeFiles(backup); cleanStagedProbeFiles(stage) }
+    })).toThrow('تسقط قيوداً محلية')
+    const recovered = await ShopsysDatabase.open(live)
+    try { expect(JSON.parse(recovered.getSnapshot('shopsys-data').payloadJson!).state.journal).toEqual([entry]) } finally { recovered.close() }
+    const saved = await ShopsysDatabase.open(before)
+    try { expect(JSON.parse(saved.getSnapshot('shopsys-data').payloadJson!).state.journal).toEqual([entry]) } finally { saved.close() }
+  } finally { if (current.raw.open) current.close(); discardStagedBackup(stage) }
 })

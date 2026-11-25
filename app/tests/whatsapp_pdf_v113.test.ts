@@ -11,15 +11,15 @@ const { normalizeWaPhone, waChatLink, safePdfFileName, docShareMessage } = await
 
 describe('v1.0.13 — مساعدات واتساب الموحدة', () => {
   it('تطبيع الرقم: 01x المصري يُرفق 2، و00 الدولي يُقشر، والدولي يمر كما هو', () => {
-    expect(normalizeWaPhone('01012345678')).toBe('201012345678')
+    expect(normalizeWaPhone('01012345678', 'EG')).toBe('201012345678')
     expect(normalizeWaPhone('00201012345678')).toBe('201012345678')
     expect(normalizeWaPhone('+971 50 123 4567')).toBe('971501234567')
     expect(normalizeWaPhone('')).toBe('')
-    expect(normalizeWaPhone('غير رقم')).toBe('')
+    expect(() => normalizeWaPhone('غير رقم')).toThrow()
   })
 
   it('رابط المحادثة: برقم يفتح محادثته، وبلا رقم يفتح قائمة اختيار الجهة (لا فشل صامت)', () => {
-    expect(waChatLink('01012345678', 'مرحبا')).toBe('https://wa.me/201012345678?text=' + encodeURIComponent('مرحبا'))
+    expect(waChatLink('01012345678', 'مرحبا', 'EG')).toBe('https://wa.me/201012345678?text=' + encodeURIComponent('مرحبا'))
     const noPhone = waChatLink('', 'عرض سعر')
     expect(noPhone.startsWith('https://wa.me/?text=')).toBe(true)
     expect(noPhone).not.toContain('wa.me/2')

@@ -46,7 +46,7 @@ export function shareDocPdfViaWhatsapp(args: ShareDocPdfArgs): void {
   }
   const html = buildModelHtml(model, cur, settings, template)
   const fileName = safePdfFileName(docLabelToPrefix(docLabel), docNumber)
-  const link = waChatLink(phone, docShareMessage(docLabel, docNumber, shopName))
+  const link = waChatLink(phone ? '+' + phone : '', docShareMessage(docLabel, docNumber, shopName))
   toast.show(`جارٍ توليد PDF لـ ${docLabel} ${docNumber}…`)
   void bridge(html, fileName, link).then((result) => {
     if (!result.ok) { toast.show(`تعذر توليد PDF: ${result.error ?? 'خطأ غير معروف'}`, 'error'); return }

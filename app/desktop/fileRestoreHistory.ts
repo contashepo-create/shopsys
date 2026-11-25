@@ -93,3 +93,12 @@ export function assertFileRestoreHistory(current: Database.Database, stagedPath:
     })())()
   } finally { incoming.close() }
 }
+
+/** يفحص النسخة الفعلية التي أُخذت بعد إغلاق القاعدة، قبل استبدال المسار. */
+export function assertBackupRestoreHistory(backupPath: string, stagedPath: string, key: Buffer): void {
+  const backup = new Database(backupPath, { readonly: true, fileMustExist: true })
+  try {
+    if (backup.pragma('quick_check', { simple: true }) !== 'ok') throw new Error('نسخة الأمان قبل الاستعادة غير سليمة — لم تُستبدل القاعدة')
+    assertFileRestoreHistory(backup, stagedPath, key)
+  } finally { backup.close() }
+}

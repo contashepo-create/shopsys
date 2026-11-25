@@ -121,6 +121,7 @@ import { convertFxToBookMinor, describeFxLeg, validateFxLeg, type FxLeg } from '
 import { buildFxConversionEntry, computeFxConversion, fxConversionFlows, fxConversionHistoryIssues, fxHoldingsFromFlows, proportionalFxCost, validateFxConversion, FX_GAIN_ACCOUNT, FX_LOSS_ACCOUNT, type FxConversionDoc, type FxFlow, type FxHolding } from '../core/fxTreasury.ts'
 import { buildYearClosingLines, validateYearClose, validateFiscalYear, dateInClosedYear, closingMechanismIds, fiscalYearsForBranch, isFiscalCloseArtifactValid, isFiscalCloseBasisValid, isFiscalCloseReversalValid, isFiscalCloseReversalSequenceValid, fiscalCloseReversalClaims, hasActivityAfterFiscalClose, type FiscalYear } from '../core/fiscal.ts'
 import { reviewFiscalCloseJournal } from '../core/fiscalCloseReview.ts'
+import { fiscalCloseLinkIssues, hasAmbiguousUnassignedFiscalReversals, hasHiddenFiscalReversalClaims } from '../core/fiscalCloseLinkReview.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { resolveBusinessTax } from '../core/taxRegistration.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
@@ -5961,10 +5962,11 @@ export function getBranchScopedDataState(state: DataState): DataState {
     } else if (e.sourceType === 'opening' && e.sourceId != null) {
       match = scopedItemIds.has(e.sourceId)
     } else if (e.sourceType === 'reversal' && e.reversesEntryId != null) {
-      match = scopedEntryIds.has(e.reversesEntryId)
-    } else if (e.lines.some((l) => scopedTrCodes.has(l.accountCode))) {
+      // تُحل بعد الفحص الأول حتى لا يختفي العكس إذا سبق أصله في المصفوفة.
+      match = false
+    } else if (Array.isArray(e.lines) && e.lines.some((l) => l && scopedTrCodes.has(l.accountCode))) {
       match = true
-    } else if (e.lines.some((l) => otherBranchTrCodes.has(l.accountCode))) {
+    } else if (Array.isArray(e.lines) && e.lines.some((l) => l && otherBranchTrCodes.has(l.accountCode))) {
       match = false
     } else {
       match = Boolean(activeBranch.isMain)
@@ -5972,6 +5974,29 @@ export function getBranchScopedDataState(state: DataState): DataState {
     if (match) scopedEntryIds.add(e.id)
     return match
   })
+  // لا نستنتج فرعاً لعكس مجهول الأصل، ولا نتجاوز إسناد الفرع الصريح.
+  // روابط المستورد غير المرتب تُتبع من قيد ظاهر فقط وبمعرّف أصل فريد.
+  const idCounts = new Map<number, number>()
+  for (const entry of state.journal) idCounts.set(entry.id, (idCounts.get(entry.id) ?? 0) + 1)
+  const dependents = new Map<number, JournalEntry[]>()
+  for (const entry of state.journal) {
+    if (entry.branchId != null || entry.sourceType !== 'reversal' || entry.reversesEntryId == null) continue
+    const rows = dependents.get(entry.reversesEntryId) ?? []
+    rows.push(entry); dependents.set(entry.reversesEntryId, rows)
+  }
+  const selected = new Set(scopedJournal)
+  const pending = [...scopedEntryIds]
+  for (let index = 0; index < pending.length; index++) {
+    const parentId = pending[index]
+    if (idCounts.get(parentId) !== 1) continue
+    for (const entry of dependents.get(parentId) ?? []) {
+      if (selected.has(entry)) continue
+      selected.add(entry)
+      if (!scopedEntryIds.has(entry.id)) { scopedEntryIds.add(entry.id); pending.push(entry.id) }
+    }
+  }
+  // الاحتفاظ بترتيب اليومية الأصلي ضروري لمسارات التدقيق التاريخي.
+  const orderedScopedJournal = state.journal.filter(entry => selected.has(entry))
 
   const scoped: DataState = {
     ...state,
@@ -6130,7 +6155,7 @@ export function getBranchScopedDataState(state: DataState): DataState {
     paymentTerminals: scopedTerminals,
     paymentTerminalTransactions: scopedTerminalTransactions,
     paymentTerminalSettlements: scopedTerminalSettlements,
-    journal: scopedJournal,
+    journal: orderedScopedJournal,
   }
   byBranch.set(activeBranch.id, scoped)
   return scoped
@@ -14571,6 +14596,8 @@ export const useRawDataStore = create<DataState>()(
           ? state.journal
           : getBranchScopedDataState({ ...state, activeBranchId: fiscalBranchId }).journal
         const existingClosing = fiscalClosingEntries(state, fy, fiscalBranchId, mainBranchId).find(entry => !entry.reversedByEntryId)
+        if (hasAmbiguousUnassignedFiscalReversals(state.journal, fy)) throw new Error('تعذر الإقفال: يوجد عكس غير مسند وأصله غير واضح في الدفتر الكامل — راجع الإسناد مع المختص')
+        if (hasHiddenFiscalReversalClaims(state.journal, branchJournal, fy)) throw new Error('تعذر الإقفال: يوجد عكس خارج نطاق الفرع يدّعي قيداً ظاهراً — راجع الإسناد مع المختص')
         if (existingClosing) {
           // استعادة الحالة بعد انقطاع سابق، لكن لا تُعامل محاولة الإقفال المكررة كنجاح.
           // علّم الفترة مغلقة ثم ارفض الطلب كي يظل عقد API مانعاً للتكرار.
@@ -14590,12 +14617,16 @@ export const useRawDataStore = create<DataState>()(
         if (errors.length) throw new Error(errors.join(' — '))
         const review = reviewFiscalCloseJournal(branchJournal, fy)
         if (!review.valid) throw new Error(`تعذر الإقفال: توجد قيود غير سليمة أو غير متوازنة — راجع الدفتر (${review.invalidEntryIds.slice(0, 10).map(id => `#${id}`).join('، ')})`)
+        const linkIssues = fiscalCloseLinkIssues(branchJournal, fy)
+        if (linkIssues.length) throw new Error(`تعذر الإقفال: روابط عكس غير مثبتة في الدفتر الظاهر — راجع القيود ${linkIssues.slice(0, 10).map(id => `#${id}`).join('، ')}`)
         // ③ يبني الإقفال من دفتر الفرع صاحب الفترة وحده؛ العرض/الإقفال العام القديم
         // يبقى على اليومية الكاملة للتوافق مع السجلات غير المنسوبة.
-        const mechanism = closingMechanismIds(branchJournal)
-        const result = buildYearClosingLines(branchJournal.filter((e) => !mechanism.has(e.id)), fy)
+        // حدد آلية الإقفال من القيود حتى نهاية السنة فقط، مثل فحص الدفتر
+        // وأساس الاستعادة؛ لا تجعل رابطاً في المستقبل يغيّر نتيجة السنة الماضية.
+        const closingBasis = branchJournal.filter(entry => entry.date <= fy.endDate)
+        const mechanism = closingMechanismIds(closingBasis)
+        const result = buildYearClosingLines(closingBasis.filter((e) => !mechanism.has(e.id)), fy)
         if (result.lines.length === 0) throw new Error('لا حركة إيرادات أو مصروفات في هذه السنة — لا شيء يُقفل')
-        if (fy.branchId == null && fiscalBranchId != null) useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
         const entry: JournalEntry = {
@@ -14607,6 +14638,11 @@ export const useRawDataStore = create<DataState>()(
           lines: result.lines.map((l) => ({ accountCode: l.accountCode, debit: l.debit, credit: l.credit, note: l.note })),
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
+        // فحص الأساس نفسه المستخدم لاحقاً في الاستعادة وإعادة الفتح، قبل
+        // أي كتابة أو ربط للسنة القديمة. تفسير فرع قيد قديم غير مسند في
+        // العرض قد يختلف عن التفسير التاريخي المحافظ لهذه العمليات.
+        if (!isFiscalCloseBasisValid([...state.journal, entry], fy, entry, mainBranchId)) throw new Error('تعذر إثبات أساس الإقفال لإعادة الفتح أو الاستعادة — راجع إسناد القيود وتاريخ الدفتر مع المختص')
+        if (fy.branchId == null && fiscalBranchId != null) useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
         set({ journal: [...state.journal, entry] })
         // تحديث حالة الفترة بعد قبول القيد؛ المخزنان منفصلان وليسا معاملة ذرية.
         // يعالج مسار الاستعادة بعض الانقطاعات المثبتة ولا يضمن سلامة جميع الكتّاب.
@@ -14638,6 +14674,11 @@ export const useRawDataStore = create<DataState>()(
           && y.startDate > fy.endDate)
         if (newerClosed) throw new Error(`أعد فتح السنة الأحدث المقفلة «${newerClosed.nameAr}» أولاً — إعادة الفتح بالترتيب الزمني`)
         const closingEntries = fiscalClosingEntries(state, fy, fiscalBranchId, mainBranchId)
+        const branchJournal = fiscalBranchId == null
+          ? state.journal
+          : getBranchScopedDataState({ ...state, activeBranchId: fiscalBranchId }).journal
+        if (hasAmbiguousUnassignedFiscalReversals(state.journal, fy)) throw new Error('تعذر إعادة الفتح: يوجد عكس غير مسند وأصله غير واضح في الدفتر الكامل — راجع الإسناد مع المختص')
+        if (hasHiddenFiscalReversalClaims(state.journal, branchJournal, fy)) throw new Error('تعذر إعادة الفتح: يوجد عكس خارج نطاق الفرع يدّعي قيداً ظاهراً — راجع الإسناد مع المختص')
         const closingEntry = closingEntries.find(entry => !entry.reversedByEntryId)
         if (!closingEntry) {
           // قد يكون العكس حُفظ قبل حالة الفتح؛ لا نفتح سنة بلا دليل عكس صحيح.
@@ -17144,6 +17185,8 @@ export const useRawDataStore = create<DataState>()(
       updateProject: (id, changes) => {
         const state = get()
         if (!changes || typeof changes !== 'object' || Object.prototype.hasOwnProperty.call(changes, 'customerContactHistory')) throw new Error('لا يمكن تعديل سجل تواصل المشروع التاريخي مباشرة')
+        const projectKeys = new Set(['nameAr', 'clientName', 'clientId', 'contractValueMinor', 'retentionPercent', 'startDate', 'contractNumber', 'location', 'expectedEndDate', 'managerEmployeeId', 'notes', 'tags', 'actualHandoverDate', 'defectsLiabilityMonths'])
+        if (Reflect.ownKeys(changes).some(key => typeof key !== 'string' || !projectKeys.has(key))) throw new Error('حقل تعديل مشروع غير مسموح')
         const project = state.projects.find((p2) => p2.id === id)
         if (!project) throw new Error('المشروع غير موجود')
         const hasExtracts = state.projectExtracts.some((e) => e.projectId === id)
@@ -18444,6 +18487,11 @@ export const useRawDataStore = create<DataState>()(
         if (extract.createdAt && (!Number.isFinite(Date.parse(extract.createdAt)) || extract.date.slice(0, 10) !== todayLocalIso(new Date(extract.createdAt)))) throw new Error('المستخلص مؤرخ قبل وقت تسجيله — لا يُعدّل عبر مسار يعيد تأريخه؛ راجع المحاسب')
         const project = scoped.projects.find((p) => p.id === extract.projectId)
         if (!project) throw new Error('المشروع غير موجود في هذا الفرع')
+        if (args.isFinal !== undefined && typeof args.isFinal !== 'boolean') throw new Error('طبيعة المستخلص الختامي غير صالحة')
+        if (extract.isFinal && args.isFinal === false) throw new Error('لا يمكن تحويل المستخلص الختامي إلى جزئي — إعادة فتحه تتطلب معالجة مستقلة')
+        const isFinal = extract.isFinal === true || args.isFinal === true
+        const otherExtracts = state.projectExtracts.filter(row => row.projectId === project.id && row.id !== extract.id)
+        if (isFinal && otherExtracts.some(row => row.isFinal || row.id > extract.id)) throw new Error('يوجد مستخلص ختامي أو أحدث — لا يمكن اعتماد هذا المستخلص ختامياً')
         assertProjectCustomerBranch(state, project, extract)
         assertQuantityChangeLinks(state.boqItems.filter(item => item.projectId === project.id), state.changeOrders.filter(order => order.projectId === project.id))
         assertProjectExtractRefundIntegrity(scoped.projectExtracts.filter(e => e.projectId === extract.projectId), customerReviewJournal(state))
@@ -18473,6 +18521,9 @@ export const useRawDataStore = create<DataState>()(
         /* ① القيد الأصلي يُعكس بقيد موثق السبب (يبقى الرقم والتاريخ في الدفتر) */
         const original = state.journal.find((e) => e.id === extract.journalEntryId)
         if (!original) throw new Error('قيد المستخلص الأصلي غير موجود')
+        // الكاتب العام ينسب القيود الجديدة للفرع النشط. لا تنسب عكس قيد
+        // تاريخي بلا فرع تخميناً: حارس التاريخ يشترط تطابق فرعي العكس والأصل.
+        if (getEffectiveActiveBranch(state) && original.branchId == null) throw new Error('قيد المستخلص تاريخي بلا فرع — راجع نسبته قبل التعديل')
         if (!isValidExpiryDate(extract.date?.slice(0, 10)) || extract.date.slice(0, 10) > todayLocalIso() || original.date !== extract.date.slice(0, 10)) throw new FinancialDataReviewError(`تاريخ المستخلص ${extract.extractNumber}`)
         if (original.reversedByEntryId) throw new Error('قيد المستخلص معكوس مسبقاً — لا يُعدَّل مرتين')
         const now = localIsoTimestamp()
@@ -18489,7 +18540,9 @@ export const useRawDataStore = create<DataState>()(
         const reversal: JournalEntry = {
           id: reversalId, entryNumber: reversalId, date: now.slice(0, 10),
           description: `عكس ${extract.extractNumber} للتعديل — ${reason}`,
-          sourceType: 'reversal', sourceId: extract.id,
+          // مصدر العكس هو القيد الأصلي لا رقم المستخلص؛ مرجع المستخلص
+          // محفوظ على قيده البديل وفي editReversalEntryId للمستند.
+          sourceType: 'reversal', sourceId: original.id,
           lines: buildReversalLines(original.lines),
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: original.id,
         }
@@ -18552,7 +18605,7 @@ export const useRawDataStore = create<DataState>()(
           const billing = computeProjectBillingGuard({ contractValueMinor: project.contractValueMinor, changeOrders: state.changeOrders.filter(order => order.projectId === project.id), extracts: state.projectExtracts.filter(row => row.projectId === project.id), saleInvoices: projectInvoices, saleReturns: state.saleReturns.filter(row => invoiceIds.has(row.saleId)) })
           if (!Number.isSafeInteger(billing.extraInvoicedNetMinor) || billing.extraInvoicedNetMinor < 0 || claimed + gross + billing.extraInvoicedNetMinor > effective) throw new Error('المستخلص مع فواتير المشروع الإضافية يتجاوز قيمة العقد — راجع الفواتير أو اعتمد أمر تغيير أولاً')
           if (!Number.isSafeInteger(effective) || !Number.isSafeInteger(claimed + gross)) throw new Error('قيمة العقد أو المستخلصات غير آمنة — راجع البيانات')
-          const hasFinal = !!args.isFinal || state.projectExtracts.some(e => e.projectId === project.id && e.id !== extract.id && e.isFinal)
+          const hasFinal = isFinal || state.projectExtracts.some(e => e.projectId === project.id && e.id !== extract.id && e.isFinal)
           if (hasFinal && state.projectExtracts.some(e => e.projectId === project.id && (e.refundedMinor ?? 0) > 0)) throw new Error('يوجد مرتجع مستخلص سابق — راجع تسوية العقد قبل المستخلص الختامي')
           if (hasFinal && claimed + gross !== effective) throw new Error(`المستخلص الختامي يتطلب مساواة إجمالي المستخلصات لقيمة العقد الفعلية؛ الفرق ${fmtMinorPlain(effective - claimed - gross)} — راجع كميات العقد وأوامر التغيير`)
         }
@@ -18583,7 +18636,7 @@ export const useRawDataStore = create<DataState>()(
           date: now, description: args.description, payment: args.payment, totals, journalEntryId: entryId,
           lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor, ...(c.newExecutedQty != null ? { prevExecutedQty: c.prevExecutedQty, newExecutedQty: c.newExecutedQty, previousQtyEstimated: c.previousQtyEstimated, contractQty: state.boqItems.find(b => b.id === c.boqItemId)?.qty, unitPriceMinor: state.boqItems.find(b => b.id === c.boqItemId)?.unitPriceMinor, unit: state.boqItems.find(b => b.id === c.boqItemId)?.unit } : {}) })),
           ...(recovery > 0 ? { advanceRecoveryMinor: recovery, advanceAllocations: advancePlan.allocations } : { advanceRecoveryMinor: undefined, advanceAllocations: undefined }),
-          ...(args.isFinal ? { isFinal: true } : { isFinal: undefined }),
+          ...(isFinal ? { isFinal: true } : { isFinal: undefined }),
           lastEditReason: reason, editedAt: now, editReversalEntryId: reversalId,
         }
         /* ⑤ تقدم BOQ الجديد واسترداد الدفعة الجديد (FIFO الأقدم أولاً) */

@@ -4,7 +4,7 @@ import { useAppStore } from './stores/app.store.ts'
 import { useDataStore, useRawDataStore } from './data/repo.ts'
 import { evaluateLicense, oldestValidDay, newestValidDay } from './core/license.ts'
 import { currentLockReason, isBackupDue } from './core/security.ts'
-import { fiscalCloseStateRepairs } from './core/fiscal.ts'
+import { guardedFiscalStateRepairs } from './data/fiscalStateRepair.ts'
 import { isDailySendDue, localNowIso } from './core/schedule.ts'
 import { runSyncCycle, watchLocalChanges } from './data/syncRunner.ts'
 import { hasFeature } from './core/license.ts'
@@ -658,9 +658,7 @@ export default function App() {
     if (!storesHydrated) return
     const fiscal = useAppStore.getState()
     const data = useRawDataStore.getState()
-    const mainBranches = data.branches.filter(branch => branch.isMain)
-    if (data.branches.length && mainBranches.length !== 1) return
-    const repairs = fiscalCloseStateRepairs(fiscal.fiscalYears, data.journal, mainBranches[0]?.id)
+    const repairs = guardedFiscalStateRepairs(data, fiscal.fiscalYears)
     repairs.closeIds.forEach((id) => fiscal.markFiscalYearClosed(id))
     repairs.reopenIds.forEach((id) => fiscal.reopenFiscalYear(id))
   }, [storesHydrated])

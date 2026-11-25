@@ -37,9 +37,9 @@ check('② بطاقة مواعيد اليوم — لوحدة booking فقط وع
 
 /* ─── ③ تذكيرات واتساب ─── */
 const booking = read('src/core/booking.ts')
-check('③ رسالة تذكير عربية + رابط واتساب بتحويل الرقم المصري', booking.includes('buildBookingReminderMessage') && booking.includes('bookingWhatsappLink') && booking.includes('`2${digits}`'))
+check('③ رسالة تذكير عربية + رابط واتساب حسب بلد المنشأة أو رقم دولي', booking.includes('buildBookingReminderMessage') && booking.includes('bookingWhatsappLink') && booking.includes('waChatLink(phone, message, countryCode)'))
 const bookingsPage = read('src/ui/pages/BookingsPage.tsx')
-check('③ حوار التذكيرات: اختيار اليوم (اليوم/غداً) + زر لكل عميل محجوز برقم + نسخ الرقم', bookingsPage.includes('تذكيرات واتساب') && bookingsPage.includes('bookingWhatsappLink(b.phone, msg)') && bookingsPage.includes('لا تذكيرات'))
+check('③ حوار التذكيرات: اختيار اليوم (اليوم/غداً) + زر لكل عميل محجوز برقم + نسخ الرقم', bookingsPage.includes('تذكيرات واتساب') && bookingsPage.includes('bookingWhatsappLink(b.phone, msg, setup.countryCode)') && bookingsPage.includes('لا تذكيرات'))
 
 if (failed === 0) console.log('\nبوابة v1.0.12: ✓ الاقتراحات 1-3 منفذة بالكامل')
 else {

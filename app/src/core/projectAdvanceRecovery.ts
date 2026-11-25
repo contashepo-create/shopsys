@@ -162,15 +162,31 @@ export function assertAdvanceRecoveryBasis(projectId: number, advances: readonly
   }
 }
 
+/** فحص محلي قبل تغيير أرصدة الدفعات؛ لا يغني عن مطابقة المستندات والقيود. */
+function assertAllocationAdvances(projectId: number, advances: readonly ProjectAdvanceRecord[]): void {
+  if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Array.isArray(advances)) throw new Error('دفعات المشروع غير صالحة — راجع البيانات')
+  const ids = new Set<number>(), entries = new Set<number>()
+  let previousId = 0, previousEntry = 0, previousDate = ''
+  for (const advance of advances) {
+    if (!advance || typeof advance !== 'object') throw new Error('دفعات المشروع غير صالحة — راجع البيانات')
+    if (advance.projectId !== projectId) continue
+    if (!Number.isSafeInteger(advance.id) || advance.id <= previousId || ids.has(advance.id) || !Number.isSafeInteger(advance.journalEntryId) || advance.journalEntryId <= previousEntry || entries.has(advance.journalEntryId) || !isValidExpiryDate(advance.date) || advance.date < previousDate || !Number.isSafeInteger(advance.amountMinor) || advance.amountMinor <= 0 || !Number.isSafeInteger(advance.recoveredMinor) || advance.recoveredMinor < 0 || advance.recoveredMinor > advance.amountMinor) throw new Error('دفعات المشروع أو ترتيبها غير صالح — راجع البيانات')
+    ids.add(advance.id); entries.add(advance.journalEntryId)
+    previousId = advance.id; previousEntry = advance.journalEntryId; previousDate = advance.date
+  }
+}
+
 /** يوزع المتاح بالأقدم، ويعيد نسخة وتفصيلاً للتوثيق؛ لا يعدّل البيانات المدخلة. */
 export function allocateProjectAdvance(projectId: number, advances: readonly ProjectAdvanceRecord[], amount: number): { advances: ProjectAdvanceRecord[]; allocations: ProjectAdvanceAllocation[] } {
   if (!Number.isSafeInteger(amount) || amount < 0) throw new Error('مبلغ استرداد المقدمة غير صالح')
+  // لا تغيّر مسار إصدار مستخلص بلا استرداد بسبب بيانات لم تُستخدم.
+  if (amount === 0) return { advances: [...advances], allocations: [] }
+  assertAllocationAdvances(projectId, advances)
   let left = amount
   const allocations: ProjectAdvanceAllocation[] = []
   const updated = advances.map(advance => {
     if (advance.projectId !== projectId || left === 0) return advance
     const take = Math.min(left, advance.amountMinor - advance.recoveredMinor)
-    if (!Number.isSafeInteger(take) || take < 0) throw new Error('رصيد الدفعة غير صالح — راجع البيانات')
     if (!take) return advance
     left -= take
     allocations.push({ advanceId: advance.id, journalEntryId: advance.journalEntryId, amountMinor: take })
@@ -182,19 +198,44 @@ export function allocateProjectAdvance(projectId: number, advances: readonly Pro
 
 /** عكس التوزيع المثبت فقط؛ السجلات التاريخية المتعددة بلا توزيع تحتاج مراجعة. */
 export function undoProjectAdvanceRecovery(projectId: number, advances: readonly ProjectAdvanceRecord[], extracts: readonly RecoveryExtract[], target: RecoveryExtract): ProjectAdvanceRecord[] {
+  if (!target || target.projectId !== projectId || !Array.isArray(extracts)) throw new Error('مستخلص استرداد المقدمة غير صالح — راجع البيانات')
   const amount = target.advanceRecoveryMinor ?? 0
-  if (!amount) return [...advances]
+  if (!Number.isSafeInteger(amount) || amount < 0) throw new Error('مبلغ استرداد المقدمة غير صالح — راجع البيانات')
+  if (!amount) {
+    if (target.advanceAllocations != null && (!Array.isArray(target.advanceAllocations) || target.advanceAllocations.length !== 0)) throw new Error('توزيع استرداد المقدمة غير صالح — راجع البيانات')
+    return [...advances]
+  }
+  assertAllocationAdvances(projectId, advances)
+  if (extracts.some(row => !row || typeof row !== 'object' || row.projectId !== projectId || !Number.isSafeInteger(row.id) || row.id <= 0 || !Number.isSafeInteger(row.journalEntryId) || row.journalEntryId <= 0 || !Number.isSafeInteger(row.advanceRecoveryMinor ?? 0) || (row.advanceRecoveryMinor ?? 0) < 0)) throw new Error('سجل مستخلصات المقدمة غير صالح — راجع البيانات')
+  const extractIds = new Set<number>(), journalIds = new Set(advances.filter(row => row.projectId === projectId).map(row => row.journalEntryId))
+  for (const row of extracts) {
+    if (extractIds.has(row.id) || journalIds.has(row.journalEntryId)) throw new Error('سجل مستخلصات المقدمة مكرر — راجع البيانات')
+    extractIds.add(row.id); journalIds.add(row.journalEntryId)
+  }
+  const saved = extracts.find(row => row.id === target.id)
+  const savedAllocations = saved?.advanceAllocations, targetAllocations = target.advanceAllocations
+  if (!saved || saved.projectId !== target.projectId || saved.journalEntryId !== target.journalEntryId || saved.date !== target.date || (saved.advanceRecoveryMinor ?? 0) !== amount
+    || (savedAllocations == null) !== (targetAllocations == null)
+    || (savedAllocations != null && (!Array.isArray(savedAllocations) || !Array.isArray(targetAllocations) || savedAllocations.length !== targetAllocations.length || savedAllocations.some((row, index) => !row || !targetAllocations[index] || row.advanceId !== targetAllocations[index].advanceId || row.journalEntryId !== targetAllocations[index].journalEntryId || row.amountMinor !== targetAllocations[index].amountMinor)))) throw new Error('دليل مستخلص استرداد المقدمة تغير أو مفقود — راجع البيانات')
   if (extracts.some(row => row.id !== target.id && (row.advanceRecoveryMinor ?? 0) > 0 && row.journalEntryId > target.journalEntryId)) throw new Error('يوجد استرداد مقدمة أحدث — راجعه أولاً قبل تعديل المستخلص')
   const own = advances.filter(row => row.projectId === projectId)
   const hasLegacy = extracts.some(row => (row.advanceRecoveryMinor ?? 0) > 0 && row.advanceAllocations == null)
   if (hasLegacy && own.length !== 1) throw new Error('توزيع استرداد المقدمات التاريخي غير مثبت — راجع الدفعات قبل تعديل المستخلص')
   const allocations = target.advanceAllocations ?? (own.length === 1 ? [{ advanceId: own[0].id, journalEntryId: own[0].journalEntryId, amountMinor: amount }] : [])
-  if (allocations.reduce((sum, row) => sum + row.amountMinor, 0) !== amount) throw new Error('توزيع استرداد المقدمة غير مكتمل — راجع المستخلص')
-  const byId = new Map(allocations.map(row => [row.advanceId, row]))
+  if (!Array.isArray(allocations) || !Number.isSafeInteger(target.journalEntryId) || target.journalEntryId <= 0 || typeof target.date !== 'string' || !isValidExpiryDate(target.date.slice(0, 10))) throw new Error('توزيع استرداد المقدمة غير صالح — راجع البيانات')
+  const ownById = new Map(own.map(row => [row.id, row]))
+  const byId = new Map<number, ProjectAdvanceAllocation>()
+  let total = 0
+  for (const allocation of allocations) {
+    const advance = allocation && ownById.get(allocation.advanceId)
+    if (!advance || byId.has(allocation.advanceId) || allocation.journalEntryId !== advance.journalEntryId || advance.journalEntryId >= target.journalEntryId || advance.date > target.date.slice(0, 10) || !Number.isSafeInteger(allocation.amountMinor) || allocation.amountMinor <= 0 || allocation.amountMinor > advance.recoveredMinor) throw new Error('توزيع استرداد المقدمة لا يطابق الدفعة — راجع البيانات')
+    total += allocation.amountMinor
+    if (!Number.isSafeInteger(total)) throw new Error('توزيع استرداد المقدمة غير آمن — راجع البيانات')
+    byId.set(allocation.advanceId, allocation)
+  }
+  if (total !== amount) throw new Error('توزيع استرداد المقدمة غير مكتمل — راجع المستخلص')
   return advances.map(advance => {
-    const allocation = byId.get(advance.id)
-    if (!allocation || advance.projectId !== projectId) return advance
-    if (advance.journalEntryId !== allocation.journalEntryId || advance.recoveredMinor < allocation.amountMinor) throw new Error('توزيع استرداد المقدمة لا يطابق الدفعة — راجع البيانات')
-    return { ...advance, recoveredMinor: advance.recoveredMinor - allocation.amountMinor }
+    const allocation = advance.projectId === projectId ? byId.get(advance.id) : undefined
+    return allocation ? { ...advance, recoveredMinor: advance.recoveredMinor - allocation.amountMinor } : advance
   })
 }

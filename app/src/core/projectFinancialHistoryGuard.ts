@@ -88,6 +88,25 @@ export function assertProjectFinancialHistoryPreserved(current: Row, incoming: R
   const nextExtracts = rows(incoming.projectExtracts, 'سجل المستخلصات الوارد')
   const beforeExtracts = new Map(previousExtracts.map(row => [row.id, row]))
   const afterExtracts = new Map(nextExtracts.map(row => [row.id, row]))
+  // نصون هوية الختامي المحلي وأساسه عند بقاء قيده نفسه. لا يُثبت
+  // اختلاف رقم القيد وحده صحة تعديل وارد؛ باقي حراسات الدفتر مستقلة.
+  for (const old of previousExtracts) {
+    if (old.isFinal !== true) continue
+    const candidate = afterExtracts.get(old.id)
+    if (!candidate || candidate.isFinal !== true || !same(old.projectId, candidate.projectId) || !same(old.branchId, candidate.branchId) || !same(old.extractNumber, candidate.extractNumber) || !same(old.createdAt, candidate.createdAt)) throw new Error(`النسخة تسقط أو تغيّر هوية المستخلص الختامي #${String(old.id)} — راجع التاريخ`)
+    const financialFields = ['date', 'payment', 'totals', 'lines', 'advanceRecoveryMinor', 'advanceAllocations']
+    if (financialFields.some(key => !same(old[key], candidate[key]))) {
+      const before = old.journalEntryId, after = candidate.journalEntryId
+      if (!Number.isSafeInteger(before) || (before as number) <= 0 || !Number.isSafeInteger(after) || (after as number) <= 0 || before === after) throw new Error(`النسخة تغيّر أساس المستخلص الختامي #${String(old.id)} دون تغيير مرجع قيد صالح — راجع التاريخ`)
+    }
+    for (const next of nextExtracts) {
+      if (next.projectId !== old.projectId || next.id === old.id) continue
+      const previous = beforeExtracts.get(next.id)
+      // المعرفات هنا قرينة ترتيب تحفظية، لا إثبات زمني؛ السجلات القديمة
+      // الملتبسة تحتاج مراجعة بدلاً من إدراج مستخلص لاحق بصمت.
+      if ((!previous || previous.projectId !== old.projectId) && (next.id as number) > (old.id as number) || next.isFinal === true && (!previous || previous.projectId !== old.projectId || previous.isFinal !== true)) throw new Error(`النسخة تضيف مستخلصاً لاحقاً أو ختامياً آخر بعد المستخلص الختامي #${String(old.id)} — راجع التاريخ`)
+    }
+  }
   for (const id of new Set([...beforeExtracts.keys(), ...afterExtracts.keys()])) {
     const before = beforeExtracts.get(id), after = afterExtracts.get(id)
     const oldAmount = before?.advanceRecoveryMinor === undefined ? 0 : before.advanceRecoveryMinor
@@ -140,6 +159,17 @@ export function assertProjectFinancialHistoryPreserved(current: Row, incoming: R
     const next = rows(incoming.retentionReleases, 'سجل تحصيل المحتجز الوارد')
     const indexed = new Map(next.map(row => [row.id, row]))
     for (const row of localReleases) if (!indexed.has(row.id) || !same(row, indexed.get(row.id))) throw new Error(`النسخة تسقط أو تغيّر تحصيل المحتجز #${String(row.id)} — راجع الأدلة`)
+    // إذا كان المشروع المحلي مقفلاً وله تحصيل محفوظ، فلا تُسقط اللقطة
+    // حالته أو توقيته أو فرعه. لا نستنتج إقفالاً من تحصيل تاريخي وحده.
+    if (Array.isArray(current.projects)) {
+      for (const release of localReleases) {
+        const projects = current.projects.filter((item): item is Row => !!item && typeof item === 'object' && !Array.isArray(item) && item.id === release.projectId)
+        if (!projects.some(project => project.status === 'completed')) continue
+        const candidates = Array.isArray(incoming.projects) ? incoming.projects.filter((item): item is Row => !!item && typeof item === 'object' && !Array.isArray(item) && item.id === release.projectId) : []
+        const before = projects[0], after = candidates[0]
+        if (projects.length !== 1 || candidates.length !== 1 || after.status !== 'completed' || !same(before.completedAt, after.completedAt) || !same(before.branchId, after.branchId)) throw new Error(`النسخة تسقط أو تغيّر إقفال المشروع المرتبط بتحصيل المحتجز #${String(release.id)} — راجع الأدلة`)
+      }
+    }
     // تحصيل كامل موزع يعتمد على المستخلصات التي أنشأت المحتجز وإشعاراتها.
     // حفظ التحصيل وحده لا يكفي إن أسقطت نسخة المستخلص أو بدلت أساسه.
     for (const release of localReleases) {

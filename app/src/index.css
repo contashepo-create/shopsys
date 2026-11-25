@@ -2994,6 +2994,7 @@ input, textarea, select, option,
 }
 [data-quotation-doc-editor] .invoice-doc .invoice-doc-fields > .form-field > label,
 [data-quotation-doc-editor] .invoice-doc .invoice-doc-fields .field-head > label {
+  min-height: 0;
   white-space: normal;
   overflow: visible;
   overflow-wrap: anywhere;

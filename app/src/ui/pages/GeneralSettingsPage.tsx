@@ -7,11 +7,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Coins, Building2, CalendarClock } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, effectiveModules } from '../../core/activities.ts'
 import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, buildYearClosingLines, closingMechanismIds, fiscalYearsForBranch, type FiscalYear } from '../../core/fiscal.ts'
 import { reviewFiscalCloseJournal } from '../../core/fiscalCloseReview.ts'
+import { fiscalYearStateWarnings } from '../../core/fiscalStateDiagnostics.ts'
+import { fiscalCloseLinkIssues, hasAmbiguousUnassignedFiscalReversals, hasHiddenFiscalReversalClaims } from '../../core/fiscalCloseLinkReview.ts'
 import { formatMinor } from '../../core/money.ts'
 import { resolveBusinessTax, type BusinessTaxStatus } from '../../core/taxRegistration.ts'
 import { Btn, Field, inputCls, Modal, useToast, useUnsavedChangesGuard } from '../components/ui.tsx'
@@ -23,7 +25,12 @@ import { todayLocalIso } from '../../core/time.ts'
 export function GeneralSettingsPage() {
   const { setup, fiscalYears: allFiscalYears, addFiscalYear, loyalty, updateLoyalty, applyActivityChangeKey, toggleModule, activatedPayload, updateSetup, updateCompanyName, updateTaxSettings, activeBranchContext } = useAppStore()
   const { warehouses, branches, closeFiscalYear, reopenFiscalYear, journal, currentUserId, appUsers } = useDataStore()
-  const fiscalYears = fiscalYearsForBranch(allFiscalYears, activeBranchContext?.id ?? null, Boolean(activeBranchContext?.isMain))
+  // إظهار تحذير عام فقط؛ لا نعرض تفاصيل القيود خارج صلاحية الفرع.
+  const rawJournal = useRawDataStore(state => state.journal)
+  const fiscalYears = useMemo(() => fiscalYearsForBranch(allFiscalYears, activeBranchContext?.id ?? null, Boolean(activeBranchContext?.isMain)), [allFiscalYears, activeBranchContext?.id, activeBranchContext?.isMain])
+  // مؤشر من الدفتر الظاهر فقط؛ لا يفحص أو يعرض قيود الفروع الأخرى.
+  const mainBranchId = activeBranchContext?.isMain ? activeBranchContext.id : undefined
+  const fiscalStateWarnings = useMemo(() => new Set(fiscalYearStateWarnings(fiscalYears, journal, mainBranchId)), [fiscalYears, journal, mainBranchId])
   const ownerSession = currentUserId == null || appUsers.find((user) => user.id === currentUserId)?.roleId === 'owner'
   const canManageFiscalYears = branches.length === 0 || Boolean(activeBranchContext && (ownerSession || activeBranchContext.isMain))
   const toast = useToast()
@@ -49,11 +56,15 @@ export function GeneralSettingsPage() {
   /* ─── إعادة فتح سنة مقفلة (نمط عالمي Reopen books): عكس قيد الإقفال + فتح الفترة للتصحيح ─── */
   const [reopenTarget, setReopenTarget] = useState<(typeof fiscalYears)[number] | null>(null)
   const closeReview = useMemo(() => closeTarget ? reviewFiscalCloseJournal(journal, closeTarget) : null, [journal, closeTarget])
+  const closeLinkIssues = useMemo(() => closeTarget && closeReview?.valid ? fiscalCloseLinkIssues(journal, closeTarget) : [], [journal, closeTarget, closeReview])
+  const ambiguousReversals = useMemo(() => closeTarget ? hasAmbiguousUnassignedFiscalReversals(rawJournal, closeTarget) : false, [rawJournal, closeTarget])
+  const hiddenReversalClaims = useMemo(() => closeTarget ? hasHiddenFiscalReversalClaims(rawJournal, journal, closeTarget) : false, [rawJournal, journal, closeTarget])
   const closePreview = useMemo(() => {
-    if (!closeTarget || !closeReview?.valid) return null
-    const mechanism = closingMechanismIds(journal)
-    return buildYearClosingLines(journal.filter(entry => !mechanism.has(entry.id)), closeTarget)
-  }, [journal, closeTarget, closeReview])
+    if (!closeTarget || !closeReview?.valid || closeLinkIssues.length || ambiguousReversals || hiddenReversalClaims) return null
+    const basis = journal.filter(entry => entry.date <= closeTarget.endDate)
+    const mechanism = closingMechanismIds(basis)
+    return buildYearClosingLines(basis.filter(entry => !mechanism.has(entry.id)), closeTarget)
+  }, [journal, closeTarget, closeReview, closeLinkIssues, ambiguousReversals, hiddenReversalClaims])
   const [newYearOpen, setNewYearOpen] = useState(false)
   const nextSuggested = suggestFiscalYear(new Date().getFullYear() + (fiscalYears.some((y) => y.nameAr === String(new Date().getFullYear())) ? 1 : 0))
   const [fyName, setFyName] = useState(nextSuggested.nameAr)
@@ -604,6 +615,7 @@ export function GeneralSettingsPage() {
           الإقفال السنوي (منهجية البرامج العالمية): قيد يُصفّر كل الإيرادات والمصروفات ويرحّل صافي
           الربح/الخسارة إلى «الأرباح المرحّلة» — وبعده تُقفل الفترة فلا قيود بأثر رجعي فيها.
           أرصدة العملاء والموردين والخزائن تنتقل تلقائياً (الميزانية تراكمية).
+          تنبيهات الحالة تفحص مؤشرات من الدفتر الظاهر فقط؛ غياب التنبيه لا يثبت صحة الإقفال أو اكتمال الدفتر.
         </p>
         {branches.length > 0 && activeBranchContext && fiscalYears.length === 0 && (
           <div role="alert" className="mb-3 rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-[12px] text-amber-900 dark:text-amber-200">
@@ -617,24 +629,29 @@ export function GeneralSettingsPage() {
             // إعادة الفتح بالترتيب العكسي: أحدث سنة مقفلة فقط (لا سنة مقفلة أحدث منها)
             const newestClosed = y.status === 'closed' && !fiscalYears.some((o) => o.id !== y.id && o.branchId === y.branchId && o.status === 'closed' && o.startDate > y.endDate)
             return (
-              <div key={y.id} className="flex items-center justify-between rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5">
-                <div>
-                  <span className="font-black text-slate-800 dark:text-white">{y.nameAr}</span>
-                  <span className="text-[11px] text-slate-400 ms-2" dir="ltr">{y.startDate} → {y.endDate}</span>
+              <div key={y.id} className="rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-black text-slate-800 dark:text-white">{y.nameAr}</span>
+                    <span className="text-[11px] text-slate-400 ms-2" dir="ltr">{y.startDate} → {y.endDate}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(y.status === 'open' || y.status === 'closed') && <Btn variant="ghost" onClick={() => setReportYear(y)}>📊 تقرير السنة</Btn>}
+                    {y.status === 'closed' ? (
+                      <>
+                        {newestClosed && <Btn variant="ghost" onClick={() => setReopenTarget(y)}>🔓 إعادة فتح</Btn>}
+                        <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-500/10 text-slate-500 font-bold flex items-center gap-1"><Lock size={11} /> مقفلة</span>
+                      </>
+                    ) : y.status !== 'open' ? (
+                      <span className="text-[11px] px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-700 font-bold">حالة غير معروفة</span>
+                    ) : closable ? (
+                      <Btn variant="ghost" onClick={() => setCloseTarget(y)}>🔒 إقفال السنة</Btn>
+                    ) : (
+                      <span className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">مفتوحة — جارية</span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Btn variant="ghost" onClick={() => setReportYear(y)}>📊 تقرير السنة</Btn>
-                  {y.status === 'closed' ? (
-                    <>
-                      {newestClosed && <Btn variant="ghost" onClick={() => setReopenTarget(y)}>🔓 إعادة فتح</Btn>}
-                      <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-500/10 text-slate-500 font-bold flex items-center gap-1"><Lock size={11} /> مقفلة</span>
-                    </>
-                  ) : closable ? (
-                    <Btn variant="ghost" onClick={() => setCloseTarget(y)}>🔒 إقفال السنة</Btn>
-                  ) : (
-                    <span className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">مفتوحة — جارية</span>
-                  )}
-                </div>
+                {fiscalStateWarnings.has(y.id) && <div role="alert" className="mt-2 text-[12px] font-bold text-amber-700 dark:text-amber-300">حالة السنة أو دليل إقفالها الظاهر يحتاج مراجعة محاسبية. لم تُغيّر الحالة تلقائياً من هذا التنبيه.</div>}
               </div>
             )
           })}
@@ -644,24 +661,27 @@ export function GeneralSettingsPage() {
       <Modal open={!!closeTarget} onClose={() => setCloseTarget(null)} title={`🔒 إقفال السنة المالية «${closeTarget?.nameAr ?? ''}»`}>
         <div className="space-y-4">
           <div className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
-            سيحدث الآتي (يمكن التراجع لاحقاً بزر «إعادة فتح» — يعكس قيد الإقفال):
+            سيحدث الآتي. إعادة الفتح لاحقاً تعكس قيد الإقفال عند اجتياز فحوصها؛ لا يُضمن قبولها إذا تغيّر الدفتر أو ظهرت أدلة غير سليمة:
             <ul className="list-disc pr-5 mt-2 space-y-1 text-[12px]">
               <li>قيد إقفال بتاريخ {closeTarget?.endDate} يصفّر كل حسابات الإيرادات والمصروفات</li>
               <li>صافي الربح/الخسارة يُرحَّل إلى «أرباح مرحّلة 3102»</li>
               <li>تُقفل الفترة: يُرفض أي قيد يدوي بتاريخ داخلها</li>
-              <li>قوائم الدخل التاريخية تظل صحيحة (قيد الإقفال مستثنى منها)</li>
+              <li>قوائم الدخل تستثني آلية الإقفال؛ صحة النتائج تتطلب مراجعة القيود والروابط والإسناد</li>
             </ul>
           </div>
           {closeReview && <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 text-xs space-y-1" aria-label="مراجعة الدفتر قبل الإقفال">
             <div className="font-bold">فحص بنية الدفتر الظاهر حتى نهاية السنة</div>
             <div>القيود المفحوصة: {closeReview.checkedEntries}؛ منها في السنة: {closeReview.periodEntries}؛ دون فرع صريح ضمن الظاهر في السنة: {closeReview.visibleUnassignedEntries}.</div>
             <div>{closeReview.valid ? 'لم تظهر قيود غير متوازنة أو غير سليمة في الفحص البنيوي.' : `تعذر الإقفال: راجع القيود غير السليمة ${closeReview.invalidEntryIds.slice(0, 10).map(id => `#${id}`).join('، ')}.`}</div>
+            {ambiguousReversals && <div role="alert">تعذر الإقفال: يوجد عكس غير مسند وأصله غير واضح في الدفتر الكامل — راجع الإسناد مع المختص.</div>}
+            {hiddenReversalClaims && <div role="alert">تعذر الإقفال: يوجد عكس خارج نطاق الفرع يدّعي قيداً ظاهراً — راجع الإسناد مع المختص.</div>}
+            {closeLinkIssues.length > 0 && <div role="alert">تعذر الإقفال: روابط عكس غير مثبتة في الدفتر الظاهر، راجع القيود {closeLinkIssues.slice(0, 10).map(id => `#${id}`).join('، ')}. قد يكون الأصل خارج نطاق الفرع أو السجل.</div>}
             {closePreview && <div>صافي قيد الإقفال المتوقع: {fmt(closePreview.netProfitMinor)} {cur.symbol} ({closePreview.lines.length} سطر).</div>}
-            <div className="text-amber-700">الفحص لا يثبت صحة إسناد الفروع أو اكتمال الجرد ومطابقة البنوك والذمم والضرائب والتسويات، ولا يغني عن مراجعة المختص.</div>
+            <div className="text-amber-700">المبلغ تقديري؛ عند التأكيد يُراجع أساس إضافي للاستعادة وإعادة الفتح وقد يُرفض الإقفال. الفحص لا يثبت صحة إسناد الفروع أو اكتمال الجرد ومطابقة البنوك والذمم والضرائب والتسويات، ولا يغني عن مراجعة المختص.</div>
           </div>}
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setCloseTarget(null)}>تراجع</Btn>
-            <Btn onClick={doCloseYear} disabled={!closeReview?.valid}>🔒 تأكيد الإقفال</Btn>
+            <Btn onClick={doCloseYear} disabled={!closeReview?.valid || closeLinkIssues.length > 0 || ambiguousReversals || hiddenReversalClaims}>🔒 تأكيد الإقفال</Btn>
           </div>
         </div>
       </Modal>

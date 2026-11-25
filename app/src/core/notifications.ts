@@ -54,6 +54,7 @@ export interface NotificationsInput {
   /** مشروعات مقاولات تستحق/تقترب من استحقاق الإفراج عن محتجزها بعد فترة الضمان — سد فجوة تقرير النشاط #11 Future #1 */
   retentionDueProjects?: { projectId: number; projectNameAr: string; dueDate: string; daysLeft: number; remainingMinor: number }[]
   retentionReviewProjects?: { projectId: number; projectNameAr: string }[]
+  retentionScheduleReviewProjects?: { projectId: number; projectNameAr: string }[]
   /** تنبيهات عقود إيجار العقارات (نمط سمات): انتهاء قريب أو قسط متأخر */
   leaseAlerts?: { leaseId: number; contractNumber: string; tenantName: string; kind: 'expiring' | 'overdue'; days: number; amountMinor: number }[]
   /** مواعيد عيادة اليوم ما زالت «محجوز» دون حسم — سد فجوة تقرير النشاط #12 (Immediate #3) */
@@ -282,15 +283,13 @@ export function collectNotifications(input: NotificationsInput): AppNotification
     })
   }
 
-  // 1.74) مشروعات تستحق/تقترب من استحقاق الإفراج عن المحتجز بعد فترة الضمان (سد فجوة تقرير النشاط #11 — Future #1)
+  // نهاية الضمان تقويمية من بيانات المستخدم وليست إثباتاً للتسليم أو الاستحقاق.
   for (const r of input.retentionDueProjects ?? []) {
     out.push({
       id: `retdue:${r.projectId}`,
-      icon: '🔓',
-      title: r.daysLeft < 0 ? `محتجز مستحق الإفراج: ${r.projectNameAr}` : `محتجز يقترب استحقاقه: ${r.projectNameAr}`,
-      body: r.daysLeft < 0
-        ? `انتهت فترة الضمان منذ ${-r.daysLeft} يوماً (${r.dueDate}) — ${input.fmt(r.remainingMinor)} بانتظار الإفراج`
-        : `فترة الضمان تنتهي خلال ${r.daysLeft} يوماً (${r.dueDate}) — ${input.fmt(r.remainingMinor)} محتجزة`,
+      icon: '📅',
+      title: `مراجعة تاريخ محتجز المشروع: ${r.projectNameAr}`,
+      body: `نهاية الضمان المحسوبة من البيانات المدخلة ${r.dueDate} (${r.daysLeft < 0 ? `مضى ${-r.daysLeft} يوماً` : `بعد ${r.daysLeft} يوماً`})؛ محتجز ظاهر ${input.fmt(r.remainingMinor)}. راجع العقد والتسليم والاستحقاق قبل التحصيل.`,
       severity: r.daysLeft < 0 ? 'danger' : 'warn',
       route: '/contracting/projects',
       perm: 'ops.activity.use',
@@ -298,7 +297,10 @@ export function collectNotifications(input: NotificationsInput): AppNotification
   }
 
   for (const r of input.retentionReviewProjects ?? []) {
-    out.push({ id: `retreview:${r.projectId}`, icon: '⚠️', title: `مراجعة محتجز المشروع: ${r.projectNameAr}`, body: 'بيانات المستخلص أو إشعاره لا تطابق الدفتر؛ راجعها قبل احتساب المحتجز أو تحصيله.', severity: 'danger', route: '/contracting/projects', perm: 'ops.activity.use' })
+    out.push({ id: `retreview:${r.projectId}`, icon: '⚠️', title: `مراجعة محتجز المشروع: ${r.projectNameAr}`, body: 'تعذر التحقق من بيانات المحتجز أو قيوده؛ راجع السجل قبل احتسابه أو تحصيله.', severity: 'danger', route: '/contracting/projects', perm: 'ops.activity.use' })
+  }
+  for (const r of input.retentionScheduleReviewProjects ?? []) {
+    out.push({ id: `retschedule:${r.projectId}`, icon: '⚠️', title: `مراجعة تاريخ محتجز المشروع: ${r.projectNameAr}`, body: 'يوجد محتجز ظاهر لكن تاريخ التسليم أو مدة الضمان أو تاريخ المراجعة غير صالح أو غير معلوم؛ راجع العقد والمستندات.', severity: 'warn', route: '/contracting/projects', perm: 'ops.activity.use' })
   }
 
   // 1.75) مواعيد عيادة اليوم ما زالت «محجوز» دون حسم (سد فجوة تقرير النشاط #12 — Immediate #3)

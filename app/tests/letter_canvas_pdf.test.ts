@@ -18,3 +18,11 @@ it('لا يحفظ ملفاً ناقصاً إذا فشل التقاط أي صفح
  await expect(exportLetterCanvasPdf([document.createElement('div'), document.createElement('div')], 'test.pdf')).rejects.toThrow('canvas failed')
  expect(calls.save).not.toHaveBeenCalled()
 })
+it('يستبدل حقول التحرير بنصوصها ويزيل الأدوات في نسخة PDF فقط', async () => {
+ const page = document.createElement('div')
+ await exportLetterCanvasPdf([page], 'table.pdf')
+ const cloned = document.implementation.createHTMLDocument('')
+ cloned.body.innerHTML = '<div class="letters-canvas-item is-selected"><div class="letters-item-tools">أدوات</div><table><tbody><tr><td><textarea class="letters-table-cell-edit">قيمة</textarea></td></tr></tbody></table></div>'
+ calls.canvas.mock.calls[0][1].onclone(cloned)
+ expect(cloned.querySelector('.letters-table-cell-edit')).toBeNull(); expect(cloned.querySelector('.letters-item-tools')).toBeNull(); expect(cloned.querySelector('td')?.textContent).toBe('قيمة')
+})

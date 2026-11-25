@@ -1,3 +1,4 @@
+import { openCustomerWhatsapp } from '../components/openCustomerWhatsapp.ts'
 import { WhatsappIcon } from '../components/WhatsappIcon.tsx'
 import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
@@ -45,7 +46,7 @@ interface DraftPart { itemId: string; qty: string; unitPrice: string; serials: s
 interface DraftService { serviceId: string; nameAr: string; qty: string; unitPrice: string; unitCost: string }
 
 export function MaintenancePage() {
-  const { tickets, customers, items, journal, paymentTerminals, paymentTerminalTransactions, openTicket, setTicketStatus, setTicketTechnician, logTicketNotificationSent, setTicketSignature, startTicketWork, stopTicketWork, deliverTicket, refundMaintenanceTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService, employees, purchaseOrders, serials, sales } = useDataStore()
+  const { tickets, customers, items, journal, paymentTerminals, paymentTerminalTransactions, openTicket, setTicketStatus, setTicketTechnician, setTicketSignature, startTicketWork, stopTicketWork, deliverTicket, refundMaintenanceTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService, employees, purchaseOrders, serials, sales } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -407,8 +408,8 @@ export function MaintenancePage() {
                       )}
                       {t.customerPhone && (
                         <button
-                          onClick={() => { window.open(ticketWhatsappLink(t.customerPhone, buildTicketStatusMessage(t, setup.shopName || 'تَحَكَّم')), '_blank', 'noopener'); try { logTicketNotificationSent(t.id, t.status) } catch { /* لا يمنع الإرسال */ } }}
-                          title="إبلاغ العميل بحالة الجهاز عبر واتساب — يُسجَّل في سجل التذكرة أنه أُرسل"
+                          onClick={() => openCustomerWhatsapp(() => ticketWhatsappLink(t.customerPhone, buildTicketStatusMessage(t, setup.shopName || 'تَحَكَّم'), setup.countryCode), toast)}
+                          title="إبلاغ العميل بحالة الجهاز عبر واتساب — فتح المحادثة لا يؤكد الإرسال"
                           className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all"
                         ><WhatsappIcon size={14} /></button>
                       )}
@@ -761,7 +762,7 @@ export function MaintenancePage() {
 
             {(viewing.notifications ?? []).length > 0 && (
               <div className="text-[10.5px] text-slate-400">
-                📹 إشعارات واتساب مُرسَلة: {(viewing.notifications ?? []).map((n, i) => (
+                📹 سجل محاولات واتساب السابقة (لا يؤكد الإرسال): {(viewing.notifications ?? []).map((n, i) => (
                   <span key={i} className="me-2">«{TICKET_STATUS_LABELS[n.status]}» <span dir="ltr" className="opacity-70">{localDateTimeLabel(n.at)}</span></span>
                 ))}
               </div>

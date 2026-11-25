@@ -10,6 +10,8 @@
  *   الإلغاء قبل التسليم:   رد العربون: مدين 2109 ← دائن الخزينة
  * نواة خالصة — كل الأموال أعداد صحيحة (Minor).
  */
+import { waChatLink } from './whatsapp.ts'
+
 import type { Minor } from './money.ts'
 import { splitInclusiveTax, addExclusiveTax } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
@@ -185,11 +187,10 @@ export function buildLaundryStatusMessage(
   return `عميلنا العزيز ${order.customerName}،\n${statusLine[order.status]}\n— ${shopName}`
 }
 
-/** رابط واتساب جاهز برقم العميل ورسالة الحالة — رقم مصري 01xxxxxxxxx أو دولي بلا + */
-export function laundryWhatsappLink(phone: string, message: string): string {
-  const digits = phone.replace(/\D/g, '')
-  const intl = digits.startsWith('0') ? `2${digits}` : digits // مصر: 20 + الرقم بلا الصفر
-  return `https://wa.me/${intl}?text=${encodeURIComponent(message)}`
+/** رابط للعميل المحدد فقط، مع بلد المنشأة أو رقم دولي صريح. */
+export function laundryWhatsappLink(phone: string, message: string, countryCode?: string | null): string {
+  if (!phone.trim()) throw new Error('رقم واتساب مطلوب للعميل')
+  return waChatLink(phone, message, countryCode)
 }
 
 /* ─── تقرير ─── */

@@ -201,7 +201,7 @@ describe('سد فجوة مستقبلية #3 — النشاط #7 (قطع غيار
     expect(msg).toContain('سامي')
     expect(msg).toContain('طرمبة بنزين')
     expect(msg).toContain('CPO-0001')
-    const link = waChatLink('01012345678', msg)
+    const link = waChatLink('01012345678', msg, 'EG')
     expect(link).toMatch(/^https:\/\/wa\.me\/201012345678\?text=/)
   })
 })

@@ -46,7 +46,7 @@ beforeEach(() => {
     ...state,
     sync: { ...DEFAULT_SYNC_SETTINGS, ...SYNC_CONFIG },
   }))
-  useRawDataStore.setState({ journal: [], customers: [localCustomer], projectDeletionRecords: [] } as never)
+  useRawDataStore.setState({ journal: [], customers: [localCustomer], projectDeletionRecords: [], projects: [], retentionReleases: [], projectExtracts: [], clientAdvances: [], paymentTerminalTransactions: [] } as never)
 })
 
 describe('سلامة لقطة التعارض قبل تطبيق السحابة', () => {
@@ -101,6 +101,43 @@ describe('سلامة لقطة التعارض قبل تطبيق السحابة', 
     expect(useRawDataStore.getState().customers).toEqual([localCustomer])
     setItemSpy.mockRestore()
   })
+})
+
+it('يرفض سحب حالة تسقط علامة المستخلص الختامي ولا يحدّث مراجعة السحابة', async () => {
+  const extract = { id: 1, projectId: 1, isFinal: true }
+  useRawDataStore.setState({ projectExtracts: [extract] } as never)
+  useAppStore.getState().updateSync({ dirty: false })
+  syncOnceMock.mockResolvedValue({ action: 'pulled', newRev: 2, pulledData: JSON.stringify({ journal: [], treasuries: [], projectExtracts: [{ ...extract, isFinal: false }] }), message: 'سحب' })
+  const result = await runSyncCycle()
+  expect(result.ok).toBe(false)
+  expect(result.message).toContain('ختامي')
+  expect(useRawDataStore.getState().projectExtracts).toEqual([extract])
+  expect(useAppStore.getState().sync.lastKnownRev).toBe(1)
+})
+
+it('يرفض سحب تغيير أساس الختامي دون قيد بديل ولا يحدّث المراجعة أو الحالة المحلية', async () => {
+  const extract = { id: 1, projectId: 1, isFinal: true, extractNumber: 'PRX-0001', journalEntryId: 1, payment: 'cash', totals: { grossMinor: 100, dueMinor: 100 } }
+  useRawDataStore.setState({ projectExtracts: [extract] } as never)
+  useAppStore.getState().updateSync({ dirty: false })
+  syncOnceMock.mockResolvedValue({ action: 'pulled', newRev: 2, pulledData: JSON.stringify({ journal: [], treasuries: [], projectExtracts: [{ ...extract, totals: { grossMinor: 50, dueMinor: 50 } }] }), message: 'سحب' })
+  const result = await runSyncCycle()
+  expect(result.ok).toBe(false)
+  expect(result.message).toContain('ختامي')
+  expect(useRawDataStore.getState().projectExtracts).toEqual([extract])
+  expect(useAppStore.getState().sync.lastKnownRev).toBe(1)
+})
+
+it('يرفض سحب حالة تعيد فتح مشروع محصل المحتجز ولا يحدّث مراجعة السحابة', async () => {
+  const project = { id: 1, status: 'completed', completedAt: '2026-11-15T10:00:00', branchId: 1 }
+  const release = { id: 1, projectId: 1 }
+  useRawDataStore.setState({ projects: [project], retentionReleases: [release], projectExtracts: [], clientAdvances: [], paymentTerminalTransactions: [] } as never)
+  useAppStore.getState().updateSync({ dirty: false })
+  syncOnceMock.mockResolvedValue({ action: 'pulled', newRev: 2, pulledData: JSON.stringify({ journal: [], treasuries: [], projects: [{ ...project, status: 'active' }], retentionReleases: [release], projectExtracts: [], clientAdvances: [], paymentTerminalTransactions: [] }), message: 'سحب' })
+  const result = await runSyncCycle()
+  expect(result.ok).toBe(false)
+  expect(result.message).toContain('إقفال المشروع')
+  expect(useRawDataStore.getState().projects).toEqual([project])
+  expect(useAppStore.getState().sync.lastKnownRev).toBe(1)
 })
 
 it('يرفض سحب نسخة قديمة تسقط سجل مشروع محذوف ولا يحدّث مراجعة السحابة', async () => {

@@ -1,5 +1,6 @@
-import { validLetterLayout, type LetterLayout } from './letterLayout.ts'
+import { validLetterLayout, type LetterBox, type LetterLayout } from './letterLayout.ts'
 import { isValidFiscalDate } from './fiscal.ts'
+import { LETTER_TABLE_STYLES, validLetterTableFormat, validLetterTableDetails, type LetterCellFormat, type LetterCellMerge, type LetterTableFormat, type LetterTableStyle } from './letterTableStyles.ts'
 
 export type LetterAlignment = 'right' | 'center' | 'left' | 'justify'
 export type LetterFont = 'Arial' | 'Tahoma' | 'Georgia'
@@ -21,15 +22,37 @@ export function letterFieldStyle(letter: Letter, field: LetterField): LetterText
   return { ...base, ...letter.fieldStyles?.[field] }
 }
 export interface LetterIdentity { name: string; logo: string; address: string; phone: string; email: string; website: string; commercialRegister: string; taxNumber?: string; poBox?: string }
+export const LETTER_STATUSES = { draft: 'مسودة', ready: 'جاهز ولم يُرسل', sent: 'مرسل', replied: 'تم الرد', closed: 'مغلق' } as const
+export type LetterStatus = keyof typeof LETTER_STATUSES
+/** عناصر مستقلة عن حقول الخطاب؛ إحداثياتها بالملليمتر داخل الصفحة. */
+export type LetterObject = { id: string; box: LetterBox } & ({ kind: 'image'; data: string } | { kind: 'table'; cells: string[][]; style?: LetterTableStyle; format?: LetterTableFormat; cellFormats?: Record<string, LetterCellFormat>; merges?: LetterCellMerge[]; autoFlow?: boolean })
+export function validLetterObjects(objects: LetterObject[] | undefined, pageCount: number): boolean {
+  if (objects === undefined) return true
+  if (!Array.isArray(objects) || objects.length > 20 || new Set(objects.map(o => o?.id)).size !== objects.length) return false
+  let imageBytes = 0
+  return objects.every(o => {
+    if (!o || typeof o.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(o.id) || !o.box || typeof o.box !== 'object') return false
+    const b = o.box
+    if (!Number.isFinite(b.x) || !Number.isFinite(b.y) || !Number.isFinite(b.width) || b.x < 0 || b.y < 0 || b.width < 5 || b.x + b.width > 210 || b.y >= 297 || (b.page !== undefined && (!Number.isInteger(b.page) || b.page < 1 || b.page > pageCount)) || (b.repeat !== undefined && typeof b.repeat !== 'boolean')) return false
+    if (o.kind === 'image') {
+      imageBytes += typeof o.data === 'string' ? o.data.length : 0
+      return validLetterImage(o.data) && imageBytes <= 4_500_000 && Number.isFinite(b.height) && b.height! >= 5 && b.y + b.height! <= 297
+    }
+    if (o.kind === 'table') return (o.autoFlow === undefined || typeof o.autoFlow === 'boolean') && (!o.autoFlow || !b.repeat) && (o.style === undefined || Object.hasOwn(LETTER_TABLE_STYLES, o.style)) && validLetterTableFormat(o.format) && b.height === undefined && Array.isArray(o.cells) && o.cells.length >= 1 && o.cells.length <= 50 && Array.isArray(o.cells[0]) && o.cells[0].length >= 1 && o.cells[0].length <= 6 && o.cells.every(row => Array.isArray(row) && row.length === o.cells[0].length && row.every(cell => typeof cell === 'string' && cell.length <= 500)) && validLetterTableDetails(o.cells, o.cellFormats, o.merges)
+    return false
+  })
+}
 export interface Letter {
   id: string
   branchId?: number
   subject: string
+  status?: LetterStatus
   recipient: string
   customerId?: number | null
   recipientDetails?: LetterRecipientDetails
   fieldStyles?: Partial<Record<LetterField, LetterTextStyle>>
   layout?: LetterLayout
+  objects?: LetterObject[]
   reference: string
   date: string
   salutation: string
@@ -51,6 +74,7 @@ export function newLetterParagraph(text = ''): LetterParagraph {
 }
 export function validateLetter(letter: Letter): string[] {
   const errors: string[] = []
+  if (letter.status !== undefined && !Object.hasOwn(LETTER_STATUSES, letter.status)) errors.push('حالة الخطاب غير صالحة')
   if (!letter.subject.trim()) errors.push('موضوع الخطاب مطلوب')
   if (!letter.recipient.trim()) errors.push('الجهة الموجه إليها مطلوبة')
   if (!isValidFiscalDate(letter.date)) errors.push('تاريخ الخطاب غير صالح')
@@ -62,6 +86,7 @@ export function validateLetter(letter: Letter): string[] {
   if (letter.recipientDetails && Object.values(letter.recipientDetails).some(v => typeof v !== 'string' || v.length > 2000)) errors.push('بيانات المستلم غير صالحة')
   if (letter.fieldStyles && Object.entries(letter.fieldStyles).some(([key, style]) => !Object.hasOwn(LETTER_FIELDS, key) || !style || !/^#[0-9a-f]{6}$/i.test(style.color) || !Number.isInteger(style.size) || style.size < 9 || style.size > 36 || !['right', 'center', 'left', 'justify'].includes(style.align) || !['Arial', 'Tahoma', 'Georgia'].includes(style.font ?? letter.font) || [style.bold, style.italic, style.underline].some(v => typeof v !== 'boolean'))) errors.push('تنسيق الحقل غير صالح')
   if ([letter.signatureImage, letter.stampImage].some(image => image != null && image !== '' && !validLetterImage(image))) errors.push('صورة التوقيع أو الختم غير صالحة')
+  if (!validLetterObjects(letter.objects, letter.layout?.pageCount ?? 1) || (!letter.layout && (letter.objects?.length ?? 0) > 0)) errors.push('الصور أو الجداول غير صالحة')
   if (letter.layout && !validLetterLayout(letter.layout, letter)) errors.push('تخطيط الخطاب غير صالح')
   return errors
 }

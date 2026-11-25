@@ -31,7 +31,7 @@ function equityReview(journal: readonly JournalEntry[], period: FinPeriod, names
   const currentResult = incomeStatement(journal, period, names).netProfitMinor
   const resultIncludingOpening = incomeStatement(journal, period, names, { includeOpeningBalances: true }).netProfitMinor
   const openingResult = resultIncludingOpening - currentResult
-  const closing = closingMechanismIds(journal)
+  const closing = closingMechanismIds(journal.filter(entry => entry.date <= period.to))
   let directMovement = 0
   for (const entry of journal) {
     if (entry.date < period.from || entry.date > period.to || closing.has(entry.id)) continue

@@ -35,7 +35,7 @@ describe('③ تذكير المواعيد عبر واتساب', () => {
     expect(msg).toContain('17:30')
     expect(msg).toContain('قص وشور')
     expect(msg).toContain('صالون الأناقة')
-    const link = bookingWhatsappLink('01098765432', msg)
+    const link = bookingWhatsappLink('01098765432', msg, 'EG')
     expect(link).toContain('https://wa.me/201098765432?text=')
     expect(decodeURIComponent(link.split('text=')[1])).toBe(msg)
   })

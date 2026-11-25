@@ -259,11 +259,22 @@ export interface ClosingLine { accountCode: string; debit: number; credit: numbe
 export function closingMechanismIds(
   journal: readonly { id: number; sourceType?: string; reversesEntryId?: number | null }[],
 ): Set<number> {
-  const closing = new Set(
-    journal.filter((e) => (e as { sourceType?: string }).sourceType === 'year_closing').map((e) => e.id),
-  )
-  for (const e of journal) {
-    if (e.reversesEntryId != null && closing.has(e.reversesEntryId)) closing.add(e.id)
+  const closing = new Set(journal.filter(e => e.sourceType === 'year_closing').map(e => e.id))
+  const children = new Map<number, number[]>()
+  for (const entry of journal) {
+    // لا يكفي وجود رابط خام لاستبعاد حركة اقتصادية ليست من نوع العكس.
+    if (entry.sourceType !== 'reversal' || entry.reversesEntryId == null) continue
+    const list = children.get(entry.reversesEntryId) ?? []
+    list.push(entry.id)
+    children.set(entry.reversesEntryId, list)
+  }
+  // ترتيب سجل مستورد قد يختلف عن ترتيب الروابط. تتبع السلسلة حتى الثبات
+  // دون الاعتماد على ترتيب المصفوفة، وبـ Set لتجنب الدوران في البيانات التالفة.
+  const pending = [...closing]
+  for (let index = 0; index < pending.length; index++) {
+    for (const child of children.get(pending[index]) ?? []) {
+      if (!closing.has(child)) { closing.add(child); pending.push(child) }
+    }
   }
   return closing
 }

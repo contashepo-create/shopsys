@@ -802,7 +802,7 @@ export function ReportsPage() {
                         try {
                           const phone = documentWaPhone(o.customerPhone, setup.countryCode)
                           if (!phone) throw new Error('رقم واتساب غير صالح')
-                          return <a href={waChatLink(phone, buildPartArrivedMessage(o, setup.shopName || ''))} target="_blank" rel="noreferrer" className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 ml-1"><WhatsappIcon size={12} className="inline-block align-middle" /> إخطار واتساب</a>
+                          return <a href={waChatLink(`+${phone}`, buildPartArrivedMessage(o, setup.shopName || ''))} target="_blank" rel="noreferrer" className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 ml-1"><WhatsappIcon size={12} className="inline-block align-middle" /> إخطار واتساب</a>
                         } catch {
                           return <span role="status" className="text-[10px] text-amber-700 ml-1">رقم واتساب يحتاج مراجعة — أدخله دولياً</span>
                         }

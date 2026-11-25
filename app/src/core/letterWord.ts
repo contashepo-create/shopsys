@@ -1,4 +1,5 @@
-import { AlignmentType, BorderStyle, Document, Footer, FrameAnchorType, FrameWrap, Header, HorizontalPositionRelativeFrom, ImageRun, Packer, Paragraph, SectionType, TextRun, TextWrappingType, VerticalPositionRelativeFrom } from 'docx'
+import { AlignmentType, BorderStyle, Document, Footer, FrameAnchorType, FrameWrap, Header, HorizontalPositionRelativeFrom, ImageRun, Packer, Paragraph, SectionType, Table, TableAnchorType, TableCell, TableLayoutType, TableRow, TextRun, WidthType, TextWrappingType, VerticalPositionRelativeFrom } from 'docx'
+import { letterTableCellAppearance, letterCellKey, letterMergeAt } from './letterTableStyles.ts'
 import { rasterizeLetterBackground } from './letterBackgrounds.ts'
 import { getLetterBoxes, isLetterItemVisible, letterLayoutItems } from './letterLayout.ts'
 import { letterFieldStyle, validLetterImage, type Letter, type LetterAlignment, type LetterField, type LetterTextStyle } from './letters.ts'
@@ -9,6 +10,8 @@ const alignment: Record<LetterAlignment, typeof AlignmentType.RIGHT | typeof Ali
 
 /** Word قابل للتحرير، ويحمل لقطة البيانات والتنسيق المستقل لكل حقل وفقرة. */
 export async function createLetterWord(letter: Letter): Promise<Blob> {
+  // مصدر التدفق وحده لا يحتوي مواضع أجزائه؛ لا تصدر نسخة قد تقص البيانات.
+  if (letter.objects?.some(object => object.kind === 'table' && object.autoFlow)) throw new Error('يلزم قياس توزيع الجدول التلقائي من المعاينة قبل تصدير Word')
   const runs = (text: string, style: LetterTextStyle) => text.split('\n').map((line, i) => new TextRun({
     text: line, font: { ascii: style.font ?? letter.font, hAnsi: style.font ?? letter.font, cs: style.font ?? letter.font },
     size: style.size * 2, sizeComplexScript: style.size * 2, color: style.color.slice(1), bold: style.bold, boldComplexScript: style.bold,
@@ -37,6 +40,7 @@ export async function createLetterWord(letter: Letter): Promise<Blob> {
   }
   const [signatureImage, stampImage, fittedLogo] = await Promise.all([readMark(letter.signatureImage), readMark(letter.stampImage), readLogo()])
   const marks = { signatureImage, stampImage }
+  const objectImages = new Map(await Promise.all((letter.objects ?? []).filter(o => o.kind === 'image').map(async o => [o.id, await readMark(o.data)] as const)))
   const markRun = (mark: NonNullable<typeof signatureImage>, maxWidth: number, maxHeight: number) => {
     const scale = Math.min(maxWidth / mark.width, maxHeight / mark.height)
     return new ImageRun({ type: mark.type, data: mark.bytes, transformation: { width: Math.max(1, Math.round(mark.width * scale)), height: Math.max(1, Math.round(mark.height * scale)) } })
@@ -48,10 +52,28 @@ export async function createLetterWord(letter: Letter): Promise<Blob> {
     const twips = (mm: number) => Math.round(mm * 1440 / 25.4)
     const items = letterLayoutItems(letter)
     const sections = Array.from({ length: letter.layout.pageCount ?? 1 }, (_, index) => {
-      const children = items.filter(item => isLetterItemVisible(letter, item.key) && ((boxes[item.key].page ?? 1) === index + 1 || boxes[item.key].repeat) && (item.rule || (item.logo ? !!logo : item.image ? !!marks[item.image] : !!item.text))).map(item => {
+      const children = items.filter(item => isLetterItemVisible(letter, item.key) && ((boxes[item.key].page ?? 1) === index + 1 || boxes[item.key].repeat) && (item.rule || !!item.objectId || (item.logo ? !!logo : item.image ? !!marks[item.image] : !!item.text))).map(item => {
       const box = boxes[item.key]
+      const object = item.objectId ? letter.objects?.find(o => o.id === item.objectId) : undefined
+      if (object?.kind === 'table') {
+        const tableStyle: LetterTextStyle = { align: object.format?.align ?? 'right', size: object.format?.fontSize ?? 12, color: '#202b3a', bold: false, italic: false, underline: false, font: letter.font }
+        return new Table({
+          width: { size: twips(box.width), type: WidthType.DXA },
+          columnWidths: object.cells[0].map(() => Math.floor(twips(box.width) / object.cells[0].length)),
+          layout: TableLayoutType.FIXED, visuallyRightToLeft: true,
+          float: { horizontalAnchor: TableAnchorType.PAGE, verticalAnchor: TableAnchorType.PAGE, absoluteHorizontalPosition: twips(box.x), absoluteVerticalPosition: twips(box.y) },
+          rows: object.cells.map((row, index) => new TableRow({ children: row.flatMap((cell, column) => {
+            const merge = letterMergeAt(object.merges, index, column)
+            if (merge && (merge.row !== index || merge.column !== column)) return []
+            const custom = object.cellFormats?.[letterCellKey(index, column)]
+            const appearance = letterTableCellAppearance(object.style, object.format, index)
+            const border = { style: BorderStyle.SINGLE, size: appearance.border === 'FFFFFF' ? 0 : 6, color: appearance.border }
+            return [new TableCell({ columnSpan: merge?.columns, rowSpan: merge?.rows, shading: { fill: custom?.background?.slice(1) ?? appearance.background }, borders: { top: border, bottom: border, left: border, right: border }, children: [new Paragraph({ bidirectional: true, alignment: alignment[custom?.align ?? tableStyle.align], spacing: { before: 0, after: 0 }, children: runs(cell, { ...tableStyle, align: custom?.align ?? tableStyle.align, size: custom?.fontSize ?? tableStyle.size, color: custom?.color ?? `#${appearance.color}`, bold: custom?.bold ?? appearance.bold }) })] })]
+          }) })),
+        })
+      }
       const style: LetterTextStyle | undefined = item.key === 'footerBlock' ? { align: 'center', size: 9, color: '#435664', bold: false, italic: false, underline: false, font: letter.font } : item.paragraphId ? letter.paragraphs.find(p => p.id === item.paragraphId) : item.field ? letterFieldStyle(letter, item.field) : undefined
-      const image = item.logo ? fittedLogo : item.image ? marks[item.image] : null
+      const image = object?.kind === 'image' ? objectImages.get(object.id) : item.logo ? fittedLogo : item.image ? marks[item.image] : null
       const contents = image ? [markRun(image, box.width * 96 / 25.4, (box.height ?? 22) * 96 / 25.4)] : style ? runs(item.text, style) : []
       const imageHeight = image ? Math.min(box.height ?? 22, box.width * image.height / image.width) : 0
       const frameY = image ? box.y + ((box.height ?? 22) - imageHeight) / 2 : box.y

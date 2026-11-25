@@ -42,3 +42,13 @@ it('يعرض أثر العرض الفائز قبل تعديل الكميات و�
  expect((screen.getByLabelText('وصف البند 1') as HTMLInputElement).disabled).toBe(false)
  expect(screen.getByText(/المشروع مرتبط بعرض فائز/)).toBeTruthy()
 })
+it('يحافظ على مدة ضمان صفر المسجلة عند فتح المشروع وحفظ تعديل آخر', async () => {
+ useRawDataStore.setState({ projects: [{ ...S().projects[0], actualHandoverDate: '2026-01-31', defectsLiabilityMonths: 0 }] })
+ render(<MemoryRouter><ProjectsPage /></MemoryRouter>)
+ fireEvent.click(screen.getByTitle('تعديل بيانات المشروع (القيمة قبل أول مستخلص فقط)'))
+ expect((screen.getByLabelText('فترة الضمان بالشهور') as HTMLInputElement).value).toBe('0')
+ fireEvent.change(screen.getByLabelText('اسم المشروع'), { target: { value: 'تعديل مع صفر' } })
+ fireEvent.click(screen.getByRole('button', { name: /حفظ التعديلات/ }))
+ await waitFor(() => expect(S().projects[0].nameAr).toBe('تعديل مع صفر'))
+ expect(S().projects[0].defectsLiabilityMonths).toBe(0)
+})

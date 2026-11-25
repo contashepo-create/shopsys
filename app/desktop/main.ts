@@ -30,8 +30,8 @@ import {
 } from './dbLocation.ts'
 import { isInAppNavigation, isExternalOpenable, isWhatsAppChatLink } from './navigationPolicy.ts'
 import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
-import { cleanStagedProbeFiles, discardStagedBackup, replaceWithStagedBackup, stageFileRestore } from './fileRestoreStage.ts'
-import { assertFileRestoreHistory } from './fileRestoreHistory.ts'
+import { cleanStagedProbeFiles, discardStagedBackup, fingerprintRestoreFile, replaceWithStagedBackup, stageFileRestore } from './fileRestoreStage.ts'
+import { assertBackupRestoreHistory, assertFileRestoreHistory } from './fileRestoreHistory.ts'
 import { gracefulShutdown } from './shutdown.ts'
 import { isUnsafeDatabaseLocation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity, assertSafeUpdateLocation, changedDrivePaths } from './databaseSafety.ts'
 import { freshStartCutoffAt, freshStartEligibleFilesAt, isCurrentFreshStartDataAt, readFreshStartMarkerAt, startFreshDatabaseAt, startFreshWithoutDatabaseAt } from './freshStart.ts'
@@ -1795,16 +1795,21 @@ function wireIpc(): void {
     try {
       // التهيئة والفحص قبل إغلاق القاعدة الحية؛ فشل النسخ لا يقطع الملف الحي.
       staged = stageFileRestore(target, dbPath)
+      const stagedFingerprint = fingerprintRestoreFile(staged)
       const keyCheck = probeSnapshotKey(staged, deviceEncryptionKey)
       if (keyCheck.status === 'mismatch' || keyCheck.status === 'unreadable' || keyCheck.status === 'missing') throw new Error('تعذّر التحقق من مفتاح لقطات النسخة أو قراءة بياناتها — لم تُستبدل القاعدة')
       // رفض إسقاط أدلة محلية مثبتة؛ لا يغطي هذا كتابات النوافذ المعلقة أو كل الأدلة.
       assertFileRestoreHistory(database.raw, staged, deviceEncryptionKey)
       cleanStagedProbeFiles(staged)
+      if (fingerprintRestoreFile(staged) !== stagedFingerprint) throw new Error('تغير ملف النسخة أثناء فحصه — لم تُستبدل القاعدة')
       database.close()
       database = null
       const stamp = new Date().toISOString().replace(/[:.]/g, '-')
       const before = `${dbPath}.before-restore-${stamp}-${randomBytes(8).toString('hex')}`
-      replaceWithStagedBackup(dbPath, staged, before)
+      replaceWithStagedBackup(dbPath, staged, before, stagedFingerprint, backupPath => {
+        try { assertBackupRestoreHistory(backupPath, staged!, deviceEncryptionKey) }
+        finally { cleanStagedProbeFiles(backupPath); cleanStagedProbeFiles(staged!) }
+      })
       staged = null
       logLine('db-restore', `استعادة نسخة ملفية: ${target} — إعادة تشغيل؛ نسخة سابقة: ${before}`)
       setTimeout(() => { app.relaunch(); app.exit(0) }, 600)

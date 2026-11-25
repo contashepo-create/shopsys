@@ -1,5 +1,5 @@
 import { CustomerProfileSummary, DocumentContactSummary } from '../components/CustomerProfileFields.tsx'
-import { projectClosureIndicators, projectSystemStatusLabel } from '../../core/projectClosureReview.ts'
+import { projectClosureIndicators, projectSystemStatusLabel, type ProjectClosureContext } from '../../core/projectClosureReview.ts'
 import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
@@ -46,14 +46,15 @@ import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrin
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 import { todayLocalIso } from '../../core/time.ts'
 
-function ProjectClosureReview({ project, date, extracts, drafts, orders }: {
+function ProjectClosureReview({ project, date, extracts, drafts, orders, context }: {
   project: Project
   date: string
   extracts: readonly { projectId: number; isFinal?: boolean }[]
   drafts: readonly { projectId: number }[]
   orders: readonly { projectId: number; status: string }[]
+  context: ProjectClosureContext
 }) {
-  const indicators = projectClosureIndicators(project, date, extracts, drafts, orders)
+  const indicators = projectClosureIndicators(project, date, extracts, drafts, orders, context)
   return <section aria-label="مراجعة حالة إقفال المشروع" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs space-y-2">
     <p className="font-bold text-amber-700 dark:text-amber-300">مراجعة استرشادية — ليست موافقة أو إثباتاً للإقفال</p>
     <p>حالة «مكتمل» في النظام لا تثبت وحدها التسليم أو الختامي أو استحقاق المحتجز أو تسوية الذمم والمقدمات والالتزامات والتكاليف. راجع المستندات والقيود يدوياً.</p>
@@ -136,7 +137,7 @@ export function ProjectsPage() {
     addProject, addProjectWithBoq, addProjectExtract, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     getAdvanceBalance, refundProjectExtract,
-    staffCommissions, addStaffCommission, editProjectExtract, sales, purchases, appUsers, currentUserId, roleOverrides, customRoles, projectBudgets, projectTasks, quotations,
+    staffCommissions, addStaffCommission, editProjectExtract, sales, purchases, appUsers, currentUserId, roleOverrides, customRoles, projectBudgets, projectTasks, quotations, subContracts, custodyFiles,
     ensureServiceItemForFreeLine, previewLegacyProjectCustomer, resolveLegacyProjectCustomer, previewMissingProjectCustomerBackup, restoreMissingProjectCustomerBackup,
   } = useDataStore()
   const { setup } = useAppStore()
@@ -633,7 +634,7 @@ export function ProjectsPage() {
     setEpStart(p.startDate); setEpEnd(p.expectedEndDate ?? ''); setEpLocation(p.location ?? '')
     setEpContractNo(p.contractNumber ?? ''); setEpNotes(p.notes ?? '')
     setEpManager(p.managerEmployeeId != null ? String(p.managerEmployeeId) : ''); setEpTags((p.tags ?? []).join('، '))
-    setEpHandover(p.actualHandoverDate ?? ''); setEpDlpMonths(p.defectsLiabilityMonths ? String(p.defectsLiabilityMonths) : '')
+    setEpHandover(p.actualHandoverDate ?? ''); setEpDlpMonths(p.defectsLiabilityMonths == null ? '' : String(p.defectsLiabilityMonths))
   }
   const saveProjectEdit = async () => {
     if (!editPrj || epPending.current) return
@@ -1050,16 +1051,18 @@ export function ProjectsPage() {
                 <div className="grid grid-cols-2 gap-1.5" data-extract-nature-toggle>
                   <button
                     type="button"
+                    disabled={!!editingExtract?.isFinal}
                     onClick={() => setExFinal(false)}
                     className={`py-2 px-2 rounded-xl text-[11px] font-bold border-2 transition-all ${!exFinal ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
                   >
                     مستخلص جاري / جزئي
                   </button>
                   <label className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold border-2 cursor-pointer transition-all ${exFinal ? 'border-rose-500/60 bg-rose-500/10 text-rose-700 dark:text-rose-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
-                    <input type="checkbox" checked={exFinal} onChange={(e) => setExFinal(e.target.checked)} className="w-3.5 h-3.5 shrink-0 accent-rose-600" />
+                    <input type="checkbox" checked={exFinal} disabled={!!editingExtract?.isFinal} onChange={(e) => setExFinal(e.target.checked)} className="w-3.5 h-3.5 shrink-0 accent-rose-600" />
                     <span>ختامي — لا مستخلصات بعده</span>
                   </label>
                 </div>
+                {editingExtract?.isFinal && <p className="text-xs text-amber-700">لا يمكن تحويل المستخلص الختامي الصادر إلى جزئي بالتعديل.</p>}
               </Field>
             </>
           }
@@ -1105,7 +1108,7 @@ export function ProjectsPage() {
                     <button
                       key={pct}
                       type="button"
-                      disabled={!!editingExtract?.lines?.some(line => line.newExecutedQty != null)}
+                      disabled={!!editingExtract?.isFinal || !!editingExtract?.lines?.some(line => line.newExecutedQty != null)}
                       onClick={() => applyPartialSlicePercent(Number(pct))}
                       className="px-2.5 py-1 rounded-lg text-[11px] font-bold border border-orange-500/30 bg-orange-500/5 text-orange-700 dark:text-orange-300 hover:bg-orange-500/15 transition-all"
                     >
@@ -1275,7 +1278,7 @@ export function ProjectsPage() {
       </Modal>
       <Modal open={!!viewingLive} onClose={() => setViewing(null)} title={viewingLive ? `${viewingLive.code} — ${viewingLive.nameAr}` : ''} wide>
         {viewingLive && <div className="text-xs text-slate-500 space-y-1"><p><CustomerProfileSummary profile={customers.find(customer => customer.id === viewingLive.clientId)} /></p><p><DocumentContactSummary history={viewingLive.customerContactHistory} customerId={viewingLive.clientId} /></p></div>}
-        {viewingLive && <ProjectClosureReview project={viewingLive} date={todayLocalIso()} extracts={projectExtracts} drafts={projectExtractDrafts} orders={changeOrders} />}
+        {viewingLive && <ProjectClosureReview project={viewingLive} date={todayLocalIso()} extracts={projectExtracts} drafts={projectExtractDrafts} orders={changeOrders} context={{ advances: clientAdvances, tasks: projectTasks, subContracts, custodyFiles }} />}
         {viewingLive && !profit && <p role="alert" className="text-amber-700">يلزم مراجعة المستخلصات وتحصيلات المحتجز وتكاليف المشروع ومرتجعات الشراء أو توزيعات الرواتب وقيودها قبل عرض الربحية.</p>}
         {viewingLive && profit && (
           <div className="space-y-4 text-sm">
@@ -1593,7 +1596,7 @@ export function ProjectsPage() {
               <Field label="تاريخ التسليم لل site"><input className={inputCls} type="date" value={epStart} onChange={(e) => setEpStart(e.target.value)} aria-label="تاريخ التسليم" /></Field>
               <Field label="موعد التسليم المتوقع"><input className={inputCls} type="date" value={epEnd} onChange={(e) => setEpEnd(e.target.value)} aria-label="موعد التسليم" /></Field>
               <Field label="موقع الأعمال"><input className={inputCls} value={epLocation} onChange={(e) => setEpLocation(e.target.value)} aria-label="موقع الأعمال" /></Field>
-              <Field label="تاريخ التسليم الفعلي" hint="بعده تبدأ فترة الضمان — لتذكير استحقاق الإفراج عن المحتجز"><input className={inputCls} type="date" value={epHandover} onChange={(e) => setEpHandover(e.target.value)} aria-label="تاريخ التسليم الفعلي" /></Field>
+              <Field label="تاريخ التسليم الفعلي" hint="يستخدم مع مدة الضمان لمؤشر تقويمي فقط؛ راجع العقد والتسليم والاستحقاق"><input className={inputCls} type="date" value={epHandover} onChange={(e) => setEpHandover(e.target.value)} aria-label="تاريخ التسليم الفعلي" /></Field>
               <Field label="فترة الضمان/الصيانة (أشهر)" hint="تُحسب من تاريخ التسليم الفعلي"><input className={inputCls} type="number" min={0} value={epDlpMonths} onChange={(e) => setEpDlpMonths(e.target.value)} aria-label="فترة الضمان بالشهور" /></Field>
               <Field label="ملاحظات"><input className={inputCls} value={epNotes} onChange={(e) => setEpNotes(e.target.value)} aria-label="ملاحظات" /></Field>
               <section className="col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-3" data-project-edit-boq>
@@ -1693,7 +1696,7 @@ export function ProjectsPage() {
             <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[13px] font-bold text-amber-700 dark:text-amber-300">
               {reviewedProfit(releaseFor.id) ? <>سيُحصَّل المحتجز المتبقي {fmt(reviewedProfit(releaseFor.id)!.retentionHeldMinor)} {cur.symbol} وتتحول حالة المشروع في النظام إلى مكتمل.</> : <span role="alert">يلزم مراجعة المستخلصات وتكاليف المشروع ومرتجعات الشراء وتوزيع الرواتب وقيودها قبل عرض المؤشر.</span>}
             </div>
-            {projects.find(project => project.id === releaseFor.id) ? <ProjectClosureReview project={projects.find(project => project.id === releaseFor.id)!} date={releaseDate} extracts={projectExtracts} drafts={projectExtractDrafts} orders={changeOrders} /> : <p role="alert">لم يعد المشروع متاحاً — أغلق النافذة وراجع البيانات.</p>}
+            {projects.find(project => project.id === releaseFor.id) ? <ProjectClosureReview project={projects.find(project => project.id === releaseFor.id)!} date={releaseDate} extracts={projectExtracts} drafts={projectExtractDrafts} orders={changeOrders} context={{ advances: clientAdvances, tasks: projectTasks, subContracts, custodyFiles }} /> : <p role="alert">لم يعد المشروع متاحاً — أغلق النافذة وراجع البيانات.</p>}
             <Field label="تاريخ تحصيل المحتجز" hint="تاريخ القيد والتحصيل؛ لا يسبق المستخلصات، والماكينة بتاريخ اليوم فقط. إقفال المشروع يُسجّل وقتياً عند الحفظ."><input aria-label="تاريخ تحصيل المحتجز" type="date" max={todayLocalIso()} disabled={releaseSaving} value={releaseDate} onChange={event => setReleaseDate(event.target.value)} className={inputCls} /></Field>
             <Field label="طريقة التحصيل"><fieldset disabled={releaseSaving} className="space-y-2"><PaymentMethodPicker value={{treasury:releaseTreasury,terminalPayment:releaseTerminal}} onChange={value=>{setReleaseTreasury(value.treasury);setReleaseTerminal(value.terminalPayment)}} operation="receipt"/></fieldset></Field>
             <DocOutcome>الأثر: <b>الخزينة</b> أو حساب تسوية الماكينة مديناً بقيمة المحتجز المُفرج عنه · <b>1105 محتجزات ضمان أعمال</b> دائناً بإقفال الأصل — تحصيل حق قائم لا إيراد جديد.</DocOutcome>
@@ -2862,8 +2865,8 @@ export function ProjectExtractsPage() {
                   إضافة ضريبة القيمة المضافة ({setup.vatPercent}٪)
                 </label>
                 <label className="flex items-center gap-2 text-[12.5px] font-bold cursor-pointer text-rose-600">
-                  <input type="checkbox" checked={exFinal} onChange={(e) => setExFinal(e.target.checked)} />
-                  مستخلص ختامي للمشروع
+                  <input type="checkbox" checked={exFinal} disabled={!!editingExtract?.isFinal} onChange={(e) => setExFinal(e.target.checked)} />
+                  مستخلص ختامي للمشروع {editingExtract?.isFinal && <span className="text-amber-700">— لا يُحوّل إلى جزئي بالتعديل</span>}
                 </label>
                 {getAdvanceBalance(selectedProject.id) + (editingExtract?.advanceRecoveryMinor ?? 0) > 0 && (
                   <Field

@@ -1,4 +1,4 @@
-import { LETTER_FIELDS, newLetterParagraph, validLetterImage, type Letter, type LetterField, type LetterTextStyle } from './letters.ts'
+import { LETTER_FIELDS, newLetterParagraph, validLetterImage, validLetterObjects, type Letter, type LetterObject, type LetterField, type LetterTextStyle } from './letters.ts'
 
 /** القياسات بالملليمتر من أعلى يسار ورقة A4. الفقرات تحتفظ بمعرّفها عند التعديل. */
 export type LetterTemplate = 'classic' | 'modern' | 'minimal' | 'executive' | 'heritage' | 'geometric' | 'navy' | 'ribbon' | 'arch' | 'diagonal' | 'laurel'
@@ -9,8 +9,10 @@ export interface LetterLayout { template: LetterTemplate; boxes: Record<string, 
 export const LETTER_TEMPLATES: Record<LetterTemplate, string> = { classic: 'رسمي كلاسيكي', modern: 'حديث', minimal: 'بسيط', executive: 'مؤسسي تنفيذي', heritage: 'تراثي فاخر', geometric: 'هندسي رسمي', navy: 'كحلي إداري', ribbon: 'شريط مميز', arch: 'قوس رصين', diagonal: 'أعمال معاصر', laurel: 'إكليل راقٍ' }
 export const LETTER_PAGE_WIDTH = 210
 export const LETTER_PAGE_HEIGHT = 297
+export const letterObjectKey = (id: string) => `object:${id}`
 export const letterParagraphKey = (id: string) => `paragraph:${id}`
 export const letterBoxLabel = (key: string, letter: Letter): string => {
+  if (key.startsWith('object:')) { const objects = letter.objects ?? []; const index = objects.findIndex(o => letterObjectKey(o.id) === key); const item = objects[index]; return item ? `${item.kind === 'image' ? 'صورة' : 'جدول'} ${index + 1}` : 'عنصر مضاف' }
   if (key === 'topRule') return 'خط الترويسة'
   if (key === 'bottomRule') return 'خط التذييل'
   if (key === 'footerBlock') return 'تذييل المنشأة الثابت'
@@ -160,20 +162,21 @@ export function getLetterBoxes(letter: Letter): Record<string, LetterBox> {
   const defaults = layout?.contentVersion === 4 ? defaultLetterBoxes(letter, layout.template) : layout?.contentVersion === 3 ? versionThreeLetterBoxes(letter, layout.template) : layout?.contentVersion === 2 ? versionTwoLetterBoxes(letter, layout.template) : layout?.contentVersion === 1 ? versionOneLetterBoxes(letter, layout.template) : legacyLetterBoxes(letter, layout?.template ?? 'classic')
   const result: Record<string, LetterBox> = { ...defaults, signatureImage: defaults.signatureImage ?? { x: 65, y: 230, width: 35, height: 17 }, stampImage: defaults.stampImage ?? { x: 15, y: 228, width: 30, height: 20 }, ...layout?.boxes }
   if (layout?.contentVersion === 2 || layout?.contentVersion === 3 || layout?.contentVersion === 4) { result.bottomRule = defaults.bottomRule; result.footerBlock = defaults.footerBlock }
+  for (const object of letter.objects ?? []) result[letterObjectKey(object.id)] = object.box
   return result
 }
 export function validLetterLayout(layout: LetterLayout, letter: Letter): boolean {
   if (!layout || !Object.hasOwn(LETTER_TEMPLATES, layout.template) || !layout.boxes || typeof layout.boxes !== 'object' || Array.isArray(layout.boxes)) return false
   if (!validLetterBackground(layout.background) || (layout.contentVersion !== undefined && layout.contentVersion !== 1 && layout.contentVersion !== 2 && layout.contentVersion !== 3 && layout.contentVersion !== 4)) return false
-  const hiddenKeys = new Set([...LETTER_HEADER_KEYS, 'recipient'])
-  if (layout.hiddenHeader !== undefined && (!Array.isArray(layout.hiddenHeader) || layout.hiddenHeader.some(key => typeof key !== 'string' || !hiddenKeys.has(key as typeof LETTER_HEADER_KEYS[number] | 'recipient')) || new Set(layout.hiddenHeader).size !== layout.hiddenHeader.length)) return false
+  const hiddenKeys = new Set<string>([...Object.keys(LETTER_FIELDS), 'logo', 'signatureImage', 'stampImage', 'topRule', 'bottomRule', 'footerBlock'])
+  if (layout.hiddenHeader !== undefined && (!Array.isArray(layout.hiddenHeader) || layout.hiddenHeader.some(key => typeof key !== 'string' || !hiddenKeys.has(key)) || new Set(layout.hiddenHeader).size !== layout.hiddenHeader.length)) return false
   const pageCount = layout.pageCount ?? 1
   if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 10) return false
   const keys = new Set([...Object.keys(LETTER_FIELDS), 'logo', 'signatureImage', 'stampImage', 'signature', 'topRule', 'bottomRule', 'footerBlock', ...letter.paragraphs.map(p => letterParagraphKey(p.id))])
   return Object.entries(layout.boxes).every(([key, box]) => keys.has(key) && box && Number.isFinite(box.x) && Number.isFinite(box.y) && Number.isFinite(box.width) && box.x >= 0 && box.y >= 0 && box.width >= 5 && box.x + box.width <= 210 && box.y < 297 && (box.page === undefined || Number.isInteger(box.page) && box.page >= 1 && box.page <= pageCount) && (box.repeat === undefined || typeof box.repeat === 'boolean') && (box.height === undefined || Number.isFinite(box.height) && box.height >= 5 && box.y + box.height <= 297))
 }
 
-export interface LetterLayoutItem { key: string; text: string; field?: LetterField; paragraphId?: string; logo?: boolean; image?: 'signatureImage' | 'stampImage'; rule?: boolean; fixed?: boolean }
+export interface LetterLayoutItem { key: string; text: string; field?: LetterField; paragraphId?: string; logo?: boolean; image?: 'signatureImage' | 'stampImage'; rule?: boolean; fixed?: boolean; objectId?: string }
 export function letterLayoutItems(letter: Letter): LetterLayoutItem[] {
   const d = letter.recipientDetails, i = letter.identity
   const field = (key: LetterField, text: string): LetterLayoutItem => ({ key, field: key, text })
@@ -190,6 +193,7 @@ export function letterLayoutItems(letter: Letter): LetterLayoutItem[] {
     field('recipientContactPhone', d?.contactPhone ? `هاتف مسؤول التواصل: ${d.contactPhone}` : ''), field('recipientContactEmail', d?.contactEmail ? `بريد مسؤول التواصل: ${d.contactEmail}` : ''),
     field('subject', `الموضوع: ${letter.subject || 'موضوع الخطاب'}`), field('salutation', letter.salutation),
     ...letter.paragraphs.map(p => ({ key: letterParagraphKey(p.id), text: p.text, paragraphId: p.id })),
+    ...(letter.objects ?? []).map(o => ({ key: letterObjectKey(o.id), objectId: o.id, text: '' })),
     field('closing', letter.closing), field('signer', `الاسم: ${letter.signer || '................................'}`), field('position', `المسمى الوظيفي: ${letter.position || '........................'}`),
     { key: 'signatureImage', text: '', image: 'signatureImage' }, { key: 'stampImage', text: '', image: 'stampImage' },
     field('signature', letter.signatureText ?? 'التوقيع والختم: ........................'),
@@ -214,13 +218,13 @@ export interface SavedLetterTemplate {
   hiddenHeader?: string[]
   identity?: Letter['identity']
   formatting?: { font: Letter['font']; accent: string; fieldStyles: Partial<Record<LetterField, LetterTextStyle>>; paragraphs: LetterTextStyle[] }
-  content?: { paragraphs: string[]; salutation: string; closing: string; signer: string; position: string; signatureText?: string; signatureImage: string; stampImage: string }
+  content?: { paragraphs: string[]; salutation: string; closing: string; signer: string; position: string; signatureText?: string; signatureImage: string; stampImage: string; objects?: LetterObject[] }
 }
 export function captureLetterTemplate(letter: Letter, name: string, id: string, includeFormatting = true, includeContent = false, includeIdentity = false): SavedLetterTemplate {
   if (!letter.layout) throw new Error('اختر قالباً قبل حفظ التصميم')
   const all = getLetterBoxes(letter)
-  const boxes = Object.fromEntries(Object.entries(all).filter(([key]) => !key.startsWith('paragraph:')))
-  return { id, name: name.trim(), template: letter.layout.template, boxes, paragraphs: letter.paragraphs.map(p => all[letterParagraphKey(p.id)]), pageCount: letter.layout.pageCount ?? 1, background: letter.layout.background, contentVersion: letter.layout.contentVersion, hiddenHeader: letter.layout.hiddenHeader ? [...letter.layout.hiddenHeader] : undefined, ...(includeIdentity ? { identity: structuredClone(letter.identity) } : {}), ...(includeContent ? { content: { paragraphs: letter.paragraphs.map(p => p.text), salutation: letter.salutation, closing: letter.closing, signer: letter.signer, position: letter.position, signatureText: letter.signatureText, signatureImage: letter.signatureImage ?? '', stampImage: letter.stampImage ?? '' } } : {}), ...(includeFormatting ? { formatting: { font: letter.font, accent: letter.accent, fieldStyles: structuredClone(letter.fieldStyles ?? {}), paragraphs: letter.paragraphs.map(({ align, size, color, bold, italic, underline, font }) => ({ align, size, color, bold, italic, underline, font })) } } : {}) }
+  const boxes = Object.fromEntries(Object.entries(all).filter(([key]) => !key.startsWith('paragraph:') && !key.startsWith('object:')))
+  return { id, name: name.trim(), template: letter.layout.template, boxes, paragraphs: letter.paragraphs.map(p => all[letterParagraphKey(p.id)]), pageCount: letter.layout.pageCount ?? 1, background: letter.layout.background, contentVersion: letter.layout.contentVersion, hiddenHeader: letter.layout.hiddenHeader ? [...letter.layout.hiddenHeader] : undefined, ...(includeIdentity ? { identity: structuredClone(letter.identity) } : {}), ...(includeContent ? { content: { paragraphs: letter.paragraphs.map(p => p.text), salutation: letter.salutation, closing: letter.closing, signer: letter.signer, position: letter.position, signatureText: letter.signatureText, signatureImage: letter.signatureImage ?? '', stampImage: letter.stampImage ?? '', objects: structuredClone(letter.objects ?? []) } } : {}), ...(includeFormatting ? { formatting: { font: letter.font, accent: letter.accent, fieldStyles: structuredClone(letter.fieldStyles ?? {}), paragraphs: letter.paragraphs.map(({ align, size, color, bold, italic, underline, font }) => ({ align, size, color, bold, italic, underline, font })) } } : {}) }
 }
 export function applySavedLetterTemplate(letter: Letter, template: SavedLetterTemplate): LetterLayout {
   const defaults = template.contentVersion === 4 ? defaultLetterBoxes(letter, template.template) : template.contentVersion === 3 ? versionThreeLetterBoxes(letter, template.template) : template.contentVersion === 2 ? versionTwoLetterBoxes(letter, template.template) : template.contentVersion === 1 ? versionOneLetterBoxes(letter, template.template) : legacyLetterBoxes(letter, template.template)
@@ -238,11 +242,13 @@ export function applyLetterTemplateFormatting(letter: Letter, template: SavedLet
 export function applyLetterTemplateContent(letter: Letter, template: SavedLetterTemplate): Letter {
   const content = template.content
   if (!content) return letter
-  return { ...letter, salutation: content.salutation, closing: content.closing, signer: content.signer, position: content.position, signatureText: content.signatureText, signatureImage: content.signatureImage, stampImage: content.stampImage, paragraphs: letter.paragraphs.map((p, index) => ({ ...p, text: content.paragraphs[index] ?? p.text })) }
+  return { ...letter, salutation: content.salutation, closing: content.closing, signer: content.signer, position: content.position, signatureText: content.signatureText, signatureImage: content.signatureImage, stampImage: content.stampImage, ...(content.objects !== undefined ? { objects: structuredClone(content.objects) } : {}), paragraphs: letter.paragraphs.map((p, index) => ({ ...p, text: content.paragraphs[index] ?? p.text })) }
 }
 /** تطبيق واحد للمحفوظ يضمن إنشاء خانات كل الفقرات قبل ربط مواقعها. */
 export function applyCompleteLetterTemplate(letter: Letter, template: SavedLetterTemplate): Letter {
-  const value = { ...letter, paragraphs: [...letter.paragraphs] }
+  const sourceObjects = template.content?.objects ?? letter.objects
+  const objects = sourceObjects?.map(o => ({ ...structuredClone(o), box: { ...o.box, page: Math.min(o.box.page ?? 1, template.pageCount) } }))
+  const value = { ...letter, ...(objects ? { objects } : {}), paragraphs: [...letter.paragraphs] }
   while (value.paragraphs.length < template.paragraphs.length) value.paragraphs.push(newLetterParagraph())
   const layout = applySavedLetterTemplate(value, template)
   const formatted = applyLetterTemplateContent(applyLetterTemplateFormatting({ ...value, layout }, template), template)
@@ -262,6 +268,7 @@ export function validSavedLetterTemplate(template: SavedLetterTemplate): boolean
   }
   const content = template.content
   if (content !== undefined && (!content || !Array.isArray(content.paragraphs) || content.paragraphs.length !== template.paragraphs.length || content.paragraphs.some(text => typeof text !== 'string' || text.length > 15000) || [content.salutation, content.closing, content.signer, content.position].some(text => typeof text !== 'string' || text.length > 2000) || (content.signatureText !== undefined && (typeof content.signatureText !== 'string' || content.signatureText.length > 2000)) || [content.signatureImage, content.stampImage].some(image => typeof image !== 'string' || (image !== '' && !validLetterImage(image))))) return false
+  if (content?.objects !== undefined && !validLetterObjects(content.objects, template.pageCount)) return false
   const format = template.formatting
   if (format !== undefined && (!format || !['Arial', 'Tahoma', 'Georgia'].includes(format.font) || !/^#[0-9a-f]{6}$/i.test(format.accent) || !format.fieldStyles || typeof format.fieldStyles !== 'object' || Array.isArray(format.fieldStyles) || Object.entries(format.fieldStyles).some(([key, style]) => !Object.hasOwn(LETTER_FIELDS, key) || !validTemplateStyle(style as LetterTextStyle, format.font)) || !Array.isArray(format.paragraphs) || format.paragraphs.length > 100 || format.paragraphs.some(style => !validTemplateStyle(style, format.font)))) return false
   const paragraphs = template.paragraphs.map((_, index) => ({ id: String(index) }))
