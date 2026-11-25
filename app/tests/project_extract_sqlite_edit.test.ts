@@ -61,6 +61,10 @@ it.each([false, true])('يحفظ تعديلين فعليين للختامي في
    expect(() => assertJournalHistoryPreserved(previousJournal, S().journal)).not.toThrow()
    const next = snap()
    expect(newJournalEntries(next, previous).map(row => row.id)).toEqual([old.journalEntryId, reversal.id, updated.journalEntryId])
+   const stranded = JSON.parse(next)
+   stranded.state.projectExtracts = JSON.parse(previous).state.projectExtracts
+   await expect(storage.setItem('shopsys-data', JSON.stringify(stranded))).rejects.toThrow(/ختامي/)
+   expect(db.getSnapshot('shopsys-data').payloadJson).toBe(previous)
    const broken = S().journal.map(row => row.id === reversal.id ? { ...row, sourceId: old.id } : row)
    expect(() => assertJournalHistoryPreserved(previousJournal, broken)).toThrow(/عكس/)
    const corrupted = JSON.parse(next) as { state: { journal: JournalEntry[] } }
