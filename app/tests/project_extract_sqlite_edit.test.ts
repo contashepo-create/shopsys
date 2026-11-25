@@ -37,6 +37,19 @@ it.each([false, true])('يحفظ تعديلين فعليين للختامي في
   const storage = new DesktopStateStorage(bridge(db), null)
   let previous = snap()
   await storage.setItem('shopsys-data', previous)
+  const oldData = JSON.parse(previous)
+  for (const patch of [
+   { isFinal: false },
+   { totals: { ...extract.totals, grossMinor: 9000, dueMinor: 9000 } },
+   { journalEntryId: 999, totals: { ...extract.totals, grossMinor: 9000, dueMinor: 9000 } },
+  ]) {
+   const damaged = structuredClone(oldData)
+   Object.assign(damaged.state.projectExtracts[0], patch)
+   const payload = JSON.stringify(damaged)
+   expect(() => newJournalEntries(payload, previous)).toThrow(/ختامي/)
+   await expect(storage.setItem('shopsys-data', payload)).rejects.toThrow(/ختامي/)
+   expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 1, payloadJson: previous })
+  }
   let previousJournal = S().journal
   for (const description of ['التعديل الأول', 'التعديل الثاني']) {
    const old = S().projectExtracts[0]

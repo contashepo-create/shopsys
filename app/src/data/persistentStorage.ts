@@ -7,7 +7,7 @@ import { assertContactHistoriesPreserved } from '../core/customerProfile.ts'
 import { assertLetterCountersPreserved } from '../core/letterCounterHistoryGuard.ts'
 import { assertMaterialIssueHistoryPreserved } from '../core/materialIssueHistoryGuard.ts'
 import { assertProjectDocumentHistoryPreserved } from '../core/projectDocumentHistoryGuard.ts'
-import { assertProjectFinancialHistoryPreserved } from '../core/projectFinancialHistoryGuard.ts'
+import { assertProjectFinalHistoryPreserved, assertProjectFinancialHistoryPreserved } from '../core/projectFinancialHistoryGuard.ts'
 import { assertPayrollProjectHistoryPreserved } from '../core/payrollProjectHistoryGuard.ts'
 import { assertJournalHistoryPreserved } from '../core/ledgerHistoryGuard.ts'
 import type { JournalEntry } from '../core/ledger.ts'
@@ -481,6 +481,12 @@ export function newAuditEvents(nextPayloadJson: string, previousPayloadJson: str
 export function newJournalEntries(nextPayloadJson: string, previousPayloadJson: string | null): DesktopJournalEntry[] {
   const next = persistedState(nextPayloadJson)
   const previous = persistedState(previousPayloadJson)
+  // حماية ختامي محفوظ عند كتابة لقطة غير متعارضة أيضاً، لا عند الدمج فقط.
+  // نراجع فقط عند تغير المستخلصات أو اليومية ولا نختلق أساساً للسجلات القديمة.
+  if (previous && Array.isArray(previous.projectExtracts) && previous.projectExtracts.some(row => row && typeof row === 'object' && row.isFinal === true)) {
+    if (!next) throw new Error('تعذّر قراءة اللقطة الجديدة للتحقق من المستخلص الختامي — لم يُحفظ التغيير')
+    if (JSON.stringify(previous.projectExtracts) !== JSON.stringify(next.projectExtracts) || JSON.stringify(previous.journal) !== JSON.stringify(next.journal)) assertProjectFinalHistoryPreserved(previous, next)
+  }
   // يحمي الحفظ غير المتعارض أيضاً من حذف أو تعديل تاريخ الدفتر في اللقطة.
   // البيانات التاريخية غير المتغيرة لا تُمنع من الحفظ بسبب تلف قديم؛ لكن
   // تعديل دفتر تالف يتطلب مراجعة. لا يُفترض تاريخ عند أول استيراد.

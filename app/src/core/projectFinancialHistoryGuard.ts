@@ -54,6 +54,44 @@ function rows(value: unknown, label: string): Row[] {
   })
 }
 
+/** حماية هوية الختامي المحلي، بما فيها التعديلات المدعومة بالقيد. */
+function assertFinalExtractsPreserved(previousExtracts: Row[], nextExtracts: Row[], current: Row, incoming: Row): void {
+  const beforeExtracts = new Map(previousExtracts.map(row => [row.id, row]))
+  const afterExtracts = new Map(nextExtracts.map(row => [row.id, row]))
+  // نصون هوية الختامي المحلي وأساسه عند بقاء قيده نفسه. لا يُثبت
+  // اختلاف رقم القيد وحده صحة تعديل وارد؛ باقي حراسات الدفتر مستقلة.
+  for (const old of previousExtracts) {
+    if (old.isFinal !== true) continue
+    const candidate = afterExtracts.get(old.id)
+    if (!candidate || candidate.isFinal !== true || !same(old.projectId, candidate.projectId) || !same(old.branchId, candidate.branchId) || !same(old.extractNumber, candidate.extractNumber) || !same(old.createdAt, candidate.createdAt)) throw new Error(`النسخة تسقط أو تغيّر هوية المستخلص الختامي #${String(old.id)} — راجع التاريخ`)
+    if (!same(old.journalEntryId, candidate.journalEntryId)) assertFinalEditEvidence(old, candidate, current, incoming)
+    else if (Array.isArray(current.journal) && Array.isArray(incoming.journal)) {
+      const before = current.journal.find((entry: JournalEntry) => entry?.id === old.journalEntryId)
+      const after = incoming.journal.find((entry: JournalEntry) => entry?.id === old.journalEntryId)
+      if (before && before.reversedByEntryId == null && after?.reversedByEntryId != null) throw new Error(`النسخة تعكس قيد المستخلص الختامي #${String(old.id)} دون ربط القيد البديل — راجع التاريخ`)
+    }
+    const financialFields = ['date', 'payment', 'totals', 'lines', 'advanceRecoveryMinor', 'advanceAllocations']
+    if (financialFields.some(key => !same(old[key], candidate[key]))) {
+      const before = old.journalEntryId, after = candidate.journalEntryId
+      if (!Number.isSafeInteger(before) || (before as number) <= 0 || !Number.isSafeInteger(after) || (after as number) <= 0 || before === after) throw new Error(`النسخة تغيّر أساس المستخلص الختامي #${String(old.id)} دون تغيير مرجع قيد صالح — راجع التاريخ`)
+    }
+    for (const next of nextExtracts) {
+      if (next.projectId !== old.projectId || next.id === old.id) continue
+      const previous = beforeExtracts.get(next.id)
+      // المعرفات هنا قرينة ترتيب تحفظية، لا إثبات زمني؛ السجلات القديمة
+      // الملتبسة تحتاج مراجعة بدلاً من إدراج مستخلص لاحق بصمت.
+      if ((!previous || previous.projectId !== old.projectId) && (next.id as number) > (old.id as number) || next.isFinal === true && (!previous || previous.projectId !== old.projectId || previous.isFinal !== true)) throw new Error(`النسخة تضيف مستخلصاً لاحقاً أو ختامياً آخر بعد المستخلص الختامي #${String(old.id)} — راجع التاريخ`)
+    }
+  }
+}
+
+/** يستخدمه حفظ لقطة سطح المكتب أيضاً، دون فرض تدقيق أرصدة قديمة غير متغيرة. */
+export function assertProjectFinalHistoryPreserved(current: Row, incoming: Row): void {
+  const previous = rows(current.projectExtracts, 'سجل المستخلصات المحلي')
+  const next = rows(incoming.projectExtracts, 'سجل المستخلصات الوارد')
+  assertFinalExtractsPreserved(previous, next, current, incoming)
+}
+
 function value(row: Row, key: string): number {
   const amount = row[key] === undefined ? 0 : row[key]
   if (!Number.isSafeInteger(amount) || (amount as number) < 0) throw new Error('مبالغ إشعار المستخلص غير صالحة — راجع التاريخ')
@@ -120,26 +158,7 @@ export function assertProjectFinancialHistoryPreserved(current: Row, incoming: R
   const nextExtracts = rows(incoming.projectExtracts, 'سجل المستخلصات الوارد')
   const beforeExtracts = new Map(previousExtracts.map(row => [row.id, row]))
   const afterExtracts = new Map(nextExtracts.map(row => [row.id, row]))
-  // نصون هوية الختامي المحلي وأساسه عند بقاء قيده نفسه. لا يُثبت
-  // اختلاف رقم القيد وحده صحة تعديل وارد؛ باقي حراسات الدفتر مستقلة.
-  for (const old of previousExtracts) {
-    if (old.isFinal !== true) continue
-    const candidate = afterExtracts.get(old.id)
-    if (!candidate || candidate.isFinal !== true || !same(old.projectId, candidate.projectId) || !same(old.branchId, candidate.branchId) || !same(old.extractNumber, candidate.extractNumber) || !same(old.createdAt, candidate.createdAt)) throw new Error(`النسخة تسقط أو تغيّر هوية المستخلص الختامي #${String(old.id)} — راجع التاريخ`)
-    if (!same(old.journalEntryId, candidate.journalEntryId)) assertFinalEditEvidence(old, candidate, current, incoming)
-    const financialFields = ['date', 'payment', 'totals', 'lines', 'advanceRecoveryMinor', 'advanceAllocations']
-    if (financialFields.some(key => !same(old[key], candidate[key]))) {
-      const before = old.journalEntryId, after = candidate.journalEntryId
-      if (!Number.isSafeInteger(before) || (before as number) <= 0 || !Number.isSafeInteger(after) || (after as number) <= 0 || before === after) throw new Error(`النسخة تغيّر أساس المستخلص الختامي #${String(old.id)} دون تغيير مرجع قيد صالح — راجع التاريخ`)
-    }
-    for (const next of nextExtracts) {
-      if (next.projectId !== old.projectId || next.id === old.id) continue
-      const previous = beforeExtracts.get(next.id)
-      // المعرفات هنا قرينة ترتيب تحفظية، لا إثبات زمني؛ السجلات القديمة
-      // الملتبسة تحتاج مراجعة بدلاً من إدراج مستخلص لاحق بصمت.
-      if ((!previous || previous.projectId !== old.projectId) && (next.id as number) > (old.id as number) || next.isFinal === true && (!previous || previous.projectId !== old.projectId || previous.isFinal !== true)) throw new Error(`النسخة تضيف مستخلصاً لاحقاً أو ختامياً آخر بعد المستخلص الختامي #${String(old.id)} — راجع التاريخ`)
-    }
-  }
+  assertFinalExtractsPreserved(previousExtracts, nextExtracts, current, incoming)
   for (const id of new Set([...beforeExtracts.keys(), ...afterExtracts.keys()])) {
     const before = beforeExtracts.get(id), after = afterExtracts.get(id)
     const oldAmount = before?.advanceRecoveryMinor === undefined ? 0 : before.advanceRecoveryMinor
