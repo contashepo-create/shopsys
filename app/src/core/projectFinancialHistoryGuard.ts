@@ -199,6 +199,22 @@ export function assertProjectFinancialHistoryPreserved(current: Row, incoming: R
       addProject(old)
     }
   }
+  // الدفعات القديمة لا تحفظ وسيلة الدفع: لا نخترع لها ماكينة، لكن لا
+  // نمحو أو نغيّر حركة مرتبطة معروفة أو نستحدث ردها دون تسوية محاسبية.
+  for (const advance of localAdvances) {
+    const fail = (): never => { throw new Error(`النسخة تغيّر حركة ماكينة الدفعة المقدمة #${String(advance.id)} — راجع الأدلة`) }
+    const documentId = `advance:${String(advance.projectId)}:${String(advance.journalEntryId)}`
+    const linked = (value: unknown): Row[] => Array.isArray(value) ? value.filter((item): item is Row => !!item && typeof item === 'object' && !Array.isArray(item) && item.kind === 'charge' && item.documentType === 'project_extract' && item.documentId === documentId) : []
+    const before = linked(current.paymentTerminalTransactions), after = linked(incoming.paymentTerminalTransactions)
+    if (!same(before, after) || before.length > 1) return fail()
+    for (const charge of before) {
+      if (typeof charge.id !== 'string' || !charge.id) return fail()
+      const matches = (value: unknown): Row[] => Array.isArray(value) ? value.filter((item): item is Row => !!item && typeof item === 'object' && !Array.isArray(item) && item.id === charge.id) : []
+      if (matches(current.paymentTerminalTransactions).length !== 1 || matches(incoming.paymentTerminalTransactions).length !== 1) return fail()
+      const reversals = (value: unknown): Row[] => Array.isArray(value) ? value.filter((item): item is Row => !!item && typeof item === 'object' && !Array.isArray(item) && item.originalTransactionId === charge.id && (item.kind === 'refund' || item.kind === 'void')) : []
+      if (!same(reversals(current.paymentTerminalTransactions), reversals(incoming.paymentTerminalTransactions))) return fail()
+    }
+  }
   const localIds = new Set(localAdvances.map(row => row.id))
   for (const row of incomingAdvances) if (!localIds.has(row.id) && row.recoveredMinor !== 0) addProject(row)
 

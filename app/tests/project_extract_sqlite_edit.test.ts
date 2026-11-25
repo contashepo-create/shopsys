@@ -14,7 +14,7 @@ const original = useRawDataStore.getState(), app = useAppStore.getState(), S = (
 const beforeEntry: JournalEntry = { id: 1, entryNumber: 1, date: '2025-01-01', description: 'قيد أقدم مستقل', sourceType: 'manual', sourceId: null, lines: [{ accountCode: '1101', debit: 20000, credit: 0 }, { accountCode: '3101', debit: 0, credit: 20000 }], createdBy: 'م', createdAt: '2025-01-01', reversedByEntryId: null, reversesEntryId: null }
 const snap = () => {
  const s = S()
- return JSON.stringify({ state: { projects: s.projects, projectExtracts: s.projectExtracts, clientAdvances: s.clientAdvances, retentionReleases: s.retentionReleases, boqItems: s.boqItems, changeOrders: s.changeOrders, journal: s.journal } })
+ return JSON.stringify({ state: { projects: s.projects, projectExtracts: s.projectExtracts, clientAdvances: s.clientAdvances, retentionReleases: s.retentionReleases, boqItems: s.boqItems, changeOrders: s.changeOrders, journal: s.journal, paymentTerminals: s.paymentTerminals, paymentTerminalTransactions: s.paymentTerminalTransactions } })
 }
 function bridge(db: ShopsysDatabase): DesktopDatabaseBridge {
  return { getSnapshot: async name => db.getSnapshot(name), saveSnapshot: async input => db.saveSnapshot(input), deleteSnapshot: async input => db.deleteSnapshot(input), enqueueOutbox: async () => ({ created: true }), claimOutbox: async () => [], completeOutbox: async () => ({ updated: true }), integrityCheck: async () => ({ ok: true, message: 'ok' }), schemaVersion: async () => 1 }
@@ -192,5 +192,23 @@ it('يحمي تحصيل المحتجز المثبت ومستخلصه في حفظ
   }
   db.close(); db = await ShopsysDatabase.open(path)
   expect(db.getSnapshot('shopsys-data').payloadJson).toBe(before)
+ } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('لا يسقط أو يغير حركة ماكينة مقدمة محفوظة في SQLite ويقبل استردادها المثبت', async () => {
+ S().addPaymentTerminal({ id: 't1', code: 'TERM-0001', nameAr: 'ماكينة', providerName: 'مزود', branchId: '', settlementAccountCode: '1101', terminalId: 'P1', status: 'active' })
+ const project = S().addProject({ nameAr: 'مشروع', clientName: '', contractValueMinor: 10000, retentionPercent: 0, startDate: '2025-01-01', notes: '' })
+ S().receiveClientAdvance({ projectId: project.id, amountMinor: 1000, treasury: '1101', terminalPayment: { terminalId: 't1', providerReference: 'PAY-123' } })
+ const dir = mkdtempSync(join(tmpdir(), 'shopsys-terminal-advance-')), path = join(dir, 'data.sqlite')
+ let db = await ShopsysDatabase.open(path)
+ try {
+  const storage = new DesktopStateStorage(bridge(db), null), before = snap(); await storage.setItem('shopsys-data', before)
+  const damaged = JSON.parse(before); damaged.state.paymentTerminalTransactions = []
+  await expect(storage.setItem('shopsys-data', JSON.stringify(damaged))).rejects.toThrow(/ماكينة.*مقدمة/)
+  expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 1, payloadJson: before })
+  S().addProjectExtract({ projectId: project.id, grossMinor: 2000, payment: 'cash', vatPercent: 0, description: 'أعمال', advanceRecoveryMinor: 500 })
+  const after = snap(); await storage.setItem('shopsys-data', after)
+  db.close(); db = await ShopsysDatabase.open(path)
+  expect(db.getSnapshot('shopsys-data')).toMatchObject({ revision: 2, payloadJson: after })
  } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
 })

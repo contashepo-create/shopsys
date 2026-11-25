@@ -1917,7 +1917,7 @@ interface DataState {
   /** حركة حساب كل مالك عقار مدار: + نصيبه من التحصيل، − سداد له، − صيانة على حسابه */
   ownerTxns: { id: number; propertyId: number; kind: 'collection' | 'payout' | 'maintenance'; amountMinor: number; date: string; note: string; journalEntryId: number }[]
   changeOrders: ChangeOrder[] // أوامر التغيير على العقود
-  clientAdvances: { id: number; projectId: number; date: string; amountMinor: number; recoveredMinor: number; journalEntryId: number }[]
+  clientAdvances: { id: number; projectId: number; date: string; amountMinor: number; recoveredMinor: number; journalEntryId: number; createdAt?: string; paymentEvidence?: { version: 1; treasuryCode: string; terminalCharge?: PaymentTerminalTransaction } }[]
   subContracts: SubContract[] // عقود مقاولي الباطن
   subCertificates: SubCertificate[] // شهادات أعمال الباطن
   subPayments: SubPayment[] // دفعات الباطن وإفراجات محتجزاته
@@ -4450,6 +4450,27 @@ function checkedProjectAdvanceBasis(state: DataState, project: Project): { advan
     if (!isValidExpiryDate(extract.date?.slice(0, 10)) || journal.get(extract.journalEntryId)?.date !== extract.date.slice(0, 10)) throw new FinancialDataReviewError(`تاريخ المستخلص ${extract.extractNumber}`)
   }
   assertAdvanceRecoveryBasis(project.id, advances, extracts, journal, new Set(scoped.treasuries.map(row => row.code)))
+  // السجلات القديمة لا تثبت وسيلة الدفع؛ نفحص الحركة حين توجد فقط، ولا
+  // نحول غيابها إلى إثبات نقدي. رد الماكينة المنفرد ليس تسوية المقدمة.
+  for (const advance of advances) {
+    const linked = state.paymentTerminalTransactions.filter(row => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === `advance:${project.id}:${advance.journalEntryId}`)
+    const fail = (): never => { throw new FinancialDataReviewError(`ماكينة الدفعة المقدمة #${advance.id}`) }
+    const entry = journal.get(advance.journalEntryId), evidence = advance.paymentEvidence
+    if (evidence != null) {
+      if (evidence.version !== 1 || typeof evidence.treasuryCode !== 'string' || !evidence.treasuryCode || !entry?.lines.some(line => line.accountCode === evidence.treasuryCode && line.debit === advance.amountMinor && line.credit === 0)) return fail()
+      const snapshot = evidence.terminalCharge
+      if (snapshot) {
+        if (linked.length !== 1 || typeof advance.createdAt !== 'string' || snapshot.occurredAt !== advance.createdAt) return fail()
+        const charge = linked[0]
+        if (charge.id !== snapshot.id || charge.idempotencyKey !== snapshot.idempotencyKey || charge.kind !== snapshot.kind || charge.terminalId !== snapshot.terminalId || charge.branchId !== snapshot.branchId || charge.userId !== snapshot.userId || charge.documentType !== snapshot.documentType || charge.documentId !== snapshot.documentId || charge.amountMinor !== snapshot.amountMinor || charge.providerReference !== snapshot.providerReference || charge.occurredAt !== snapshot.occurredAt || charge.originalTransactionId !== snapshot.originalTransactionId || charge.cardLast4 !== snapshot.cardLast4) return fail()
+      } else if (linked.length) return fail()
+    }
+    if (!linked.length) continue
+    if (linked.length !== 1) return fail()
+    const charge = linked[0], terminals = state.paymentTerminals.filter(row => row.id === charge.terminalId), terminal = terminals[0]
+    const branch = getEffectiveActiveBranch(state)
+    if (state.paymentTerminalTransactions.filter(row => row.id === charge.id).length !== 1 || state.paymentTerminalTransactions.filter(row => row.idempotencyKey === charge.idempotencyKey).length !== 1 || state.paymentTerminalTransactions.filter(row => row.terminalId === charge.terminalId && row.kind === charge.kind && row.providerReference === charge.providerReference).length !== 1 || terminals.length !== 1 || terminal.branchId !== charge.branchId || (branch && charge.branchId !== String(branch.id)) || validateTerminalTransaction(charge).length || charge.originalTransactionId != null || charge.amountMinor !== advance.amountMinor || typeof charge.occurredAt !== 'string' || charge.occurredAt.slice(0, 10) !== advance.date || !entry || !entry.lines.some(line => line.accountCode === terminal.settlementAccountCode && line.debit === advance.amountMinor && line.credit === 0) || state.paymentTerminalTransactions.some(row => row.originalTransactionId === charge.id && (row.kind === 'refund' || row.kind === 'void'))) return fail()
+  }
   return { advances, extracts }
 }
 
@@ -13948,6 +13969,7 @@ export const useRawDataStore = create<DataState>()(
         // رد حركة ماكينة المحتجز وحده يترك قيد 1105 وحالة المشروع بلا تسوية.
         // يمنع المسار العام ذلك حتى يُنفَّذ مسار عكس متكامل للمحتجز.
         if (original && transaction.kind !== 'charge' && state.retentionReleases.some(release => release.paymentEvidence?.terminalCharge?.id === original.id || (original.documentType === 'project_extract' && original.documentId === `retention:${release.id}`))) throw new Error('لا يمكن رد أو إلغاء تحصيل ماكينة المحتجز منفرداً — راجع تسوية المحتجز والقيد أولاً')
+        if (original && transaction.kind !== 'charge' && original.documentType === 'project_extract' && state.clientAdvances.some(advance => original.documentId === `advance:${advance.projectId}:${advance.journalEntryId}`)) throw new Error('لا يمكن رد أو إلغاء ماكينة الدفعة المقدمة منفرداً — راجع تسوية المقدمة والقيد أولاً')
         const errors = validateTerminalTransaction(transaction, original)
         if (errors.length) throw new Error(errors.join(' — '))
         if (original && transaction.amountMinor > remainingRefundableMinor(original, state.paymentTerminalTransactions)) throw new Error('إجمالي الردود والإلغاءات يتجاوز المتبقي من عملية التحصيل')
@@ -19671,7 +19693,7 @@ export const useRawDataStore = create<DataState>()(
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: `advance:${project.id}:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
         }
         set({
-          clientAdvances: [...state.clientAdvances, { id: nextId(state.clientAdvances), projectId: project.id, date, amountMinor: args.amountMinor, recoveredMinor: 0, journalEntryId: entryId }],
+          clientAdvances: [...state.clientAdvances, { id: nextId(state.clientAdvances), projectId: project.id, date, createdAt: now, amountMinor: args.amountMinor, recoveredMinor: 0, journalEntryId: entryId, paymentEvidence: { version: 1 as const, treasuryCode: args.treasury, ...(terminalTransaction ? { terminalCharge: { ...terminalTransaction } } : {}) } }],
           journal: [...state.journal, entry],
           ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })
