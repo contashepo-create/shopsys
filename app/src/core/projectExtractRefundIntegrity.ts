@@ -6,6 +6,7 @@ import type { ProjectRefundQuantity } from './projectRefundQuantities.ts'
 import { creditedProjectRetention } from './projectExtractNet.ts'
 import { isValidExpiryDate } from './batches.ts'
 import type { ProjectAdvanceAllocation } from './projectAdvanceRecovery.ts'
+import { planAdvanceCredit, type AdvanceCreditEvidence } from './projectAdvanceCreditPlan.ts'
 
 /** لا تعكس ولا ترد مستخلصاً إذا لم يطابق القيد الأصلي مستنده. */
 export function assertProjectExtractOriginalIntegrity(
@@ -27,8 +28,9 @@ export function assertProjectExtractOriginalIntegrity(
 
 /** لا نعدّ الإشعار دليلاً على تخفيض الذمة أو الإيراد حتى يطابق قيده. */
 export function assertProjectExtractRefundIntegrity(
-  extracts: readonly { id: number; extractNumber: string; journalEntryId?: number; date?: string; totals: { dueMinor: number; vatMinor: number; grossMinor?: number; retentionMinor?: number }; lines?: readonly ProjectCreditLine[]; advanceRecoveryMinor?: number; advanceAllocations?: readonly ProjectAdvanceAllocation[]; refundedMinor?: number; refundedTaxMinor?: number; quantityCreditVersion?: number; refunds?: readonly (ServiceRefundRecord & { quantities?: readonly ProjectRefundQuantity[]; grossMinor?: number; retentionMinor?: number; restoredAdvanceMinor?: number })[] }[],
+  extracts: readonly { id: number; extractNumber: string; journalEntryId?: number; date?: string; totals: { dueMinor: number; vatMinor: number; grossMinor?: number; retentionMinor?: number }; lines?: readonly ProjectCreditLine[]; advanceRecoveryMinor?: number; advanceAllocations?: readonly ProjectAdvanceAllocation[]; refundedMinor?: number; refundedTaxMinor?: number; quantityCreditVersion?: number; refunds?: readonly (ServiceRefundRecord & { quantities?: readonly ProjectRefundQuantity[]; grossMinor?: number; retentionMinor?: number; restoredAdvanceMinor?: number; restoredAdvanceAllocations?: readonly ProjectAdvanceAllocation[] })[] }[],
   journal: ReadonlyMap<number, JournalEntry>,
+  options?: { experimentalAdvanceReplay?: boolean },
 ): void {
   if (!Array.isArray(extracts as unknown)) throw new FinancialDataReviewError('إشعارات المستخلصات')
   const used = new Set<number>()
@@ -41,7 +43,9 @@ export function assertProjectExtractRefundIntegrity(
     const refunds = extract.refunds ?? []
     if (refunds.some(row => !row || typeof row !== 'object' || Array.isArray(row))) return fail()
     const hasEvidence = refunds.some(row => row.quantities != null || row.grossMinor != null || row.retentionMinor != null || row.restoredAdvanceMinor != null)
-    if (extract.quantityCreditVersion != null && extract.quantityCreditVersion !== 1 && extract.quantityCreditVersion !== 2) return fail()
+    // نسخة إعادة المقدمة تجريبية فقط؛ لا تفتح المسار التشغيلي أو التقارير.
+    const experimental = extract.quantityCreditVersion === 3 && options?.experimentalAdvanceReplay === true
+    if (extract.quantityCreditVersion != null && extract.quantityCreditVersion !== 1 && extract.quantityCreditVersion !== 2 && !experimental) return fail()
     if (extract.quantityCreditVersion != null && !refunds.length) return fail()
     if (hasEvidence && extract.quantityCreditVersion == null) return fail()
     if (extract.quantityCreditVersion != null) {
@@ -49,7 +53,7 @@ export function assertProjectExtractRefundIntegrity(
       if (!Number.isSafeInteger(recovery) || recovery < 0 || recovery > extract.totals.dueMinor || typeof extract.date !== 'string' || !isValidExpiryDate(extract.date.slice(0, 10)) || !Number.isSafeInteger(extract.journalEntryId) || extract.journalEntryId! <= 0) return fail()
       if (recovery > 0) {
         const allocations = extract.advanceAllocations
-        if (!Array.isArray(allocations) || !allocations.length || refunds.some(row => row.restoredAdvanceMinor !== 0)) return fail()
+        if (!Array.isArray(allocations) || !allocations.length || (!experimental && refunds.some(row => row.restoredAdvanceMinor !== 0))) return fail()
         let allocated = 0
         const ids = new Set<number>(), entries = new Set<number>()
         for (const row of allocations) {
@@ -57,8 +61,18 @@ export function assertProjectExtractRefundIntegrity(
           ids.add(row.advanceId); entries.add(row.journalEntryId); allocated += row.amountMinor
           if (!Number.isSafeInteger(allocated)) return fail()
         }
-        if (allocated !== recovery || (extract.refundedMinor ?? 0) > extract.totals.dueMinor - recovery) return fail()
-      } else if (refunds.some(row => row.restoredAdvanceMinor != null && row.restoredAdvanceMinor !== 0)) return fail()
+        if (allocated !== recovery || (!experimental && (extract.refundedMinor ?? 0) > extract.totals.dueMinor - recovery)) return fail()
+        if (experimental) {
+          const previous: AdvanceCreditEvidence[] = []
+          for (const refund of refunds) {
+            if (!Number.isSafeInteger(refund.restoredAdvanceMinor) || !Array.isArray(refund.restoredAdvanceAllocations)) return fail()
+            let plan: ReturnType<typeof planAdvanceCredit>
+            try { plan = planAdvanceCredit({ dueMinor: extract.totals.dueMinor, recoveryMinor: recovery, allocations, previous, amountMinor: refund.amountMinor, restoredAdvanceMinor: refund.restoredAdvanceMinor! }) } catch { return fail() }
+            if (plan.allocations.length !== refund.restoredAdvanceAllocations.length || plan.allocations.some((row, index) => row.advanceId !== refund.restoredAdvanceAllocations![index]?.advanceId || row.journalEntryId !== refund.restoredAdvanceAllocations![index]?.journalEntryId || row.amountMinor !== refund.restoredAdvanceAllocations![index]?.amountMinor)) return fail()
+            previous.push({ amountMinor: refund.amountMinor, restoredAdvanceMinor: refund.restoredAdvanceMinor!, allocations: refund.restoredAdvanceAllocations })
+          }
+        }
+      } else if (experimental || refunds.some(row => row.restoredAdvanceMinor != null && row.restoredAdvanceMinor !== 0)) return fail()
       const original = journal.get(extract.journalEntryId!)
       if (!original || original.date !== extract.date.slice(0, 10) || original.sourceType !== 'project_extract' || original.sourceId !== extract.id) return fail()
       try {
@@ -87,9 +101,10 @@ export function assertProjectExtractRefundIntegrity(
       try { assertBalanced(entry.lines) } catch { return fail() }
       const sum = (account: string, side: 'debit' | 'credit') => entry.lines.filter(line => line.accountCode === account).reduce((n, line) => n + line[side], 0)
       const totalDebit = entry.lines.reduce((n, line) => n + line.debit, 0)
-      const retention = extract.quantityCreditVersion === 2 ? refund.retentionMinor! : 0
-      if (extract.quantityCreditVersion != null && (sum('2109', 'debit') !== 0 || sum('2109', 'credit') !== 0)) return fail()
-      if (totalDebit !== refund.amountMinor + retention || sum('4102', 'debit') !== refund.amountMinor - refund.taxShareMinor + retention || sum('2102', 'debit') !== refund.taxShareMinor || sum('1105', 'credit') !== retention || sum('1105', 'debit') !== 0 || sum('4102', 'credit') !== 0 || sum('2102', 'credit') !== 0 || sum('1104', 'debit') !== 0 || sum('1104', 'credit') !== (refund.mode === 'customer_credit' ? refund.amountMinor : 0)) return fail()
+      const retention = extract.quantityCreditVersion === 2 || experimental ? refund.retentionMinor! : 0
+      const restored = experimental ? refund.restoredAdvanceMinor! : 0
+      if (extract.quantityCreditVersion != null && (sum('2109', 'debit') !== 0 || sum('2109', 'credit') !== restored)) return fail()
+      if (totalDebit !== refund.amountMinor + retention || sum('4102', 'debit') !== refund.amountMinor - refund.taxShareMinor + retention || sum('2102', 'debit') !== refund.taxShareMinor || sum('1105', 'credit') !== retention || sum('1105', 'debit') !== 0 || sum('4102', 'credit') !== 0 || sum('2102', 'credit') !== 0 || sum('1104', 'debit') !== 0 || sum('1104', 'credit') !== (refund.mode === 'customer_credit' ? refund.amountMinor - restored : 0)) return fail()
       amount += refund.amountMinor
       tax += refund.taxShareMinor
     }
