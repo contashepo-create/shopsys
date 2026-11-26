@@ -47,10 +47,47 @@ describe('سلسلة إغلاق الأقمار بمحاكاة عملية Electro
     await vi.waitFor(() => expect(parent.webContents.sent).toContainEqual({ channel: 'windows:close-blocked', data: { childTitle: 'محرر صنف' } }))
     expect(parent.destroyed).toBe(false)
     expect(child.destroyed).toBe(false)
-    call('windows:close-self', parent.webContents)
+    // أُطلقت مصافحة إغلاق الابن من المنتقي قبل أن يطلب المحرر إغلاق نفسه.
+    // يجب انتظار المصافحة الجارية لا اعتبارها رفضاً فورياً.
+    call('windows:request-close', parent.webContents, 'child')
     const requests = child.webContents.sent.filter((x: any) => x.channel === 'windows:request-close')
+    expect(requests).toHaveLength(2)
+    call('windows:close-self', parent.webContents)
     call('windows:close-response', child.webContents, { token: requests[1].data.token, allow: true })
-    await vi.waitFor(() => expect(parent.destroyed).toBe(true))
+    await vi.waitFor(() => expect(parent.destroyed).toBe(true), { timeout: 1000 })
     expect(child.destroyed).toBe(true)
+    expect(parent.webContents.sent.filter((x: any) => x.channel === 'windows:close-blocked')).toHaveLength(1)
   })
+})
+
+it.each(['refuse', 'timeout'] as const)('لا يغلق الأم قسراً إذا انتهت مصافحة الابن الجارية بـ %s', async mode => {
+  vi.useFakeTimers()
+  try {
+    const { initSatelliteWindows } = await import('../desktop/satelliteWindows.ts')
+    const main = { isDestroyed: () => false, webContents: { id: 1, isDestroyed: () => false, send: () => {} } }
+    initSatelliteWindows({ getMainWindow: () => main as never, isDev: true, devStartUrl: 'http://example.test', indexFilePath: '', appIndexFileUrl: '', devOrigin: null, preloadPath: '', iconPath: '', log: () => {} })
+    const open = fake.handles.get('windows:open')!, call = (name: string, sender: any, arg?: any) => fake.listeners.get(name)!({ sender }, arg)
+    open({ sender: main.webContents }, { windowId: `parent-${mode}`, title: 'فاتورة' })
+    const parent = fake.windows.at(-1)
+    open({ sender: parent.webContents }, { windowId: `child-${mode}`, title: 'تحرير' })
+    const child = fake.windows.at(-1)
+    fake.handles.get('windows:claim')!({ sender: child.webContents }, new URL(child.url).searchParams.get('sat'))
+    call('windows:renderer-ready', child.webContents, true)
+    call('windows:set-dirty', child.webContents, true)
+    call('windows:request-close', parent.webContents, `child-${mode}`)
+    call('windows:close-self', parent.webContents)
+    const first = child.webContents.sent.find((x: any) => x.channel === 'windows:request-close')
+    if (mode === 'timeout') await vi.advanceTimersByTimeAsync(10_000)
+    else { call('windows:close-response', child.webContents, { token: first.data.token, allow: false }); await vi.advanceTimersByTimeAsync(0) }
+    expect(parent.destroyed).toBe(false)
+    expect(child.destroyed).toBe(false)
+    expect(parent.webContents.sent).toContainEqual({ channel: 'windows:close-blocked', data: { childTitle: 'تحرير' } })
+    // تنظف النوافذ للاختبار التالي مع موافقة صحيحة من الابن نفسه.
+    call('windows:close-self', parent.webContents)
+    const last = child.webContents.sent.filter((x: any) => x.channel === 'windows:request-close').at(-1)
+    call('windows:close-response', child.webContents, { token: last.data.token, allow: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(parent.destroyed).toBe(true)
+    expect(child.destroyed).toBe(true)
+  } finally { vi.useRealTimers() }
 })

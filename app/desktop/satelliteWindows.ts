@@ -61,6 +61,8 @@ interface SatEntry {
   rendererReady: boolean
   forceClose: boolean
   closing: boolean
+  /** تشارك الطلبات المتزامنة نتيجة نفس المصافحة، ولا تعتبرها رفضاً. */
+  closeAttempt: Promise<boolean> | null
   descriptor: Record<string, unknown>
 }
 
@@ -205,7 +207,7 @@ function createSatelliteWindow(init: {
   const entry: SatEntry = {
     windowId: init.windowId, win, webContentsId: win.webContents.id, type: init.type, kind: init.kind, sectionPath: init.sectionPath,
     title: init.title, dedupeKey: init.dedupeKey, parentId: init.parentId, ownerWcId: init.ownerWcId,
-    requestId: init.requestId, dirty: false, claimed: false, rendererReady: false, forceClose: false, closing: false,
+    requestId: init.requestId, dirty: false, claimed: false, rendererReady: false, forceClose: false, closing: false, closeAttempt: null,
     descriptor: init.descriptor,
   }
   byId.set(entry.windowId, entry)
@@ -270,9 +272,11 @@ function handshakeClose(entry: SatEntry): Promise<boolean> {
 /** إغلاق قمر بمصافحة أبنائه أولاً — أي اعتراض يوقف السلسلة ويركّز المعترضة */
 async function attemptClose(entry: SatEntry): Promise<boolean> {
   if (entry.win.isDestroyed()) return true
-  if (entry.closing) return false
+  if (entry.closing) return entry.closeAttempt ?? false
   entry.closing = true
-  try {
+  // ينتظر طلب إغلاق الأم المصافحة الجارية للابن بدل اعتبارها رفضاً،
+  // مع بقاء الرفض والمهلة مانعين للإغلاق حفاظاً على البيانات غير المحفوظة.
+  const attempt = (async () => {
     const children = [...byId.values()].filter((c) => c.parentId === entry.windowId && !c.win.isDestroyed())
     for (const child of children) {
       if (!(await attemptClose(child))) { focusEntry(child); return false }
@@ -282,9 +286,10 @@ async function attemptClose(entry: SatEntry): Promise<boolean> {
     entry.forceClose = true
     if (!entry.win.isDestroyed()) entry.win.close()
     return true
-  } finally {
-    entry.closing = false
-  }
+  })()
+  entry.closeAttempt = attempt
+  try { return await attempt }
+  finally { entry.closing = false; entry.closeAttempt = null }
 }
 
 /**
