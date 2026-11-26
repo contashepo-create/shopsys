@@ -41,6 +41,13 @@ describe('حفظ إقرار توزيع قسيمة على مشاريع قائمة
     useRawDataStore.setState({ projects: [{ ...project(1), status: 'completed' }] as never })
     expect(() => S().accruePayrollSlips({ month: todayLocalIso().slice(0, 7), rows: [{ ...row(), projectPercentages: [{ projectId: 1, basisPoints: 10000 }] }] })).toThrow(/غير قائم/)
   })
+  it.each(['on_hold', 'cancelled', 'finished'] as const)('يرفض التوزيع الجديد للمشروع المتوقف %s دون أثر', operationalStatus => {
+    useRawDataStore.setState({ projects: [{ ...project(1), operationalStatus }] as never })
+    const before = S()
+    expect(() => S().accruePayrollSlips({ month: todayLocalIso().slice(0, 7), rows: [{ ...row(), projectPercentages: [{ projectId: 1, basisPoints: 10000 }] }] })).toThrow(/المشروع/)
+    expect(S().journal).toBe(before.journal)
+    expect(S().payrollSlips).toBe(before.payrollSlips)
+  })
   it('يدخل السلفة المستقطعة في 5102 ولا يُكررها بعد توزيع القسيمة', () => {
     S().grantEmployeeAdvance({ employeeId: 1, amountMinor: 2000, treasury: '1101', notes: '' })
     const [slip] = S().accruePayrollSlips({ month: todayLocalIso().slice(0, 7), rows: [{ ...row(), deductionsMinor: 1000, advanceMinor: 2000, projectPercentages: shares }] })

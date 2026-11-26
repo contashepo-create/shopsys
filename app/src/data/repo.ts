@@ -7541,8 +7541,8 @@ export const useRawDataStore = create<DataState>()(
             const matches = state.projects.filter(project => project.id === share.projectId)
             if (matches.length !== 1 || !scoped.projects.some(project => project.id === share.projectId)) throw new Error('مشروع التوزيع غير فريد أو ليس في الفرع الحالي')
             const project = matches[0]
-            assertProjectOperationalRunning(project)
             if (project.status !== 'active' || !isValidExpiryDate(project.startDate) || project.startDate > slipDate || project.startDate > `${args.month}-31`) throw new Error('مشروع التوزيع غير قائم أو تاريخ بدايته لا يسمح بهذا الشهر')
+            assertProjectOperationalRunning(project)
             if (typeof project.code !== 'string' || !project.code.trim() || typeof project.nameAr !== 'string' || !project.nameAr.trim()) throw new Error('هوية مشروع التوزيع غير صالحة')
             return project
           })
