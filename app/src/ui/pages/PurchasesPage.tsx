@@ -515,13 +515,12 @@ export function PurchasesPage() {
     })
     committedInvoiceNumber = inv.invoiceNumber
     postedQuickSignature.current = attemptSignature
-    toast.show(`رُحّلت الفاتورة ${inv.invoiceNumber} — تحدثت تكلفة الأصناف بالمتوسط المرجح ✓`)
     return true
     } catch (e) {
       toast.show((e as Error).message, 'error')
       return false
     }
-    }).then((completed) => { if (completed) { unsaved.markClean(); setOpen(false) } })
+    }).then((completed) => { if (completed) { toast.show(`رُحّلت الفاتورة ${committedInvoiceNumber} — تحدثت تكلفة الأصناف بالمتوسط المرجح ✓`); unsaved.markClean(); setOpen(false) } })
       .catch((e: unknown) => {
         const detail = e instanceof Error ? e.message : 'تعذّر تأمين حفظ الفاتورة'
         toast.show(committedInvoiceNumber ? `تم ترحيل الفاتورة ${committedInvoiceNumber} لكن ${detail}؛ أعد المحاولة بالقيم نفسها أو راجع الفاتورة قبل إغلاق الإدخال` : detail, 'error')
@@ -621,6 +620,7 @@ export function PurchasesPage() {
                         <Receipt size={15} />
                       </button>
                     )}
+                    <button type="button" onClick={() => navigate(`/purchases/returns?purchase=${p.id}`)} aria-label={`تصحيح فاتورة الشراء ${p.invoiceNumber} بمرتجع`} title="تصحيح الفاتورة بمرتجع شراء — يبقى المستند الأصلي وسجله" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110"><Receipt size={15} /></button>
                     <button onClick={() => setViewing(p)} title="عرض الفاتورة وقيدها" className="p-2 rounded-lg text-slate-400 hover:text-cyan-600 hover:bg-cyan-500/10 transition-all duration-200 hover:scale-110">
                       <Eye size={15} />
                     </button>
