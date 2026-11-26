@@ -117,6 +117,11 @@ const windows = {
     ipcRenderer.on('windows:request-close', wrapped)
     return () => ipcRenderer.removeListener('windows:request-close', wrapped)
   },
+  onCloseBlocked: (listener: (e: { childTitle: string }) => void) => {
+    const wrapped = (_event: unknown, e: { childTitle: string }) => listener(e)
+    ipcRenderer.on('windows:close-blocked', wrapped)
+    return () => ipcRenderer.removeListener('windows:close-blocked', wrapped)
+  },
   onNavigate: (listener: (e: { path: string }) => void) => {
     const wrapped = (_event: unknown, e: { path: string }) => listener(e)
     ipcRenderer.on('windows:navigate', wrapped)

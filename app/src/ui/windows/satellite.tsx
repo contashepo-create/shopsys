@@ -83,6 +83,7 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
   const promptRef = useRef<WindowClosePrompt | null>(null)
   const [prompt, setPrompt] = useState<WindowClosePrompt | null>(null)
   const [closeError, setCloseError] = useState<string | null>(null)
+  const [blockedChild, setBlockedChild] = useState<string | null>(null)
   /* طلبات إغلاق معلّقة: كل مصافحة من العملية الرئيسية لها توكنها — قد يصل
      طلب ثانٍ (إغلاق شامل) بينما حوار الأول مفتوح، فتُجمع التوكنات وتُجاب
      كلها معاً وإلا انتهت مهلة أحدهما وأُغلقت النافذة قسراً أثناء قراره */
@@ -115,6 +116,8 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
     bridge?.setRendererReady(true)
     return () => { bridge?.setRendererReady(false); off?.() }
   }, [bridge])
+
+  useEffect(() => bridge?.onCloseBlocked?.(({ childTitle }) => setBlockedChild(childTitle || 'نافذة فرعية')), [bridge])
 
   /* تركيز أول حقل — نفس سلوك النافذة العائمة عند فتحها */
   useEffect(() => {
@@ -171,6 +174,11 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
             </Suspense>
           </FinancialDataReviewBoundary>
         </div>
+
+        {blockedChild && <div role="alert" className="m-3 rounded-xl border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900" data-window-close-blocked>
+          تعذّر إغلاق النافذة لأن «{blockedChild}» ما زالت مفتوحة أو لم تؤكد الإغلاق. راجع النافذة الفرعية ثم أغلق هذه النافذة؛ إذا كانت الفاتورة قد رُحّلت فلا تُرحّلها مرة أخرى.
+          <button type="button" className="mr-3 font-bold underline" onClick={() => setBlockedChild(null)}>فهمت</button>
+        </div>}
 
         {ask && (
           <OverlayPortal>

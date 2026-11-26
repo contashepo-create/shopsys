@@ -20,6 +20,7 @@ const EMPTY = { taxNumber: '', commercialReg: '', email: '', address: '', city: 
 
 let bridge: {
   onRequestClose: (listener: (event: { token: string }) => void) => () => void
+  onCloseBlocked: (listener: (event: { childTitle: string }) => void) => () => void
   onPropInvoke: (listener: (e: unknown) => void) => () => void
   onNavigate: (listener: (e: unknown) => void) => () => void
   onRegistry: (listener: (e: unknown) => void) => () => void
@@ -39,6 +40,7 @@ let bridge: {
   toggleMaximize: ReturnType<typeof vi.fn>
 }
 let requestClose: ((event: { token: string }) => void) | undefined
+let closeBlocked: ((event: { childTitle: string }) => void) | undefined
 let previousDesktop: typeof window.shopsysDesktop | undefined
 
 beforeEach(() => {
@@ -46,8 +48,10 @@ beforeEach(() => {
   const app = useAppStore.getState()
   useAppStore.setState({ ...app, setup: { ...app.setup, completed: true, countryCode: 'EG', activityId: 'grocery', shopName: 'متجر', ownerName: 'مالك', allowNegativeTreasury: true } })
   requestClose = undefined
+  closeBlocked = undefined
   bridge = {
     onRequestClose: (listener) => { requestClose = listener; return () => { if (requestClose === listener) requestClose = undefined } },
+    onCloseBlocked: (listener) => { closeBlocked = listener; return () => { if (closeBlocked === listener) closeBlocked = undefined } },
     onPropInvoke: () => () => undefined,
     onNavigate: () => () => undefined,
     onRegistry: () => () => undefined,
@@ -208,6 +212,28 @@ describe('إغلاق تلقائي بعد حفظ وترحيل الفاتورة', 
 
     await waitFor(() => expect(S().sales.length).toBe(salesBefore + 1), { timeout: 8000 })
     await waitFor(() => expect(bridge.closeSelf).toHaveBeenCalled(), { timeout: 8000 })
+  })
+
+  it('شراء (Windows بمحاكاة جسر Electron): يُرسل أمر إغلاق القمر بعد تأكيد الترحيل', async () => {
+    S().addSupplier({ ...EMPTY, nameAr: 'مورد قمر الشراء', phone: '', notes: '' })
+    const supplier = S().suppliers.at(-1)!, item = seedSaleItem('SAT-PUR-POST')
+    const order = S().addPurchaseOrder({ supplierId: supplier.id, supplierName: supplier.nameAr, date: '2026-01-01', expectedDate: '2026-01-02', warehouseId: null, notes: '', lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 1, receivedQty: 0, unitAr: 'قطعة', unitPriceMinor: 1000, vatPercent: 0, notes: '' }] })
+    const { SatelliteViewRoot } = await import('../src/ui/windows/satellite.tsx')
+    render(<MemoryRouter><SatelliteViewRoot descriptor={{ windowId: 'satellite-repro', type: 'view', kind: 'purchase-invoice', title: 'فاتورة شراء', props: { prefill: { purchaseOrderId: order.id } } }} /></MemoryRouter>)
+    await waitFor(() => expect(document.querySelectorAll('[data-entry-row]').length).toBe(1))
+    const root = document.querySelector('[data-satellite-view="purchase-invoice"]') as HTMLElement
+    const button = Array.from(root.querySelectorAll('button')).find(row => row.textContent?.includes('حفظ وترحيل'))!
+    const before = S().purchases.length
+    await act(async () => { fireEvent.click(button) })
+    await waitFor(() => expect(S().purchases.length).toBe(before + 1), { timeout: 8000 })
+    await waitFor(() => expect(bridge.closeSelf).toHaveBeenCalled(), { timeout: 8000 })
+  })
+
+  it('شراء (Windows): يوضح أن نافذة ابنة منعت الإغلاق بدلاً من البقاء صامتاً', async () => {
+    await renderSatelliteInvoice('purchase-invoice')
+    act(() => { closeBlocked?.({ childTitle: 'محرر الصنف' }) })
+    expect(document.querySelector('[data-window-close-blocked]')?.textContent).toContain('محرر الصنف')
+    expect(document.querySelector('[data-window-close-blocked]')?.textContent).toContain('لا تُرحّلها مرة أخرى')
   })
 
   it('شراء (ويب): بعد «حفظ وترحيل» تُغلق نافذة المستند فوراً', async () => {

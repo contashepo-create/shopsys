@@ -225,6 +225,8 @@ export interface DesktopWindowsBridge {
   respondClose(token: string, allow: boolean): void
   onPropInvoke(listener: (e: { requestId: string; prop: string; args: unknown[] }) => void): () => void
   onRequestClose(listener: (e: { token: string }) => void): () => void
+  /** تحذير عندما تمنع نافذة ابنة إغلاق النافذة بعد طلبها. */
+  onCloseBlocked?(listener: (e: { childTitle: string }) => void): () => void
   onNavigate(listener: (e: { path: string }) => void): () => void
   onRegistry(listener: (entries: SatelliteRegistryEntry[]) => void): () => void
 }

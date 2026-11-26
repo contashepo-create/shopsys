@@ -434,7 +434,12 @@ export function initSatelliteWindows(d: SatelliteDeps): void {
     if (!entry) return
     void (async () => {
       const children = [...byId.values()].filter((c) => c.parentId === entry.windowId && !c.win.isDestroyed())
-      for (const child of children) if (!(await attemptClose(child))) return
+      for (const child of children) {
+        if (!(await attemptClose(child))) {
+          if (!entry.win.isDestroyed() && !entry.win.webContents.isDestroyed()) entry.win.webContents.send('windows:close-blocked', { childTitle: child.title })
+          return
+        }
+      }
       entry.forceClose = true
       if (!entry.win.isDestroyed()) entry.win.close()
     })()

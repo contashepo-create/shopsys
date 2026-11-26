@@ -53,3 +53,11 @@ describe('دورة حياة نوافذ Electron المستقلة', () => {
     expect(attempt).toContain('focusEntry(entry); return false')
   })
 })
+
+it('لا يبقى فشل إغلاق نافذة ابنة صامتاً بعد طلب إغلاق المستند', () => {
+  const source = read('../desktop/satelliteWindows.ts')
+  const handler = source.match(/ipcMain\.on\('windows:close-self',[\s\S]*?\n  \}\)/)?.[0]
+  expect(handler).toContain('attemptClose(child)')
+  expect(handler).toContain("send('windows:close-blocked'")
+  expect(handler!.indexOf("send('windows:close-blocked'")).toBeLessThan(handler!.indexOf('entry.forceClose = true'))
+})
