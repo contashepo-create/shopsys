@@ -1,3 +1,4 @@
+import { CustomerQuickPicker } from '../components/CustomerQuickPicker.tsx'
 /**
  * شاشة البيع (الكاشير) — قلب المنتج ⭐ (المرحلة 2)
  * - بحث فوري + مسح باركود (Enter) + شبكة أصناف باللمس
@@ -41,7 +42,7 @@ import { Btn, Modal, Field, inputCls, useToast, useUnsavedChangesGuard, guardNav
 import { useAnchoredMenu } from '../components/anchoredMenu.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
-import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { earnedPoints } from '../../core/loyalty.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { toMinor } from '../../core/money.ts'
@@ -171,7 +172,7 @@ export function PosPage() {
     // إعادة تسعير السطور حسب قائمة العميل الجديد — **عدا** السطور التي عدّل
     // الكاشير سعرها يدوياً (اتفاق سعر/خصم مباشر)، فلا يُمحى تعديله بصمت عند
     // اختيار عميل. كانت الشاشة تعيد تسعير كل السطور دون استثناء.
-    const c = id == null ? null : customers.find((x) => x.id === id)
+    const c = id == null ? null : useDataStore.getState().customers.find((x) => x.id === id)
     const listId = c?.priceListId ?? null
     setCart((prev) => repriceCartForPriceList(prev, (itemId) => getEffectivePrice(itemId, listId)))
     const manualCount = cart.filter((l) => l.priceManual).length
@@ -1108,7 +1109,7 @@ export function PosPage() {
             {(customers.some((c) => c.priceListId != null) || (loyalty.enabled && customers.length > 0)) && (
               <div className="flex items-center gap-1" title="اختيار العميل يسعّر السلة بقائمته ويكسب نقاط الولاء">
                 <div className="w-44">
-                  <PartyQuickPicker
+                  <CustomerQuickPicker
                     parties={customers.map((c) => ({ ...c, nameAr: [c.nameAr, c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null].filter(Boolean).join(' — ') }))}
                     value={customerId ?? 0}
                     onChange={pickCustomer}
@@ -1588,7 +1589,7 @@ export function PosPage() {
 
             {(payment === 'credit' || creditRemainder > 0) && (
               <div className="flex items-end gap-2">
-                <div className="min-w-0 flex-1"><PartyQuickPicker
+                <div className="min-w-0 flex-1"><CustomerQuickPicker
                   parties={customers.map((c) => ({ ...c, nameAr: [c.nameAr, c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null].filter(Boolean).join(' — ') }))}
                   value={customerId ?? 0}
                   onChange={pickCustomer}

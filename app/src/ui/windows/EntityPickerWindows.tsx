@@ -1,3 +1,4 @@
+import { CustomerQuickPicker } from '../components/CustomerQuickPicker.tsx'
 /**
  * نوافذ المنتقي الحي (طلب المالك — بند ٩): إعادة بناء منتقيات المشروع والعميل
  * والموظف بتصميم «بحث الأصناف — بحث حي» الذي كان موجوداً من قبل. نافذة واحدة
@@ -13,7 +14,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
-import { PartyQuickPicker, PartySearchPanel, ProjectSearchPanel, EmployeeSearchPanel } from '../components/KeyboardPickers.tsx'
+import { PartySearchPanel, ProjectSearchPanel, EmployeeSearchPanel } from '../components/KeyboardPickers.tsx'
 import { useWindowHost } from './windowHostContext.ts'
 import {
   openPartyEditorWindow, openPartyLedgerWindow, openProjectEditorWindow, openEmployeeEditorWindow,
@@ -99,8 +100,9 @@ export function ProjectEditorWindowView() {
   const isNew = projectId === 0
   const cur = useCur()
   const toast = useToast()
-  const { projects, customers, addProject, updateProject } = useDataStore()
+  const { projects, customers, projectExtracts, clientAdvances, addProject, updateProject } = useDataStore()
   const project = projects.find((row) => row.id === projectId) ?? null
+  const clientLocked = !isNew && (projectExtracts.some(row => row.projectId === projectId) || clientAdvances.some(row => row.projectId === projectId))
   const [form, setForm] = useState(() => ({
     nameAr: project?.nameAr ?? '',
     clientId: project?.clientId ?? 0,
@@ -166,8 +168,8 @@ export function ProjectEditorWindowView() {
       <div className="grid gap-3 md:grid-cols-2">
         <Field label="اسم المشروع *"><input className={inputCls} value={form.nameAr} onChange={(e) => patch({ nameAr: e.target.value })} aria-label="اسم المشروع" data-project-editor-name /></Field>
         <Field label="العميل (من السجل — اختياري)">
-          <PartyQuickPicker parties={customers} value={form.clientId} cashLabel="— بدون ربط بعميل مسجل —" label="بحث عميل المشروع" cashValue={0}
-            onChange={(id) => { const c = customers.find((x) => x.id === id); patch({ clientId: id, ...(c ? { clientName: c.nameAr } : {}) }) }} />
+          {clientLocked ? <input className={inputCls} disabled aria-label="بحث عميل المشروع" value={customers.find(row => row.id === form.clientId)?.nameAr ?? form.clientName} /> : <CustomerQuickPicker parties={customers} value={form.clientId} cashLabel="— بدون ربط بعميل مسجل —" label="بحث عميل المشروع" cashValue={0}
+            onChange={(id) => { const c = useDataStore.getState().customers.find((x) => x.id === id); patch({ clientId: id, ...(c ? { clientName: c.nameAr } : {}) }) }} />}
         </Field>
         <Field label="اسم العميل (يظهر في المستندات)"><input className={inputCls} value={form.clientName} onChange={(e) => patch({ clientName: e.target.value })} aria-label="اسم عميل المشروع" /></Field>
         <Field label={`قيمة العقد (${cur.symbol}) *`}><input className={inputCls} value={form.contractValue} onChange={(e) => patch({ contractValue: e.target.value })} inputMode="decimal" dir="ltr" data-project-editor-value /></Field>

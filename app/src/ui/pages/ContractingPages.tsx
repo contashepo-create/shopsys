@@ -1,3 +1,4 @@
+import { CustomerQuickPicker } from '../components/CustomerQuickPicker.tsx'
 import { CustomerProfileSummary, DocumentContactSummary } from '../components/CustomerProfileFields.tsx'
 import { projectClosureIndicators, projectSystemStatusLabel, type ProjectClosureContext } from '../../core/projectClosureReview.ts'
 import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
@@ -860,7 +861,7 @@ export function ProjectsPage() {
               <Field label="العميل / الجهة المالكة">
                 <div id="project-client-field" className="invoice-doc-infield flex gap-1">
                   <input className={inputCls} value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="اسم الجهة" aria-label="اسم العميل" />
-                  <PartyQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = customers.find((x) => x.id === id); if (c && !clientName.trim()) setClientName(c.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />
+                  <CustomerQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = useDataStore.getState().customers.find((x) => x.id === id); if (c && !clientName.trim()) setClientName(c.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />
                 </div>
               </Field>
               <Field label="مدير المشروع" hint="من سجل الموظفين">
@@ -1584,7 +1585,7 @@ export function ProjectsPage() {
             <div className="grid grid-cols-2 gap-3" data-project-edit-modal>
               <Field label="اسم المشروع *"><input className={inputCls} value={epName} onChange={(e) => setEpName(e.target.value)} aria-label="اسم المشروع" /></Field>
               <Field label="الجهة المالكة (العميل) *"><input className={inputCls} value={epClient} onChange={(e) => setEpClient(e.target.value)} aria-label="الجهة المالكة" /></Field>
-              <Field label="ربط سجل العميل" hint={clientLocked ? '🔒 لا يُغيّر الربط بعد مستخلص أو دفعة مقدمة — راجع المحاسب' : 'تُنسب مستخلصات المشروع إلى العميل المرتبط'}>{clientLocked ? <input className={inputCls} disabled value={epClientId} aria-label="ربط العميل" /> : <PartyQuickPicker parties={customers} value={epClientId ? Number(epClientId) : 0} onChange={id => { setEpClientId(id ? String(id) : ''); const customer = customers.find(row => row.id === id); if (customer && !epClient.trim()) setEpClient(customer.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />}</Field>
+              <Field label="ربط سجل العميل" hint={clientLocked ? '🔒 لا يُغيّر الربط بعد مستخلص أو دفعة مقدمة — راجع المحاسب' : 'تُنسب مستخلصات المشروع إلى العميل المرتبط'}>{clientLocked ? <input className={inputCls} disabled value={epClientId} aria-label="ربط العميل" /> : <CustomerQuickPicker parties={customers} value={epClientId ? Number(epClientId) : 0} onChange={id => { setEpClientId(id ? String(id) : ''); const customer = useDataStore.getState().customers.find(row => row.id === id); if (customer && !epClient.trim()) setEpClient(customer.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />}</Field>
               <div className="col-span-2 text-xs text-slate-500"><CustomerProfileSummary profile={customers.find(customer => customer.id === Number(epClientId))} /><br />{(editPrj.clientId ?? null) === (epClientId ? Number(epClientId) : null) ? <DocumentContactSummary history={editPrj.customerContactHistory} customerId={editPrj.clientId} /> : <span>تُسجل بيانات التواصل عند حفظ الربط الجديد.</span>}</div>
               <Field label={`قيمة العقد — بدون ضريبة (${cur.code})`} hint={locked ? '🔒 صدرت مستخلصات — تعديل القيمة بأمر تغيير فقط' : epLines.length ? 'تُحسب من بنود جدول الكميات عند تغييرها' : 'صافية بلا ض.ق.م · قبل أول مستخلص فقط'}>
                 <input className={inputCls} type="number" disabled={locked || epLines.length > 0} value={locked || epLines.length ? String(editPrj.contractValueMinor / 10 ** cur.decimals) : epValue} onChange={(e) => setEpValue(e.target.value)} aria-label="قيمة العقد" />

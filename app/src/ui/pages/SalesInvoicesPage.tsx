@@ -1,3 +1,4 @@
+import { CustomerQuickPicker } from '../components/CustomerQuickPicker.tsx'
 import { WhatsappIcon } from '../components/WhatsappIcon.tsx'
 /**
  * فواتير المبيعات — كل فاتورة مربوطة بقيدها (اضغط لعرض القيد) + طباعة الإيصال
@@ -575,7 +576,7 @@ export function SalesInvoicesPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="العميل" hint="أي جزء آجل يحتاج عميلاً مسجلاً">
-                <div className="flex items-center gap-2"><div className="min-w-0 flex-1"><PartyQuickPicker parties={customers} value={editCustomerId ?? 0} onChange={(id) => setEditCustomerId(id || null)} cashLabel="عميل نقدي" label="اختيار العميل" partyInfo={customerPickerInfo} onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} /></div>{editCustomerId ? <button type="button" title="تعديل بيانات العميل" onClick={() => setPartyEditorOpen(true)} className="mt-0.5 rounded-lg border border-sky-300 p-2 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={15}/></button> : null}</div>
+                <div className="flex items-center gap-2"><div className="min-w-0 flex-1"><CustomerQuickPicker parties={customers} value={editCustomerId ?? 0} onChange={(id) => setEditCustomerId(id || null)} cashLabel="عميل نقدي" label="اختيار العميل" partyInfo={customerPickerInfo} onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} /></div>{editCustomerId ? <button type="button" title="تعديل بيانات العميل" onClick={() => setPartyEditorOpen(true)} className="mt-0.5 rounded-lg border border-sky-300 p-2 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={15}/></button> : null}</div>
               </Field>
               <Field label="خصم الفاتورة ٪">
                 <input value={editDiscount || ''} onChange={(e) => setEditDiscount(Math.min(100, Math.max(0, Number(e.target.value) || 0)))} className={inputCls} dir="ltr" placeholder="0" />

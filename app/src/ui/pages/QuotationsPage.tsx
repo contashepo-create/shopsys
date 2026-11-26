@@ -1,7 +1,8 @@
+import { CustomerQuickPicker } from '../components/CustomerQuickPicker.tsx'
 import { CustomerProfileSummary, DocumentContactSummary } from '../components/CustomerProfileFields.tsx'
 import { currentDocumentContact, documentContactLabel } from '../../core/customerProfile.ts'
 import { WhatsappIcon } from '../components/WhatsappIcon.tsx'
-import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * عروض الأسعار والمناقصات + عُهد المشاريع (طلب المالك — مرجعية pro-acc).
  * العرض مستند غير محاسبي ببنود أعمال؛ الفائز يتحول مشروعاً بضغطة.
@@ -374,7 +375,7 @@ export function QuotationsPage() {
               <Field label="العميل المسجَّل *" hint="عرض السعر دائماً لعميل من سجل العملاء — لا جهة خارج السجل">
                 <div id="quotation-client-field" className="invoice-doc-infield flex gap-1">
                   <input className={inputCls} value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="اسم الجهة كما في السجل" aria-label="اسم العميل" />
-                  <PartyQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = customers.find((x) => x.id === id); if (c) setClientName(c.nameAr) }} label="بحث العميل المسجَّل" cashValue={0} cashLabel="اختر عميلاً" />
+                  <CustomerQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = useDataStore.getState().customers.find((x) => x.id === id); if (c) setClientName(c.nameAr) }} label="بحث العميل المسجَّل" cashValue={0} cashLabel="اختر عميلاً" />
                 </div>
               </Field>
               <Field label="ساري حتى *">
