@@ -88,6 +88,38 @@ jobs:
         run: npx vitest run tests/database_update_safety.test.ts tests/desktop_storage.test.ts tests/db_location_update_v1022.test.ts tests/db_recovery_v1022.test.ts tests/desktop_shutdown.test.ts tests/release_pipeline.test.ts
       - name: Runtime wiring guard
         run: node --experimental-strip-types scripts/verify_database_update_safety.mjs
+      - name: Real Electron satellite close handshake on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $main = Join-Path $env:RUNNER_TEMP 'satellite-close-main.cjs'
+            $preload = Join-Path $env:RUNNER_TEMP 'satellite-close-preload.cjs'
+            $evidence = Join-Path $env:RUNNER_TEMP 'satellite-close-evidence.json'
+            npx esbuild tests/windows/satellite_close_smoke.ts --bundle --platform=node --format=cjs --external:electron --outfile=$main
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot bundle satellite test' }
+            npx esbuild desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=$preload
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot bundle actual preload' }
+            node node_modules/electron/install.js
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot install Electron binary' }
+            $electron = (Resolve-Path 'node_modules/electron/dist/electron.exe').Path
+            $fixture = (Resolve-Path 'tests/windows/satellite_close_fixture.html').Path
+            $icon = (Resolve-Path 'public/app-icon.png').Path
+            $args = @("`"$main`"", "`"$fixture`"", "`"$preload`"", "`"$icon`"", "`"$evidence`"")
+            $process = Start-Process -FilePath $electron -ArgumentList $args -PassThru
+            if (-not $process.WaitForExit(90000)) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              throw 'Satellite smoke test timed out'
+            }
+            if (-not (Test-Path $evidence)) { throw "Satellite smoke produced no evidence (exit $($process.ExitCode))" }
+            $result = Get-Content $evidence -Raw | ConvertFrom-Json
+            if ($process.ExitCode -ne 0 -or -not $result.ok) { throw "Satellite smoke failed ($($result.stage)): $($result.error)" }
+            Get-Content $evidence
+          } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Windows satellite close smoke::$detail"
+            throw
+          }
 
   windows-installer-smoke:
     name: Native NSIS installation and database preservation (no publication)
