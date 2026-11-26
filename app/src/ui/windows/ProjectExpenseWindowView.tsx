@@ -9,9 +9,10 @@
  * بدل علامة أحادية حتى لا تضيع فواتير «شاملة الضريبة»، وبند «تُحتسب ضمن»
  * عند إنشاء تصنيف حتى تهبط مصروفاته في حوض الموازنة الصحيح.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Hammer, Plus, Trash2 } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -56,9 +57,13 @@ export function ProjectExpenseWindowView() {
   const defaultVat = vatEnabled ? setup.vatPercent : 14
   const {
     projects, suppliers, boqItems, costCenters, projectExpenseCategories,
-    addProjectCost, addProjectExpenseCategory, getProjectProfit, getProjectBudgetVariance,
+    addProjectExpenseCategory, getProjectProfit, getProjectBudgetVariance,
   } = useDataStore()
   const [checksOpen, setChecksOpen] = useState(false)
+  const posting = useRef(false)
+  const requiresReview = useRef(false)
+  const [needsReview, setNeedsReview] = useState(false)
+  const [isPosting, setIsPosting] = useState(false)
 
   const touch = () => host?.setDirty(true)
   useEffect(() => {
@@ -68,7 +73,7 @@ export function ProjectExpenseWindowView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [host?.windowId])
 
-  const activeProjects = useMemo(() => projects.filter((p) => p.status === 'active'), [projects])
+  const activeProjects = useMemo(() => projects.filter((p) => p.status === 'active' && (p.operationalStatus == null || p.operationalStatus === 'running')), [projects])
   const [selectedProjectId, setSelectedProjectId] = useState<string>(() => {
     const pre = activeProjects.find((p) => p.id === preselectProjectId)
     return pre ? String(pre.id) : activeProjects[0] ? String(activeProjects[0].id) : ''
@@ -219,10 +224,14 @@ export function ProjectExpenseWindowView() {
   }
   const blockingCount = prePostIssues.filter((i) => i.level === 'blocking').length
 
-  const saveExpenseInvoice = () => {
+  const saveExpenseInvoice = async () => {
     if (!selectedProject) { toast.show('اختر المشروع أولاً', 'error'); return }
     if (computedPreview.pendingOther) { toast.show('أكمل إضافة التصنيف الجديد بزر «إضافة للقائمة» أو اختر تصنيفاً موجوداً للبند', 'error'); return }
     if (computedPreview.valid.length === 0) { toast.show('أدخل بند مصروف واحداً على الأقل ببيان وسعر موجب', 'error'); return }
+    if (posting.current || requiresReview.current) return
+    posting.current = true; setIsPosting(true)
+    const scope = { branch: useRawDataStore.getState().activeBranchId, user: useRawDataStore.getState().currentUserId }
+    let committed = false
     try {
       const grossMinor = computedPreview.grossMinor
       const paidMinor = paidNowMinor
@@ -236,7 +245,10 @@ export function ProjectExpenseWindowView() {
       if (paidMinor > 0 && paySource.kind === 'custody' && !paySource.custodyFileId) {
         throw new Error('اختر ملف العهدة الذي دُفع منه المبلغ')
       }
-      const created = addProjectCost({
+      const created = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        const data = useRawDataStore.getState()
+        if (data.activeBranchId !== scope.branch || data.currentUserId !== scope.user) throw new Error('تغير المستخدم أو الفرع أثناء انتظار الترحيل — راجع المصروف')
+        const result = data.addProjectCost({
         projectId: selectedProject.id,
         payment: dueMinor === 0 ? 'cash' : paidMinor === 0 ? 'credit' : 'mixed',
         paidMinor,
@@ -258,6 +270,9 @@ export function ProjectExpenseWindowView() {
           vatPercent: r.computed.vatPercent,
           boqItemId: r.computed.boqItemId,
         })),
+        })
+        committed = true
+        return result
       })
       toast.show(
         `سُجّلت فاتورة مصروفات المشروع ${created.expenseNumber ?? `#${created.id}`} على «${selectedProject.nameAr}» — إجمالي ${fmt(created.grossMinor ?? created.amountMinor)}، مدفوع ${fmt(created.paidMinor ?? 0)}، وآجل ${fmt(created.dueMinor ?? 0)} ✅`,
@@ -265,8 +280,9 @@ export function ProjectExpenseWindowView() {
       host?.setDirty(false)
       host?.close()
     } catch (e) {
-      toast.show((e as Error).message, 'error')
-    }
+      if (committed) { requiresReview.current = true; setNeedsReview(true) }
+      toast.show(committed ? 'سُجل المصروف محلياً لكن تعذر تأكيد حفظه — راجع سجل المصروفات والدفتر قبل إعادة المحاولة' : (e as Error).message, 'error')
+    } finally { posting.current = false; setIsPosting(false) }
   }
 
   if (activeProjects.length === 0) {
@@ -587,11 +603,11 @@ export function ProjectExpenseWindowView() {
           <Btn
             onClick={() => {
               if (blockingCount > 0) { setChecksOpen(true); toast.show('توجد موانع ترحيل — راجع لوحة «مراجعة قبل الترحيل» لتعرف أين الخطأ بالضبط', 'error'); return }
-              saveExpenseInvoice()
+              void saveExpenseInvoice()
             }}
             shortcut="F9"
             data-save-project-expense
-            disabled={!selectedProject}
+            disabled={!selectedProject || isPosting || needsReview}
           >
             <Hammer className="h-4 w-4" /> ✔ تسجيل المصروف
           </Btn>

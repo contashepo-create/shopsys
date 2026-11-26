@@ -15,7 +15,7 @@ import { getEffectiveActiveBranch, useDataStore, useRawDataStore } from '../../d
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { projectExtractFingerprint, ProjectCommitUnconfirmedError, withProjectExtractCommit } from '../../data/projectExtractCommit.ts'
 import { projectCreditFingerprint, withProjectCreditCommit } from '../../data/projectCreditCommit.ts'
-import type { Project } from '../../core/contracting.ts'
+import type { Project, ProjectOperationalStatus } from '../../core/contracting.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -150,6 +150,32 @@ export function ProjectsPage() {
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
+
+  const [statusChange, setStatusChange] = useState<{ project: Project; next: ProjectOperationalStatus; branch: number | null; user: number | null } | null>(null)
+  const [statusReason, setStatusReason] = useState('')
+  const [statusBusy, setStatusBusy] = useState(false)
+  const statusPending = useRef(false)
+  const statusLabels: Record<ProjectOperationalStatus, string> = { running: 'جاري', on_hold: 'مؤجل', cancelled: 'ملغي', finished: 'منتهي' }
+  const changeOperationalStatus = async () => {
+    if (!statusChange || statusPending.current) return
+    statusPending.current = true; setStatusBusy(true)
+    let changed = false
+    try {
+      await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        const data = useRawDataStore.getState()
+        if (data.activeBranchId !== statusChange.branch || data.currentUserId !== statusChange.user) throw new Error('تغير المستخدم أو الفرع — أعد مراجعة الحالة')
+        const live = data.projects.filter(row => row.id === statusChange.project.id)
+        if (live.length !== 1 || live[0].status !== statusChange.project.status || (live[0].operationalStatus ?? 'running') !== (statusChange.project.operationalStatus ?? 'running') || JSON.stringify(live[0].operationalStatusHistory ?? []) !== JSON.stringify(statusChange.project.operationalStatusHistory ?? [])) throw new Error('تغيرت حالة المشروع منذ عرض التأكيد — أعد مراجعتها')
+        data.setProjectOperationalStatus({ projectId: statusChange.project.id, expected: statusChange.project.operationalStatus ?? 'running', status: statusChange.next, reason: statusReason })
+        changed = true
+      })
+      setStatusChange(null); setStatusReason('')
+      toast.show(`حُدثت حالة التنفيذ إلى «${statusLabels[statusChange.next]}»`)
+    } catch (error) {
+      if (changed) { setStatusChange(null); toast.show('تغيرت الحالة محلياً لكن تعذر تأكيد الحفظ — أعد تحميل المشروع وراجعه قبل المحاولة', 'error') }
+      else toast.show(error instanceof Error ? error.message : 'تعذر تغيير الحالة', 'error')
+    } finally { statusPending.current = false; setStatusBusy(false) }
+  }
 
   /* مشروع جديد */
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null)
@@ -1209,7 +1235,7 @@ export function ProjectsPage() {
         <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
           <table className="w-full text-sm">
             <thead className="bg-orange-500/10 text-orange-700 dark:text-orange-300">
-              <tr>{['الكود', 'المشروع', 'العميل', 'قيمة العقد', 'الإنجاز', 'الربح حتى الآن', 'الحالة', ''].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
+              <tr>{['الكود', 'المشروع', 'العميل', 'قيمة العقد', 'الإنجاز', 'الربح حتى الآن', 'الحالة المالية', ''].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
             </thead>
             <tbody>
               {projects.map((p) => {
@@ -1217,7 +1243,13 @@ export function ProjectsPage() {
                 return (
                   <tr key={p.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-orange-500/5 transition-colors">
                     <td className="px-3 py-2.5 font-black">{p.code}</td>
-                    <td className="px-3 py-2.5 font-bold">{p.nameAr}</td>
+                    <td className="px-3 py-2.5 font-bold"><div className="flex flex-wrap items-center gap-2">{p.nameAr}
+                      <select aria-label={`حالة تنفيذ ${p.nameAr}`} className="rounded-lg border border-slate-300 bg-transparent px-2 py-1 text-xs" value={p.operationalStatus ?? (p.status === 'completed' ? 'finished' : 'running')} disabled={p.status !== 'active'} title={p.status !== 'active' ? 'المشروع مقفل مالياً ولا يُعاد فتحه من هنا' : 'حالة التنفيذ لا تقفل الحسابات أو تسوي المحتجز'} onChange={event => {
+                        const next = event.target.value as ProjectOperationalStatus
+                        if (next !== (p.operationalStatus ?? 'running')) { setStatusReason(''); setStatusChange({ project: p, next, branch: activeBranchId, user: currentUserId }) }
+                      }}>
+                        <option value="running">جاري</option><option value="on_hold">مؤجل</option><option value="cancelled">ملغي</option><option value="finished">منتهي</option>
+                      </select></div></td>
                     <td className="px-3 py-2.5">{p.clientName || '—'}</td>
                     <td className="px-3 py-2.5">{fmt(p.contractValueMinor)} {cur.symbol}</td>
                     <td className="px-3 py-2.5">
@@ -1267,6 +1299,14 @@ export function ProjectsPage() {
       )}
 
       {/* التفاصيل */}
+      <Modal open={!!statusChange} onClose={() => { if (!statusPending.current) setStatusChange(null) }} title="تغيير حالة تنفيذ المشروع">
+        <div className="space-y-3 text-sm">
+          <p>تغيير «{statusChange?.project.nameAr}» إلى «{statusChange ? statusLabels[statusChange.next] : ''}».</p>
+          <p>مؤجل وملغي ومنتهي توقف الأعمال الجديدة. «منتهي» حالة تنفيذ فقط؛ لا تقفل الحسابات ولا تسوي المحتجز. تبقى السجلات والتسويات والتصحيحات المتاحة بضوابطها؛ العودة إلى جاري تستأنف العمل ما لم يُقفل المشروع مالياً.</p>
+          <Field label="سبب التغيير"><input aria-label="سبب تغيير حالة المشروع" maxLength={300} value={statusReason} onChange={event => setStatusReason(event.target.value)} className={inputCls} /></Field>
+          <div className="flex gap-2"><Btn onClick={() => void changeOperationalStatus()} disabled={statusBusy || !statusReason.trim()}>تأكيد تغيير الحالة</Btn><Btn variant="ghost" onClick={() => setStatusChange(null)} disabled={statusBusy}>تراجع</Btn></div>
+        </div>
+      </Modal>
       <Modal open={!!projectToDelete} onClose={() => { if (!deletingProject) { setProjectToDelete(null); setDeleteProjectPin('') } }} title="تأكيد حذف مشروع غير مرحّل">
         {projectToDelete && <div className="space-y-4">
           <p>حذف «{projectToDelete.code} — {projectToDelete.nameAr}» وبنوده والبيانات التخطيطية المرتبطة؟</p>

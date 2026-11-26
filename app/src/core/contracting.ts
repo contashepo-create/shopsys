@@ -20,6 +20,8 @@ import { FinancialDataReviewError } from './financialDataReview.ts'
 import type { CustomerContactEvent } from './customerProfile.ts'
 
 export type ProjectStatus = 'active' | 'completed'
+/** حالة التنفيذ مستقلة عن الإقفال المالي وتحصيل المحتجز. */
+export type ProjectOperationalStatus = 'running' | 'on_hold' | 'cancelled' | 'finished'
 
 export interface LegacyCustomerReviewEvidence { description: string; amountMinor: Minor }
 
@@ -49,6 +51,9 @@ export interface Project {
   retentionPercent: number // نسبة محتجز ضمان الأعمال من كل مستخلص
   startDate: string // YYYY-MM-DD
   status: ProjectStatus
+  /** غياب الحقل في المشروع القديم يعني جاري؛ لا يغير الحالة المالية. */
+  operationalStatus?: ProjectOperationalStatus
+  operationalStatusHistory?: { from: ProjectOperationalStatus; to: ProjectOperationalStatus; reason: string; at: string; by: string }[]
   /** وقت إقفال النظام الفعلي عند تحصيل المحتجز؛ قد لا يوجد في المشاريع القديمة. */
   completedAt?: string
   notes: string

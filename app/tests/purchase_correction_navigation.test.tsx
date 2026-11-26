@@ -14,7 +14,7 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); useRawDataStore.setState(raw); useAppStore.setState(app) })
 it('يفتح تصحيح الفاتورة الأصلية مباشرة من القائمة دون حذفها أو تعديل قيودها', async () => {
- const invoice = S().postPurchase({ supplierId: 7, date: '2026-01-01', lines: [{ itemId: 1, qty: 2, unitPriceMinor: 3000 }], expenses: [], paidMinor: 0 })
+ const invoice = S().postPurchase({ supplierId: 7, date: '2026-01-01', lines: [{ itemId: 1, qty: 2, unitPriceMinor: 3000 }], expenses: [], paidMinor: 0, notes: '' })
  const entries = S().journal.length, stock = S().items[0].stockQty
  render(<MemoryRouter initialEntries={['/purchases/invoices']}><Routes><Route path="/purchases/invoices" element={<PurchasesPage />} /><Route path="/purchases/returns" element={<PurchaseReturnsPage />} /></Routes></MemoryRouter>)
  fireEvent.click(screen.getByRole('button', { name: `تصحيح فاتورة الشراء ${invoice.invoiceNumber} بمرتجع` }))

@@ -1,3 +1,4 @@
+import { assertProjectOperationalHistoryPreserved } from './projectOperationalHistoryGuard.ts'
 import { assertJournalHistoryPreserved } from './ledgerHistoryGuard.ts'
 import { assertProjectExtractOriginalIntegrity } from './projectExtractRefundIntegrity.ts'
 import type { JournalEntry } from './ledger.ts'
@@ -181,6 +182,7 @@ function allocationTotals(projectId: number, advances: Row[], extracts: Row[]): 
  * المستخلص بلا دليل إشعار غير محمي هنا كي لا نحظر تعديله المشروع بقيد عكسي.
  */
 export function assertProjectFinancialHistoryPreserved(current: Row, incoming: Row): void {
+  assertProjectOperationalHistoryPreserved(current, incoming)
   const localAdvances = rows(current.clientAdvances, 'سجل دفعات المقدمة المحلي')
   const incomingAdvances = rows(incoming.clientAdvances, 'سجل دفعات المقدمة الوارد')
   const indexed = new Map(incomingAdvances.map(row => [row.id, row]))

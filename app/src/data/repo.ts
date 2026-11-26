@@ -137,7 +137,7 @@ import {
   assertFileOpen, CUSTODY_ACCOUNT,
   type CustodyFile, type CustodyTx, type CustodySummary,
 } from '../core/custody.ts'
-import { computeExtractLines, budgetVarianceReport, validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotals, quotationLineNetMinor, QUOTATION_TRANSITIONS, type Project, type LegacyCustomerReviewDocument, type LegacyCustomerReviewEvidence, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
+import { computeExtractLines, budgetVarianceReport, validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotals, quotationLineNetMinor, QUOTATION_TRANSITIONS, type Project, type ProjectOperationalStatus, type LegacyCustomerReviewDocument, type LegacyCustomerReviewEvidence, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
   validateBoqItem, boqItemTotal, effectiveContractValue, buildClientAdvanceEntry, buildExtractEntryWithAdvance,
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
@@ -3019,7 +3019,7 @@ interface DataState {
   /** صرف كل عمولات مُحيل غير المدفوعة بقيد واحد (2105 ← 1101) */
   payReferrerCommissions: (referrerId: number, treasury?: string) => { total: number; orderCount: number }
   /* ─── المقاولات (القرار 27) ─── */
-  addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId' | 'customerContactHistory'> & { clientId?: number | null }) => Project
+  addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId' | 'customerContactHistory' | 'operationalStatus' | 'operationalStatusHistory'> & { clientId?: number | null }) => Project
   issueProjectCloseout: (args: { projectId: number; expectedRevision: number; notes: string; confirmed: boolean }) => ProjectCloseout
   isProjectCloseoutCurrent: (id: number) => boolean
   assertProjectExtractDraftCurrent: (projectId: number) => void
@@ -3029,10 +3029,11 @@ interface DataState {
   saveProjectSurvey: (args: { projectId: number; lines: SurveyLine[]; expectedRevision: number; reason: string; isFinal: boolean; measurementDate?: string }) => ProjectSurvey
   deleteUnpostedProject: (id: number, reason: string, expectedFingerprint: string | undefined, ownerPin: string) => Promise<void>
   previewProjectDeletionFingerprint: (id: number) => string
-  addProjectWithBoq: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId' | 'customerContactHistory'> & { clientId?: number | null }, lines: Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'>[]) => Project
+  addProjectWithBoq: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId' | 'customerContactHistory' | 'operationalStatus' | 'operationalStatusHistory'> & { clientId?: number | null }, lines: Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'>[]) => Project
   previewProjectEditFingerprint: (id: number) => string
   updateProjectWithBoq: (args: { id: number; expectedFingerprint: string; changes: Parameters<DataState['updateProject']>[1]; sections: NonNullable<Project['boqSections']>; lines: (Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'> & { id?: number })[] }) => Project
   /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
+  setProjectOperationalStatus: (args: { projectId: number; expected: ProjectOperationalStatus; status: ProjectOperationalStatus; reason: string }) => Project
   updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[]; actualHandoverDate?: string | null; defectsLiabilityMonths?: number | null }) => Project
   previewMissingProjectCustomerBackup: (projectId: number, backup: string) => { customer: Customer; backupShopName: string; backupDate: string; backupChecksum: string; scopeName: string; balanceMinor: number; statement: StatementRow[]; fingerprint: string }
   restoreMissingProjectCustomerBackup: (args: { projectId: number; backup: string; fingerprint: string; reason: string; confirmed: boolean }) => void
@@ -6837,8 +6838,13 @@ function appendCustomerContact(history: CustomerContactEvent[] | undefined, cust
   return [...(history ?? []), captureCustomerContact(customer, localIsoTimestamp(), activeUserName(state))]
 }
 
-function prepareNewProject(state: DataState, p: Omit<Project, 'id' | 'code' | 'status' | 'clientId' | 'customerContactHistory'> & { clientId?: number | null }): Project {
-  if ('customerContactHistory' in p) throw new Error('لا يمكن إدخال سجل تواصل تاريخي يدوياً عند إنشاء المشروع')
+/** الحقل القديم الغائب فقط يعني جاري؛ القيمة المجهولة تفشل مغلقة. */
+function assertProjectOperationalRunning(project: Project): void {
+  if (project.status !== 'active' || (project.operationalStatus != null && project.operationalStatus !== 'running')) throw new Error('المشروع غير جارٍ أو مقفل — لا عمليات جديدة قبل مراجعته')
+}
+
+function prepareNewProject(state: DataState, p: Omit<Project, 'id' | 'code' | 'status' | 'clientId' | 'customerContactHistory' | 'operationalStatus' | 'operationalStatusHistory'> & { clientId?: number | null }): Project {
+  if ('customerContactHistory' in p || 'operationalStatus' in p || 'operationalStatusHistory' in p) throw new Error('لا يمكن إدخال سجل تاريخي أو حالة تشغيلية يدوياً عند إنشاء المشروع')
   const errors = validateProject(p)
   if (p.boqSections && (p.boqSections.some(section => !section.id?.trim() || !section.nameAr?.trim()) || new Set(p.boqSections.map(section => section.id)).size !== p.boqSections.length)) errors.push('أسماء ومعرّفات أقسام المشروع مطلوبة وفريدة')
   if (errors.length) throw new Error(errors.join(' — '))
@@ -7535,6 +7541,7 @@ export const useRawDataStore = create<DataState>()(
             const matches = state.projects.filter(project => project.id === share.projectId)
             if (matches.length !== 1 || !scoped.projects.some(project => project.id === share.projectId)) throw new Error('مشروع التوزيع غير فريد أو ليس في الفرع الحالي')
             const project = matches[0]
+            assertProjectOperationalRunning(project)
             if (project.status !== 'active' || !isValidExpiryDate(project.startDate) || project.startDate > slipDate || project.startDate > `${args.month}-31`) throw new Error('مشروع التوزيع غير قائم أو تاريخ بدايته لا يسمح بهذا الشهر')
             if (typeof project.code !== 'string' || !project.code.trim() || typeof project.nameAr !== 'string' || !project.nameAr.trim()) throw new Error('هوية مشروع التوزيع غير صالحة')
             return project
@@ -8917,6 +8924,11 @@ export const useRawDataStore = create<DataState>()(
             return alreadyPosted
           }
         }
+        if (normalizedInv.projectId != null) {
+          const project = getBranchScopedDataState(state).projects.find(row => row.id === normalizedInv.projectId)
+          if (!project || state.projects.filter(row => row.id === normalizedInv.projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+          assertProjectOperationalRunning(project)
+        }
         const activeBranch = getEffectiveActiveBranch(state)
         const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
         const inv = activeBranch && !activeBranch.isMain
@@ -9185,6 +9197,7 @@ export const useRawDataStore = create<DataState>()(
         const linkedProject = inv.projectId != null ? state.projects.find((p) => p.id === inv.projectId) : undefined
         if (inv.projectId != null && !linkedProject) throw new Error('المشروع غير موجود')
         if (linkedProject?.status === 'completed') throw new Error('المشروع مقفل — لا تكاليف جديدة عليه')
+        if (linkedProject) assertProjectOperationalRunning(linkedProject)
         // القيد المحاسبي (يرمي لو المدفوع > مستحق المورد):
         // - فاتورة عادية: مخزون 1103 مدين / (خزينة أو 1108 عهد) + مصاريف مدفوعة مباشرة + موردون دائن
         // - فاتورة مشروع مقاولات: 5110 تكاليف مشروعات مدين بدل المخزون —
@@ -9633,6 +9646,11 @@ export const useRawDataStore = create<DataState>()(
             return alreadyPosted
           }
         }
+        if (normalizedArgs.projectId != null && normalizedArgs.projectBilling !== 'documentation') {
+          const project = getBranchScopedDataState(state).projects.find(row => row.id === normalizedArgs.projectId)
+          if (!project || state.projects.filter(row => row.id === normalizedArgs.projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+          assertProjectOperationalRunning(project)
+        }
         assertSaleItemsExist(state, normalizedArgs.lines, true)
         // نوع دفع مجهول كان يمضي كأنه آجل: لا خزينة ولا ذمة، فيضيع الإجمالي بلا رسالة
         // الأنواع المعتمدة هي نفسها المعلنة في PaymentMethod — أي قيمة خارجها تُرفض
@@ -10009,6 +10027,7 @@ export const useRawDataStore = create<DataState>()(
             }
           } else {
             if (billingProject.status === 'completed') throw new Error('المشروع مقفل — لا فواتير إضافية جديدة عليه')
+            assertProjectOperationalRunning(billingProject)
             const invoiceWorksNet = totals.totalMinor - totals.taxMinor
             if (invoiceWorksNet > billingGuard.extraRoomNetMinor) {
               throw new Error(`سقف فوترة المشروع «${billingProject.nameAr}»: صافي هذه الفاتورة الإضافية (${invoiceWorksNet}) يتجاوز المتاح من العقد الفعلي (${billingGuard.extraRoomNetMinor}) — مستخلصات ${billingGuard.extractedNetMinor} + إضافيات سابقة ${billingGuard.extraInvoicedNetMinor} من عقد فعلي ${billingGuard.effectiveContractNetMinor} (المبالغ بالوحدة الصغرى). وثّق مقابل المستخلصات أو اعتمد أمر تغيير أولاً.`)
@@ -16924,6 +16943,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const { project, survey, history, lines, report, basis } = validateCloseout(state, projectId, expectedRevision)
         if (project.status !== 'active') throw new Error('المشروع غير نشط — راجع حالته قبل إصدار المحضر')
+        assertProjectOperationalRunning(project)
         if (state.projectExtractDrafts.some(row => row.projectId === projectId)) throw new Error('توجد مسودة مستخلص للمشروع — راجعها أو احذفها قبل إصدار المحضر')
         if (state.projectCloseouts.some(row => row.projectId === projectId && row.basis === basis)) throw new Error('يوجد محضر لهذا الحصر بالفعل — افتحه من السجل')
         const id = nextId(state.projectCloseouts), at = localIsoTimestamp(), by = activeUserName(state)
@@ -16954,6 +16974,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get(), scoped = getBranchScopedDataState(state)
         const project = scoped.projects.find(row => row.id === projectId)
         if (!project || project.status !== 'active') throw new Error('المشروع غير موجود أو مقفل في الفرع الحالي')
+        assertProjectOperationalRunning(project)
         if (state.currentUserId != null) {
           const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
           if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر والمسودات')
@@ -17026,6 +17047,7 @@ export const useRawDataStore = create<DataState>()(
         assertProjectCustomerBranch(state, project)
         assertQuantityChangeLinks(state.boqItems.filter(item => item.projectId === project.id), state.changeOrders.filter(order => order.projectId === project.id))
         if (project.status !== 'active') throw new Error('المشروع مقفل أو مسلّم — لا يُعدّل الحصر')
+        assertProjectOperationalRunning(project)
         const history = state.projectExtracts.filter(extract => extract.projectId === project.id)
         const items = state.boqItems.filter(item => item.projectId === project.id)
         const matches = state.projectSurveys.filter(row => row.projectId === project.id)
@@ -17108,6 +17130,27 @@ export const useRawDataStore = create<DataState>()(
           auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف المشروع غير المرحّل ${project.code} بموافقة المالك — ${reason.trim()}` }]),
         })
       },
+      setProjectOperationalStatus: ({ projectId, expected, status, reason }) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        if (state.loggedOut || (state.appUsers.length > 0 && state.currentUserId == null)) throw new Error('سجل الدخول لتغيير حالة المشروع')
+        const project = scoped.projects.find(row => row.id === projectId)
+        if (!project || state.projects.filter(row => row.id === projectId).length !== 1 || (state.branches.length > 0 && !getEffectiveActiveBranch(state))) throw new Error('المشروع غير فريد أو غير موجود في الفرع الحالي')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('ops.activity.use')) throw new Error('لا تملك صلاحية تغيير حالة المشروع')
+        }
+        if (project.status !== 'active') throw new Error('المشروع مقفل مالياً — لا يمكن إعادة فتحه من الحالة التشغيلية')
+        const options: ProjectOperationalStatus[] = ['running', 'on_hold', 'cancelled', 'finished']
+        if (!options.includes(status) || !options.includes(expected) || !options.includes(project.operationalStatus ?? 'running')) throw new Error('حالة المشروع غير صالحة — راجع البيانات')
+        const previous = project.operationalStatus ?? 'running'
+        if (previous !== expected) throw new Error('تغيرت حالة المشروع — أعد التحميل والمراجعة')
+        if (typeof reason !== 'string' || !reason.trim() || reason.trim().length > 300) throw new Error('سبب تغيير الحالة مطلوب بحد أقصى 300 حرف')
+        if (previous === status) return project
+        const at = localIsoTimestamp(), by = activeUserName(state), text = reason.trim()
+        const updated = { ...project, operationalStatus: status, operationalStatusHistory: [...(project.operationalStatusHistory ?? []), { from: previous, to: status, reason: text, at, by }] }
+        set({ projects: state.projects.map(row => row.id === projectId ? updated : row), auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `تغيير حالة تنفيذ المشروع ${project.code}: ${previous} ← ${status} — ${text}` }]) })
+        return updated
+      },
       addProject: (p) => {
         const state = get()
         const project = prepareNewProject(state, p)
@@ -17187,10 +17230,12 @@ export const useRawDataStore = create<DataState>()(
           const prior = oldItems.find(row => row.id === item.id)
           return !prior || prior.qty !== item.qty || prior.unitPriceMinor !== item.unitPriceMinor
         })
+        if (financialChanged) assertProjectOperationalRunning(project)
         if (financialChanged && state.quotations.some(row => row.projectId === id && row.status === 'won')) throw new Error('المشروع مرتبط بعرض فائز — راجع العقد المعتمد قبل تغيير كميات البنود أو أسعارها')
         const oldTotal = oldItems.reduce((sum, item) => sum + boqItemTotal(item), 0)
         if (financialChanged && oldItems.length && oldTotal !== project.contractValueMinor) throw new Error('قيمة العقد لا تطابق مجموع البنود السابق — راجع العقد المعتمد قبل تغيير القيمة')
         const newValue = updatedItems.length ? (financialChanged ? total : project.contractValueMinor) : (changes.contractValueMinor ?? project.contractValueMinor)
+        if (newValue !== project.contractValueMinor || (changes.retentionPercent !== undefined && changes.retentionPercent !== project.retentionPercent)) assertProjectOperationalRunning(project)
         if (hasExtracts && newValue !== project.contractValueMinor) throw new Error('صدرت مستخلصات — لا تغير قيمة العقد مباشرة')
         const updated: Project = { ...project, ...changes, contractValueMinor: newValue, boqSections: sections }
         const errors = validateProject(updated)
@@ -17212,6 +17257,7 @@ export const useRawDataStore = create<DataState>()(
         if (Reflect.ownKeys(changes).some(key => typeof key !== 'string' || !projectKeys.has(key))) throw new Error('حقل تعديل مشروع غير مسموح')
         const project = state.projects.find((p2) => p2.id === id)
         if (!project) throw new Error('المشروع غير موجود')
+        if ((changes.contractValueMinor !== undefined && changes.contractValueMinor !== project.contractValueMinor) || (changes.retentionPercent !== undefined && changes.retentionPercent !== project.retentionPercent)) assertProjectOperationalRunning(project)
         const hasExtracts = state.projectExtracts.some((e) => e.projectId === id)
         if (changes.retentionPercent !== undefined && changes.retentionPercent !== project.retentionPercent && state.projectExtracts.some(row => row.projectId === id && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا تتغير نسبة المحتجز قبل مراجعة إعادة الفتح')
         // ذمم المستخلصات وتوزيع تحصيلاتها يستنتجان العميل من المشروع؛ تغيير الرابط
@@ -17881,6 +17927,7 @@ export const useRawDataStore = create<DataState>()(
         if (errors.length) throw new Error(errors.join(' — '))
         custodyEmployeeAndProject(state, scoped, args.employeeId, args.projectId ?? null)
         if (args.projectId != null && scoped.projects.find(project => project.id === args.projectId)?.status !== 'active') throw new Error('المشروع مقفل — لا تفتح عليه عهدة جديدة')
+        if (args.projectId != null) assertProjectOperationalRunning(scoped.projects.find(project => project.id === args.projectId)!)
         if (scoped.employees.find(e => e.id === args.employeeId)?.active === false) throw new Error('لا يمكن فتح عهدة لموظف غير نشط')
         const id = nextId(state.custodyFiles)
         const openedAt = todayLocalIso()
@@ -17928,6 +17975,7 @@ export const useRawDataStore = create<DataState>()(
         const scoped = getBranchScopedDataState(state)
         custodyEmployeeAndProject(state, scoped, file.employeeId, projectId)
         if (projectId != null && scoped.projects.find(project => project.id === projectId)?.status !== 'active') throw new Error('المشروع مقفل — لا تكاليف جديدة عليه')
+        if (projectId != null) assertProjectOperationalRunning(scoped.projects.find(project => project.id === projectId)!)
         const { fromCustodyMinor, excessMinor } = splitCustodyExpense(summary.remainingMinor, args.amountMinor, args.allowExcess ?? false)
         if (![summary.expenseTotalMinor + args.amountMinor, summary.spentMinor + fromCustodyMinor, summary.excessMinor + excessMinor].every(Number.isSafeInteger)) throw new Error('إجمالي حركات العهدة خارج الحدود الآمنة')
         // لا يُسجل بند تكلفة مشروع بقيد حساب مختلف عن 5110، ولا تُستخدم الأصول كحساب مصروف.
@@ -18359,6 +18407,7 @@ export const useRawDataStore = create<DataState>()(
         assertProjectCustomerBranch(state, project)
         assertQuantityChangeLinks(state.boqItems.filter(item => item.projectId === project.id), state.changeOrders.filter(order => order.projectId === project.id))
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا مستخلصات جديدة')
+        assertProjectOperationalRunning(project)
         if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('اختر الفرع قبل إصدار المستخلص')
         const documentDate = args.date ?? todayLocalIso()
         assertInvoicePostingDate(state, documentDate)
@@ -18708,7 +18757,9 @@ export const useRawDataStore = create<DataState>()(
       },
       addProjectTask: (args) => {
         const state = get()
-        if (!state.projects.some((p) => p.id === args.projectId)) throw new Error('المشروع غير موجود')
+        const project = state.projects.find(p => p.id === args.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        assertProjectOperationalRunning(project)
         const errors = validateProjectTask(args)
         if (errors.length) throw new Error(errors[0])
         if (args.boqItemId !== null && !state.boqItems.some((b) => b.id === args.boqItemId && b.projectId === args.projectId)) throw new Error('بند BOQ المربوط غير موجود في هذا المشروع')
@@ -18722,6 +18773,7 @@ export const useRawDataStore = create<DataState>()(
         if (!task) throw new Error('المهمة غير موجودة')
         if (!Number.isFinite(progressPercent) || progressPercent < 0 || progressPercent > 100) throw new Error('نسبة الإنجاز بين 0 و100')
         if (progressPercent < task.progressPercent) throw new Error('تقدم المهمة تراكمي لا يتراجع')
+        if (progressPercent !== task.progressPercent) { const project = state.projects.find(row => row.id === task.projectId); if (!project) throw new Error('المشروع غير موجود'); assertProjectOperationalRunning(project) }
         set({
           projectTasks: state.projectTasks.map((t) => (t.id === taskId ? { ...t, progressPercent, status: progressPercent >= 100 ? 'done' : progressPercent > 0 ? 'in_progress' : 'pending' } : t)),
         })
@@ -19215,6 +19267,7 @@ export const useRawDataStore = create<DataState>()(
         const project = branchState.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود في هذا الفرع')
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا تكاليف جديدة عليه')
+        assertProjectOperationalRunning(project)
         if (args.costCenterId != null && !branchState.costCenters.some((center) => center.id === args.costCenterId && center.isActive)) throw new Error('مركز التكلفة العام غير موجود أو غير نشط')
         // دعم فاتورة مصروفات متعددة البنود (شامل/غير شامل/بدون ضريبة) مع توافق كامل مع البند المفرد
         let netCostMinor = args.amountMinor ?? 0
@@ -19526,6 +19579,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
+        assertProjectOperationalRunning(project)
         if (state.projectExtracts.some(row => row.projectId === project.id && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا تُضاف بنود عقد قبل مراجعة إعادة الفتح')
         if (args.sectionId != null && !project.boqSections?.some(section => section.id === args.sectionId)) throw new Error('قسم بند المشروع غير موجود')
         const errors = validateBoqItem(args)
@@ -19546,6 +19600,7 @@ export const useRawDataStore = create<DataState>()(
         if (changes.estCostMinor !== undefined && (!Number.isSafeInteger(changes.estCostMinor) || changes.estCostMinor < 0)) throw new Error('التكلفة التقديرية غير صحيحة')
         if (boq.quantityChange || state.boqItems.some(item => item.quantityChange?.originalBoqItemId === boq.id)) throw new Error('البند مرتبط بأمر تغيير كميات معتمد — لا يعدّل مباشرة')
         const priceQtyChange = (changes.qty !== undefined && changes.qty !== boq.qty) || (changes.unitPriceMinor !== undefined && changes.unitPriceMinor !== boq.unitPriceMinor)
+        if (priceQtyChange || (changes.unit !== undefined && changes.unit !== boq.unit)) { const project = state.projects.find(row => row.id === boq.projectId); if (!project) throw new Error('المشروع غير موجود'); assertProjectOperationalRunning(project) }
         if ((priceQtyChange || (changes.unit !== undefined && changes.unit !== boq.unit)) && state.projectExtracts.some(row => row.projectId === boq.projectId && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا يتغير أساس الكمية والسعر قبل مراجعة إعادة الفتح')
         if ((priceQtyChange || (changes.unit !== undefined && changes.unit !== boq.unit)) && state.projectSurveys.some(survey => survey.projectId === boq.projectId && survey.lines.some(line => line.boqItemId === id))) throw new Error('البند مرتبط بحصر محفوظ — لا تغير الكمية أو السعر أو الوحدة')
         if (priceQtyChange && (boq.progressPercent > 0 || state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id)))) throw new Error(`البند منفَّذ بنسبة ${boq.progressPercent}٪ — قيمته في مستخلصات مرحّلة؛ لا تُعدَّل الكمية ولا السعر (بند جديد أو أمر تغيير)`)
@@ -19560,6 +19615,7 @@ export const useRawDataStore = create<DataState>()(
         if (!Number.isFinite(progressPercent) || progressPercent < 0 || progressPercent > 100) throw new Error('نسبة الإنجاز بين 0 و100')
         const state = get(), boq = state.boqItems.find(b => b.id === id)
         if (!boq) throw new Error('بند الكميات غير موجود')
+        if (progressPercent !== boq.progressPercent) { const project = state.projects.find(row => row.id === boq.projectId); if (!project) throw new Error('المشروع غير موجود'); assertProjectOperationalRunning(project) }
         if (progressPercent !== boq.progressPercent && state.projectExtracts.some(row => row.projectId === boq.projectId && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا يتغير التقدم قبل مراجعة إعادة الفتح')
         set((s) => ({ boqItems: s.boqItems.map((b) => (b.id === id ? { ...b, progressPercent } : b)) }))
       },
@@ -19582,6 +19638,7 @@ export const useRawDataStore = create<DataState>()(
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا أوامر تغيير')
+        assertProjectOperationalRunning(project)
         if (state.projectExtracts.some(row => row.projectId === project.id && row.isFinal)) throw new Error('صدر مستخلص ختامي — راجع إقفال المشروع قبل إضافة أمر تغيير')
         if (!args.titleAr.trim()) throw new Error('عنوان أمر التغيير مطلوب')
         if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor === 0) throw new Error('قيمة أمر التغيير لا تكون صفراً')
@@ -19613,6 +19670,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const order = state.changeOrders.find((o) => o.id === id)
         if (!order) throw new Error('أمر التغيير غير موجود')
+        if (status === 'approved' || status === 'invoiced') { const project = state.projects.find(p => p.id === order.projectId); if (!project) throw new Error('المشروع غير موجود'); assertProjectOperationalRunning(project) }
         // المسارات: draft→approved|rejected ثم approved→invoiced (فُوتر ضمن مستخلص)
         if (status === 'invoiced') {
           if (order.status !== 'approved') throw new Error('لا يُستخلَص إلا أمر تغيير معتمد')
@@ -19661,6 +19719,7 @@ export const useRawDataStore = create<DataState>()(
         if (!project || state.projects.filter(row => row.id === args.projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
         assertProjectCustomerBranch(state, project)
         if (project.status === 'completed') throw new Error('المشروع مقفل')
+        assertProjectOperationalRunning(project)
         if (state.currentUserId != null) {
           const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
           if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('ops.activity.use')) throw new Error('لا تملك صلاحية تسجيل دفعة المشروع')
@@ -19704,7 +19763,9 @@ export const useRawDataStore = create<DataState>()(
 
       addSubContract: (args) => {
         const state = get()
-        if (!state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع غير موجود')
+        const project = state.projects.find(p => p.id === args.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        assertProjectOperationalRunning(project)
         const errors = validateSubContract(args)
         const withhold = args.taxWithholdPercent ?? 0
         if (withhold < 0 || withhold > 20) errors.push('نسبة ضريبة الاستقطاع بين 0 و20٪')
@@ -19733,6 +19794,8 @@ export const useRawDataStore = create<DataState>()(
         const c = state.subContracts.find((x) => x.id === id)
         if (!c) throw new Error('عقد الباطن غير موجود')
         if (c.status !== 'active') throw new Error('العقد مقفل — لا يُعدَّل')
+        const changesContractBasis = (changes.contractValueMinor !== undefined && changes.contractValueMinor !== c.contractValueMinor) || (changes.retentionPercent !== undefined && changes.retentionPercent !== c.retentionPercent) || (changes.taxWithholdPercent !== undefined && changes.taxWithholdPercent !== c.taxWithholdPercent) || (changes.advanceRecoveryPercent !== undefined && changes.advanceRecoveryPercent !== c.advanceRecoveryPercent) || (changes.boqItemIds !== undefined && JSON.stringify(changes.boqItemIds) !== JSON.stringify(c.boqItemIds))
+        if (changesContractBasis) { const project = state.projects.find(row => row.id === c.projectId); if (!project) throw new Error('المشروع غير موجود'); assertProjectOperationalRunning(project) }
         const hasCerts = state.subCertificates.some((x) => x.contractId === id)
         if (changes.contractValueMinor !== undefined && changes.contractValueMinor !== c.contractValueMinor && hasCerts) {
           throw new Error('اعتُمدت شهادات على هذا العقد — قيمته لا تُعدَّل مباشرة؛ عقد ملحق (عقد جديد) أو قسّم الأعمال')
@@ -19758,6 +19821,9 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const contract = state.subContracts.find((c) => c.id === args.contractId)
         if (!contract) throw new Error('عقد الباطن غير موجود')
+        const project = state.projects.find(p => p.id === contract.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        assertProjectOperationalRunning(project)
         if (contract.status !== 'active') throw new Error('العقد غير نشط')
         // نمط AccFlex: نسبة إنجاز تراكمية من قيمة العقد بدل إعادة إدخال المبالغ
         let amountMinor = args.amountMinor ?? 0
@@ -19879,7 +19945,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const errors = validateBond(args)
         if (errors.length) throw new Error(errors.join(' — '))
-        if (args.projectId != null && !state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع غير موجود')
+        if (args.projectId != null) { const project = state.projects.find(p => p.id === args.projectId); if (!project) throw new Error('المشروع غير موجود'); assertProjectOperationalRunning(project) }
         const label = `${args.bondNumber} — ${args.beneficiary}`
         const lines = buildBondIssueEntry(args.marginMinor, args.feesMinor, args.bank, label)
         const now = localIsoTimestamp()
@@ -19961,6 +20027,7 @@ export const useRawDataStore = create<DataState>()(
           const project = state.projects.find((p) => p.id === args.projectId)
           if (!project) throw new Error('المشروع غير موجود')
           if (project.status === 'completed') throw new Error('المشروع مقفل')
+          assertProjectOperationalRunning(project)
         }
         if (!(args.days > 0) || args.days > 31) throw new Error('عدد الأيام بين نصف يوم و31')
         const wage = args.wageMinor ?? Math.round(worker.dailyWageMinor * args.days)
@@ -20009,6 +20076,7 @@ export const useRawDataStore = create<DataState>()(
         const project = scoped.projects.find(p => p.id === args.projectId)
         if (!project || state.projects.filter(p => p.id === args.projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
         if (project.status !== 'active') throw new Error('المشروع مقفل — لا صرف مواد عليه')
+        assertProjectOperationalRunning(project)
         const issuer = scoped.employees.find(e => e.id === args.issuedByEmployeeId && e.active)
         if (!issuer || state.employees.filter(e => e.id === args.issuedByEmployeeId).length !== 1) throw new Error('حدد أمين المخزن (الصارف) النشط من سجل موظفي الفرع')
         const receiver = scoped.employees.find(e => e.id === args.receivedByEmployeeId && e.active)
@@ -20185,6 +20253,9 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const contract = state.subContracts.find((c) => c.id === args.contractId)
         if (!contract) throw new Error('عقد الباطن غير موجود')
+        const project = state.projects.find(p => p.id === contract.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        assertProjectOperationalRunning(project)
         if (contract.status !== 'active') throw new Error('العقد غير نشط')
         const lines = buildSubAdvanceEntry(args.amountMinor, args.treasury, `${contract.contractNumber} — ${contract.contractorName}`)
         const now = localIsoTimestamp()
@@ -22354,6 +22425,7 @@ export const useRawDataStore = create<DataState>()(
             : true // manual لا مستند لها
           if (!exists) throw new Error('المستند المصدر غير موجود — لا تُسجل عمولة على عملية غير مسجلة')
         }
+        if (args.source === 'project' && args.sourceId != null) { const project = state.projects.find(row => row.id === args.sourceId); if (!project) throw new Error('المشروع غير موجود'); assertProjectOperationalRunning(project) }
         if (!Number.isSafeInteger(args.amountMinor)) throw new Error('مبلغ العمولة غير صالح')
         const now = localIsoTimestamp()
         const date = args.date ?? now.slice(0, 10)

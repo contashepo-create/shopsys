@@ -7,6 +7,7 @@ import { assertContactHistoriesPreserved } from '../core/customerProfile.ts'
 import { assertLetterCountersPreserved } from '../core/letterCounterHistoryGuard.ts'
 import { assertMaterialIssueHistoryPreserved } from '../core/materialIssueHistoryGuard.ts'
 import { assertProjectDocumentHistoryPreserved } from '../core/projectDocumentHistoryGuard.ts'
+import { assertProjectOperationalHistoryPreserved } from '../core/projectOperationalHistoryGuard.ts'
 import { assertProjectFinalHistoryPreserved, assertProjectFinancialHistoryPreserved } from '../core/projectFinancialHistoryGuard.ts'
 import { assertPayrollProjectHistoryPreserved } from '../core/payrollProjectHistoryGuard.ts'
 import { assertJournalHistoryPreserved } from '../core/ledgerHistoryGuard.ts'
@@ -150,6 +151,18 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
   // هذا خاص بدمج اللقطات ولا يحمي من كاتب لا يستعمل هذه الآلية.
   const prior = persistedState(base) ?? {}, localState = persistedState(local) ?? {}, remoteState = persistedState(remote) ?? {}
   const hasChanged = (side: Record<string, unknown>, key: string) => JSON.stringify(prior[key] ?? []) !== JSON.stringify(side[key] ?? [])
+  // تغيير حالة التنفيذ وكتابة عمل جديد قراران مترابطان حتى إن اختلفت المصفوفات.
+  // رفض الدمج المتعارض احتياطي على مستوى كل المشاريع، ولا يحل محل قفل الترحيل.
+  const statusChanged = (side: Record<string, unknown>) => {
+    const before = Array.isArray(prior.projects) ? prior.projects.filter(row => row && typeof row === 'object') : []
+    const after = Array.isArray(side.projects) ? side.projects.filter(row => row && typeof row === 'object') : []
+    return before.some(row => {
+      const next = after.find(candidate => candidate.id === row.id)
+      return next ? JSON.stringify([row.operationalStatus, row.operationalStatusHistory]) !== JSON.stringify([next.operationalStatus, next.operationalStatusHistory]) : row.operationalStatus != null || row.operationalStatusHistory != null
+    })
+  }
+  const projectWorkChanged = (side: Record<string, unknown>) => ['projectExtracts', 'projectCosts', 'purchases', 'sales', 'clientAdvances', 'changeOrders', 'boqItems', 'projectSurveys', 'projectExtractDrafts', 'projectCloseouts', 'projectTasks', 'projectBudgets', 'materialRequisitions', 'custodyFiles', 'custodyTxs', 'subContracts', 'subCertificates', 'subAdvances', 'bonds', 'dailyWorkRecords', 'staffCommissions', 'payrollRuns', 'payrollSlips', 'journal'].some(key => hasChanged(side, key))
+  if (!jsonEqual(parseJsonValue(local), parseJsonValue(remote)) && ((statusChanged(localState) && projectWorkChanged(remoteState)) || (statusChanged(remoteState) && projectWorkChanged(localState)))) throw new Error('تعارض تغيير حالة المشروع مع عمليات متزامنة — أعد التحميل والمراجعة')
   // العداد والخطابات قرار واحد: دمج إضافتين مستقلتين قد يحفظ رقماً واحداً مرتين
   // حتى لو اتفق الطرفان على قيمة العداد. نرفض الدمج ويعاد فتح اللقطة الأحدث.
   const letterChanged = (side: Record<string, unknown>) => hasChanged(side, 'letters') || hasChanged(side, 'letterNumberCounters')
@@ -486,6 +499,11 @@ export function newJournalEntries(nextPayloadJson: string, previousPayloadJson: 
   if (previous && Array.isArray(previous.projectExtracts) && previous.projectExtracts.some(row => row && typeof row === 'object' && row.isFinal === true)) {
     if (!next) throw new Error('تعذّر قراءة اللقطة الجديدة للتحقق من المستخلص الختامي — لم يُحفظ التغيير')
     if (JSON.stringify(previous.projectExtracts) !== JSON.stringify(next.projectExtracts) || JSON.stringify(previous.journal) !== JSON.stringify(next.journal) || JSON.stringify(previous.boqItems) !== JSON.stringify(next.boqItems) || JSON.stringify(previous.projects) !== JSON.stringify(next.projects) || JSON.stringify(previous.changeOrders) !== JSON.stringify(next.changeOrders)) assertProjectFinalHistoryPreserved(previous, next)
+  }
+  // يمنع إسقاط سجل حالة تشغيلية محفوظة في كتابة لقطة سطح المكتب المباشرة.
+  if (previous && JSON.stringify(previous.projects) !== JSON.stringify(next?.projects)) {
+    if (!next) throw new Error('تعذّر قراءة اللقطة الجديدة للتحقق من حالة المشروع')
+    assertProjectOperationalHistoryPreserved(previous, next)
   }
   // نفس حارس أدلة المقدمة والإشعار والمحتجز المستعمل في الدمج والاستعادة
   // يلزم أيضاً حفظ اللقطة غير المتعارض؛ لا نكتفي بحراسة القيد الختامي.
