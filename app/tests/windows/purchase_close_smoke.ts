@@ -10,6 +10,15 @@ if (process.env.RUNNER_TEMP) writeFileSync(join(process.env.RUNNER_TEMP, 'purcha
 console.log('Purchase smoke main started:', JSON.stringify(process.argv))
 let stage = 'startup'
 const logs: string[] = []
+function mark(next: string): void {
+  stage = next
+  if (process.env.RUNNER_TEMP) writeFileSync(join(process.env.RUNNER_TEMP, 'purchase-smoke-stage.json'), JSON.stringify({ stage, logs: logs.slice(-30) }))
+}
+async function bounded<T>(promise: Promise<T>, label: string, timeout: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try { return await Promise.race([promise, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(`Timeout: ${label}`)), timeout) })]) }
+  finally { if (timer) clearTimeout(timer) }
+}
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 async function until(predicate: () => boolean | Promise<boolean>, label: string, timeout = 30_000): Promise<void> {
   const deadline = Date.now() + timeout
@@ -17,7 +26,7 @@ async function until(predicate: () => boolean | Promise<boolean>, label: string,
   throw new Error(`Timed out: ${label}`)
 }
 function check(value: unknown, message: string): asserts value { if (!value) throw new Error(message) }
-const execute = <T>(win: BrowserWindow, script: string): Promise<T> => win.webContents.executeJavaScript(script) as Promise<T>
+const execute = <T>(win: BrowserWindow, script: string): Promise<T> => bounded(win.webContents.executeJavaScript(script) as Promise<T>, 'renderer executeJavaScript', 45_000)
 
 type Snapshot = { storeName: string; revision: number; payloadJson: string | null; updatedAt: string | null }
 type Save = { storeName: string; expectedRevision: number; payloadJson: string }
@@ -50,8 +59,10 @@ async function run(): Promise<void> {
   const main = new BrowserWindow({ show: false, webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true } })
   const origin = new URL(url).origin
   initSatelliteWindows({ getMainWindow: () => main, isDev: true, devStartUrl: url, indexFilePath: '', appIndexFileUrl: '', devOrigin: origin, preloadPath: preload, iconPath: icon, log: (tag, message) => logs.push(`${tag}: ${message}`) })
-  stage = 'seed real application stores'
-  await main.loadURL(url)
+  main.webContents.on('console-message', (_event, _level, message) => { logs.push(`main renderer: ${message}`) })
+  mark('load fixture URL')
+  await bounded(main.loadURL(url), 'main fixture load', 120_000)
+  mark('seed real application stores')
   await until(async () => {
     const status = await execute<{ ready: boolean; error?: string }>(main, '({ready: !!window.__smokeReady, error: window.__smokeError})')
     if (status.error) throw new Error(status.error)
@@ -66,21 +77,21 @@ async function run(): Promise<void> {
   await until(() => { invoice = BrowserWindow.getAllWindows().find(win => !initialIds.has(win.id)); return !!invoice }, 'invoice BrowserWindow')
   check(invoice, 'Missing invoice window')
   invoice.webContents.on('console-message', (_event, _level, message) => logs.push(`renderer: ${message}`))
-  stage = 'load invoice renderer'
+  mark('load invoice renderer')
   await until(async () => {
     if (invoice!.isDestroyed()) throw new Error('Invoice unexpectedly closed during load')
     const result = await execute<{ ready: boolean; error?: string; hasInvoice: boolean; hasLine: boolean }>(invoice!, `({ready: !!window.__smokeReady, error: window.__smokeError, hasInvoice: !!document.querySelector('[data-satellite-view="purchase-invoice"] .invoice-pos-root'), hasLine: document.body.innerText.includes('صنف اختبار ويندوز')})`)
     if (result.error) throw new Error(result.error)
     return result.ready && result.hasInvoice && result.hasLine
   }, 'actual purchase editor with prefilled order', 90_000)
-  stage = 'post and defer persistence acknowledgement'
+  mark('post and defer persistence acknowledgement')
   holdInvoiceWrite = true
   await execute(invoice, `(() => { const button = [...document.querySelectorAll('button')].find(b => b.textContent?.includes('حفظ وترحيل')); if (!button || button.disabled) throw new Error('Save button missing or disabled'); button.click() })()`)
   await until(() => writingInvoice, 'posted invoice snapshot write', 45_000)
   check(!invoice.isDestroyed(), 'Invoice closed before persistence was confirmed')
   check(lockOwner === invoice.webContents.id, 'Invoice commit lock not held during write')
   check(releaseWrite, 'Deferred write missing')
-  stage = 'acknowledge and verify close'
+  mark('acknowledge and verify close')
   releaseWrite()
   await until(() => invoice!.isDestroyed(), 'purchase invoice window closed after save', 30_000)
   await until(() => lockOwner === null, 'commit lock released')

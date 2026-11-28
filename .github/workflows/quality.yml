@@ -147,7 +147,11 @@ jobs:
             $process = Start-Process -FilePath $electron -ArgumentList $args -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
             if (-not $process.WaitForExit(300000)) {
               Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-              throw 'Purchase UI smoke test timed out'
+              $stagePath = Join-Path $env:RUNNER_TEMP 'purchase-smoke-stage.json'
+              $stageDetail = if (Test-Path $stagePath) { Get-Content $stagePath -Raw } else { 'no stage' }
+              $startupPath = Join-Path $env:RUNNER_TEMP 'purchase-smoke-startup.json'
+              $startupDetail = if (Test-Path $startupPath) { Get-Content $startupPath -Raw } else { 'no startup' }
+              throw "Purchase UI smoke test timed out: $stageDetail $startupDetail"
             }
             if (-not (Test-Path $evidence)) {
               $startupPath = Join-Path $env:RUNNER_TEMP 'purchase-smoke-startup.json'
