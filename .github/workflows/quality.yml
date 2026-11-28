@@ -141,7 +141,7 @@ jobs:
               try { if ((Invoke-WebRequest -Uri $url -UseBasicParsing).StatusCode -eq 200) { $ready = $true; break } } catch { Start-Sleep -Milliseconds 500 }
             }
             if (-not $ready) { throw 'Vite fixture server did not start' }
-            $args = @("`"$main`"", "`"$url`"", "`"$preload`"", "`"$icon`"", "`"$evidence`"")
+            $args = @("`"$main`"", '5189', "`"$preload`"", "`"$icon`"", "`"$evidence`"")
             $stdout = Join-Path $env:RUNNER_TEMP 'purchase-electron-out.log'
             $stderr = Join-Path $env:RUNNER_TEMP 'purchase-electron-err.log'
             $process = Start-Process -FilePath $electron -ArgumentList $args -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr

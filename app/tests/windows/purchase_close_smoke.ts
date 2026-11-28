@@ -4,7 +4,8 @@ import { writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { initSatelliteWindows } from '../../desktop/satelliteWindows.ts'
 
-const [url, preload, icon, evidence] = process.argv.slice(2)
+const [port, preload, icon, evidence] = process.argv.slice(2)
+const url = `http://127.0.0.1:${port}/tests/windows/purchase_close_fixture.html`
 if (process.env.RUNNER_TEMP) writeFileSync(join(process.env.RUNNER_TEMP, 'purchase-smoke-startup.json'), JSON.stringify({ argv: process.argv, pid: process.pid }))
 console.log('Purchase smoke main started:', JSON.stringify(process.argv))
 let stage = 'startup'
@@ -25,7 +26,7 @@ let holdInvoiceWrite = false, writingInvoice = false, releaseWrite: (() => void)
 let lockOwner: number | null = null
 
 async function run(): Promise<void> {
-  check(url && preload && icon && evidence, 'Missing test arguments')
+  check(port && preload && icon && evidence, 'Missing test arguments')
   app.setPath('userData', join(dirname(evidence), 'purchase-close-smoke-profile'))
   console.log('Purchase smoke waiting for Electron readiness')
   await app.whenReady()
