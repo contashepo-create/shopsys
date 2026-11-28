@@ -142,12 +142,14 @@ jobs:
             }
             if (-not $ready) { throw 'Vite fixture server did not start' }
             $args = @("`"$main`"", "`"$url`"", "`"$preload`"", "`"$icon`"", "`"$evidence`"")
-            $process = Start-Process -FilePath $electron -ArgumentList $args -PassThru
+            $stdout = Join-Path $env:RUNNER_TEMP 'purchase-electron-out.log'
+            $stderr = Join-Path $env:RUNNER_TEMP 'purchase-electron-err.log'
+            $process = Start-Process -FilePath $electron -ArgumentList $args -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
             if (-not $process.WaitForExit(300000)) {
               Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
               throw 'Purchase UI smoke test timed out'
             }
-            if (-not (Test-Path $evidence)) { throw "Purchase UI smoke produced no evidence (exit $($process.ExitCode))" }
+            if (-not (Test-Path $evidence)) { throw "Purchase UI smoke produced no evidence (exit $($process.ExitCode)): $(Get-Content $stdout -Raw) $(Get-Content $stderr -Raw)" }
             $result = Get-Content $evidence -Raw | ConvertFrom-Json
             if ($process.ExitCode -ne 0 -or -not $result.ok) { throw "Purchase UI smoke failed ($($result.stage)): $($result.error) — $($result.logs -join ' | ')" }
             Get-Content $evidence
