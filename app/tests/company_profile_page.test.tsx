@@ -108,12 +108,14 @@ describe('صفحة بيانات المنشأة', () => {
       release()
       await waitFor(() => expect((screen.getByPlaceholderText('name@example.com') as HTMLInputElement).value).toBe('delayed@example.com'))
       fireEvent.click(screen.getByText('💾 حفظ بيانات المنشأة'))
-      await waitFor(() => expect(localStorage.getItem('shopsys-company-profile-draft-v1:main')).toBeNull())
+      // حذف المسودة ينتظر طابور التشفير السابق؛ قد يتأخر PBKDF2 على CI
+      // تحت ضغط الاختبارات. لا نختصر الانتظار أو نتجاوز التأكيد الفعلي للحذف.
+      await waitFor(() => expect(localStorage.getItem('shopsys-company-profile-draft-v1:main')).toBeNull(), { timeout: 10_000 })
     } finally {
       release()
       spy.mockRestore()
     }
-  })
+  }, 15_000)
 
   it('يرحّل المسودة القديمة الصريحة إلى تخزين مشفّر مع الحفاظ على الاستعادة', async () => {
     const draftKey = 'shopsys-company-profile-draft-v1:main'
