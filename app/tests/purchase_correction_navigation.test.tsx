@@ -23,6 +23,14 @@ it('يفتح تصحيح الفاتورة الأصلية مباشرة من الق
  expect(S().journal).toHaveLength(entries); expect(S().items[0].stockQty).toBe(stock)
 })
 
+it('يعرض تنبيهاً بأن مصروفات الفاتورة لا تُلغى أو تُسترد بتعديلها أو إرجاع البضاعة', () => {
+ S().postPurchase({ supplierId: 7, date: '2026-01-01', lines: [{ itemId: 1, qty: 2, unitPriceMinor: 3000 }], expenses: [{ nameAr: 'شحن', amountMinor: 1000, method: 'value', paidBy: 'supplier' }], paidMinor: 0, notes: '' })
+ render(<MemoryRouter><PurchasesPage /></MemoryRouter>)
+ fireEvent.click(screen.getByTitle('عرض الفاتورة وقيدها'))
+ expect(screen.getByRole('note').textContent).toContain('لا يثبت تعديل الفاتورة أو مرتجع البضاعة إلغاءها أو استردادها')
+ expect(S().purchaseReturns).toHaveLength(0)
+})
+
 it('يوضح حدود المرتجع ويمنع الترحيل عندما تختلط ضريبة المدخلات بالمصاريف المحملة', async () => {
  const invoice = S().postPurchase({ supplierId: 7, date: '2026-01-01', lines: [{ itemId: 1, qty: 2, unitPriceMinor: 3000 }], expenses: [{ nameAr: 'شحن', amountMinor: 1000, method: 'value', paidBy: 'supplier', costTreatment: 'inventory', taxTreatment: 'exclusive', taxPercent: 14 }], paidMinor: 0, inputVatMinor: 0, purchaseExpenseTaxRecoverable: true, notes: '' })
  render(<MemoryRouter initialEntries={[`/purchases/returns?purchase=${invoice.id}`]}><Routes><Route path="/purchases/returns" element={<PurchaseReturnsPage />} /></Routes></MemoryRouter>)

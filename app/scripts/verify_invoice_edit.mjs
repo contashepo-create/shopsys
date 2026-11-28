@@ -133,7 +133,7 @@ console.log('\n6️⃣ موانع تعديل الشراء')
 throws('einvoiceActive ⇒ رفض تعديل الشراء', () => S().editPurchase({ purchaseId: pur.id, lines: [{ itemId: itB.id, qty: 1, unitPriceMinor: 2000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'اختبار حاجز', einvoiceActive: true }), 'مرتجع شراء')
 // بيع من بضاعة الفاتورة يمنع تعديلها (يفسد التكلفة)
 S().postSale({ lines: [cartLine(itB.id, 55, 5000, 2550)], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101', paidMinor: 275000 })
-throws('بيع من بضاعتها ⇒ يُرفض', () => S().editPurchase({ purchaseId: pur.id, lines: [{ itemId: itB.id, qty: 1, unitPriceMinor: 2000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'اختبار تعديل', einvoiceActive: false }), 'بيع من بضاعة')
+throws('بيع من بضاعتها ⇒ يُرفض', () => S().editPurchase({ purchaseId: pur.id, lines: [{ itemId: itB.id, qty: 1, unitPriceMinor: 2000 }], expenses: pur.expenses, paidMinor: 0, treasury: '1101', reason: 'اختبار تعديل', einvoiceActive: false }), 'بيع من بضاعة')
 // مصاريف مدفوعة من خزينة تمنع
 const pur2 = S().postPurchase({
   supplierId: sup.id, date: '2026-09-15',

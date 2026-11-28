@@ -1067,6 +1067,7 @@ export function PurchasesPage() {
                 ))}
               </tbody>
             </table>
+            {viewing.expenses.length > 0 && <p role="note" className="text-xs text-amber-700 dark:text-amber-400">المصاريف تبقى مسجلة؛ لا يثبت تعديل الفاتورة أو مرتجع البضاعة إلغاءها أو استردادها. تغيير مصروف يحتاج تسوية مستقلة ومراجعة مستنداته.</p>}
             {viewing.expenses.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {viewing.expenses.map((e, i) => (

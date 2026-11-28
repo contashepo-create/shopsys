@@ -123,6 +123,34 @@ describe('ترحيل ضريبة مصروف الشراء في المستودع', 
     expect(purchase.supplierDueMinor).toBe(10000)
   })
 
+  it('لا يحذف أو يغير مصروف المورد تلقائياً عند تعديل الفاتورة', () => {
+    const purchase = useDataStore.getState().postPurchase({ supplierId: 801, date: '2026-09-24', lines: [{ itemId: 901, qty: 1, unitPriceMinor: 10000 }], expenses: [{ nameAr: 'شحن', amountMinor: 1000, method: 'value', paidBy: 'supplier' }], paidMinor: 0, notes: '' })
+    const before = useDataStore.getState()
+    const args = { purchaseId: purchase.id, lines: [{ itemId: 901, qty: 1, unitPriceMinor: 10000 }], paidMinor: 0, treasury: '1101', reason: 'تصحيح', einvoiceActive: false }
+    for (const expenses of [[], [{ ...purchase.expenses[0], amountMinor: 500 }]]) {
+      expect(() => before.editPurchase({ ...args, expenses })).toThrow(/لا يمكن إضافة أو حذف أو تغيير مصروف/)
+      expect(useDataStore.getState().journal).toBe(before.journal)
+      expect(useDataStore.getState().items).toBe(before.items)
+      expect(useDataStore.getState().purchases).toBe(before.purchases)
+    }
+    // إعادة بناء مصروف مخزني بسيط لم يتغير تظل متاحة.
+    expect(before.editPurchase({ ...args, expenses: purchase.expenses }).expenses).toEqual(purchase.expenses)
+  })
+
+  it('لا يضيف مصروفاً أو يعيد بناء مصروف ضريبي عبر تعديل الفاتورة', () => {
+    const plain = useDataStore.getState().postPurchase({ supplierId: 801, date: '2026-09-24', lines: [{ itemId: 901, qty: 1, unitPriceMinor: 10000 }], expenses: [], paidMinor: 0, notes: '' })
+    const args = { purchaseId: plain.id, lines: [{ itemId: 901, qty: 1, unitPriceMinor: 10000 }], paidMinor: 0, treasury: '1101', reason: 'تصحيح', einvoiceActive: false }
+    const journal = useDataStore.getState().journal
+    expect(() => useDataStore.getState().editPurchase({ ...args, expenses: [{ nameAr: 'شحن', amountMinor: 1000, method: 'value' }] })).toThrow(/لا يمكن إضافة أو حذف أو تغيير مصروف/)
+    expect(useDataStore.getState().journal).toBe(journal)
+    const taxed = post(true)
+    const before = useDataStore.getState()
+    expect(() => before.editPurchase({ ...args, purchaseId: taxed.id, expenses: taxed.expenses })).toThrow(/مصروف لاحق أو ضريبي/)
+    expect(useDataStore.getState().journal).toBe(before.journal)
+    expect(useDataStore.getState().purchases).toBe(before.purchases)
+    expect(useDataStore.getState().items).toBe(before.items)
+  })
+
   it('لا يترك ساق صرف قديمة عند تعديل فاتورة شراء أجنبية', () => {
     const state = useDataStore.getState()
     state.postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '4101', amountMinor: 1000, description: 'حيازة العملة', fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 10000000, decimals: 2 }, bookCurrencyCode: 'EGP', bookDecimals: 2 })

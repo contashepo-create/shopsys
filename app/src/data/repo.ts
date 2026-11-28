@@ -13089,6 +13089,11 @@ export const useRawDataStore = create<DataState>()(
         if (inv.expenses.some((e) => (e.paidBy ?? 'supplier') !== 'supplier')) {
           throw new Error('فيها مصاريف مدفوعة من خزائن/عهد — عدّلها بمرتجع وفاتورة جديدة')
         }
+        // عكس الفاتورة وإعادة ترحيلها لا يثبت إلغاء مصروف أو استرداده.
+        // لا نسمح بإضافة/حذف/تغيير المصروفات من محرر الفاتورة؛ كما لا يمكن
+        // إعادة بناء المصروف اللاحق أو الضريبي أو التحليلي بترحيل التعديل القديم.
+        if (JSON.stringify(inv.expenses) !== JSON.stringify(args.expenses)) throw new Error('لا يمكن إضافة أو حذف أو تغيير مصروف من تعديل الفاتورة — يحتاج كل مصروف إلى تسوية مستقلة مؤكدة ومراجعة مستنداته')
+        if (inv.expenses.some(e => e.late || (e.costTreatment ?? 'inventory') !== 'inventory' || (e.taxTreatment ?? 'exempt') !== 'exempt' || e.vehicleId != null || e.costCenterId != null)) throw new Error('مصروف لاحق أو ضريبي أو مرتبط بمركز تكلفة لا يمكن إعادة ترحيله بتعديل الفاتورة — استخدم المرتجع للبضاعة بعد مراجعة المصروفات')
 
         // ① التراجع عن أثر المخزون القديم (كمية وقيمة بالتكلفة المحملة القديمة)
         const stockAfterUndo = new Map<number, { qty: number; costMinor: number; valueMinor: number }>()
