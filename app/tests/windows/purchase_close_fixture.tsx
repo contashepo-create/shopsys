@@ -7,7 +7,6 @@ import { useRawDataStore } from '../../src/data/repo.ts'
 import { useAppStore } from '../../src/stores/app.store.ts'
 import { SatelliteViewRoot } from '../../src/ui/windows/satellite.tsx'
 import type { SatelliteDescriptor } from '../../src/data/desktopBridge.ts'
-import '../../src/index.css'
 
 type SmokeWindow = Window & { __smokeReady?: boolean; __smokeError?: string; __orderId?: number }
 const smoke = window as SmokeWindow

@@ -159,7 +159,10 @@ jobs:
               throw "Purchase UI smoke produced no evidence (exit $($process.ExitCode)): $startup $(Get-Content $stdout -Raw) $(Get-Content $stderr -Raw)"
             }
             $result = Get-Content $evidence -Raw | ConvertFrom-Json
-            if ($process.ExitCode -ne 0 -or -not $result.ok) { throw "Purchase UI smoke failed ($($result.stage)): $($result.error) — $($result.logs -join ' | ')" }
+            if ($process.ExitCode -ne 0 -or -not $result.ok) {
+              $viteError = Get-Content (Join-Path $env:RUNNER_TEMP 'purchase-vite-error.log') -Raw
+              throw "Purchase UI smoke failed ($($result.stage)): $($result.error) — $($result.logs -join ' | ') — Vite: $viteError"
+            }
             Get-Content $evidence
           } catch {
             $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
