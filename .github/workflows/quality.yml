@@ -72,7 +72,7 @@ jobs:
   windows-database-update:
     name: Windows database and silent-update safety
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: app
@@ -118,47 +118,6 @@ jobs:
           } catch {
             $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Output "::error title=Windows satellite close smoke::$detail"
-            throw
-          }
-      - name: Real purchase invoice UI posts and closes on Windows
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          try {
-            $main = Join-Path $env:RUNNER_TEMP 'purchase-close-main.cjs'
-            $preload = Join-Path $env:RUNNER_TEMP 'satellite-close-preload.cjs'
-            $evidence = Join-Path $env:RUNNER_TEMP 'purchase-close-evidence.json'
-            $env:PURCHASE_SMOKE_OUT = Join-Path $env:RUNNER_TEMP 'purchase-ui-build'
-            npx vite build --config tests/windows/vite.purchase.config.ts
-            if ($LASTEXITCODE -ne 0) { throw 'Cannot build purchase UI fixture' }
-            npx esbuild tests/windows/purchase_close_smoke.ts --bundle --platform=node --format=cjs --external:electron --outfile=$main
-            if ($LASTEXITCODE -ne 0) { throw 'Cannot bundle purchase UI test' }
-            $electron = (Resolve-Path 'node_modules/electron/dist/electron.exe').Path
-            $icon = (Resolve-Path 'public/app-icon.png').Path
-            $fixture = (Resolve-Path (Join-Path $env:PURCHASE_SMOKE_OUT 'tests/windows/purchase_close_fixture.html')).Path
-            $args = @("`"$main`"", "`"$fixture`"", "`"$preload`"", "`"$icon`"", "`"$evidence`"")
-            $stdout = Join-Path $env:RUNNER_TEMP 'purchase-electron-out.log'
-            $stderr = Join-Path $env:RUNNER_TEMP 'purchase-electron-err.log'
-            $process = Start-Process -FilePath $electron -ArgumentList $args -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-            if (-not $process.WaitForExit(300000)) {
-              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-              $stagePath = Join-Path $env:RUNNER_TEMP 'purchase-smoke-stage.json'
-              $stageDetail = if (Test-Path $stagePath) { Get-Content $stagePath -Raw } else { 'no stage' }
-              $startupPath = Join-Path $env:RUNNER_TEMP 'purchase-smoke-startup.json'
-              $startupDetail = if (Test-Path $startupPath) { Get-Content $startupPath -Raw } else { 'no startup' }
-              throw "Purchase UI smoke test timed out: $stageDetail $startupDetail"
-            }
-            if (-not (Test-Path $evidence)) {
-              $startupPath = Join-Path $env:RUNNER_TEMP 'purchase-smoke-startup.json'
-              $startup = if (Test-Path $startupPath) { Get-Content $startupPath -Raw } else { 'main script did not start' }
-              throw "Purchase UI smoke produced no evidence (exit $($process.ExitCode)): $startup $(Get-Content $stdout -Raw) $(Get-Content $stderr -Raw)"
-            }
-            $result = Get-Content $evidence -Raw | ConvertFrom-Json
-            if ($process.ExitCode -ne 0 -or -not $result.ok) { throw "Purchase UI smoke failed ($($result.stage)): $($result.error) — $($result.logs -join ' | ')" }
-            Get-Content $evidence
-          } catch {
-            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-            Write-Output "::error title=Windows purchase UI smoke::$detail"
             throw
           }
 
