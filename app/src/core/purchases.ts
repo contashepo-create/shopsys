@@ -247,6 +247,17 @@ export function buildLateExpenseEntry(args: {
 
 /* ─── مرتجع الشراء ─── */
 
+/** لا يُستنتج نصيب ضريبة البضاعة من إجمالي يخلط ضريبة المصاريف المحملة معها. */
+export function purchaseReturnTaxReviewReason(purchase: {
+  inputVatMinor?: number
+  expenses: readonly { amountMinor: number; costTreatment?: 'inventory' | 'period' }[]
+}): string | null {
+  if ((purchase.inputVatMinor ?? 0) > 0 && purchase.expenses.some(expense => expense.amountMinor > 0 && (expense.costTreatment ?? 'inventory') === 'inventory')) {
+    return 'تتضمن الفاتورة ضريبة مدخلات ومصاريف محملة على المخزون؛ لا يمكن فصل ضريبة البضاعة عن المصاريف بأمان في المرتجع التلقائي. يلزم مراجعة محاسبية وضريبية قبل التصحيح.'
+  }
+  return null
+}
+
 export interface PurchaseReturnLine {
   itemId: number
   nameAr: string

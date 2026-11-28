@@ -114,35 +114,39 @@ let inv1
   ok('P5: شراء ثانٍ بسعر أعلى — المتوسط المرجح 12 بالضبط')
 }
 
-/* ═══ P6) مرتجع الشراء: G4 + N2 + سقف الدين ═══ */
+/* ═══ P6) مرتجع الشراء: حراسة الضريبة والمصاريف ثم اختبار مرتجع آمن ═══ */
+let returnInvoice
 {
-  // إرجاع 20كجم أرز من الفاتورة الأولى: قيمة دفترية 20×11=220، مستحق المورد 20×10=200
-  // حصة الضريبة N2: 280 × (220/2200) = 28
-  const riceBatch = inv1.purchaseExpiryBatches.find(row => row.lineIndex === 0).batch
-  const ret = st().postPurchaseReturn({ purchaseId: inv1.id, lineSpecs: [{ lineIndex: 0, qty: 20, warehouseId: riceBatch.warehouseId, batchAllocations: [{ batchId: riceBatch.id, qty: 20 }] }], refund: 'debt', reason: 'تالف جزئياً', approvedBy: 'المشرف كمال' })
+  const before = st()
+  assert.throws(() => st().postPurchaseReturn({ purchaseId: inv1.id, qtyByItem: new Map([[rice.id, 20]]), refund: 'debt', reason: 'تصحيح' }), /ضريبة.*المصاريف/)
+  assert.equal(st().journal, before.journal)
+  assert.equal(st().purchaseReturns, before.purchaseReturns)
+  ok('P6: ضريبة المدخلات مع المصاريف المحملة تتطلب مراجعة قبل ترحيل المرتجع')
+
+  // فاتورة أخرى بلا ضريبة تُبقي اختبار المصروف غير المسترد وسقف الدين مستقلاً.
+  st().addItem({ nameAr: 'صنف مرتجع مستقل', barcode: '', categoryId: null, unit: 'كجم', costMinor: 0, priceMinor: 3000, stockQty: 0, minStock: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true })
+  const returnedItem = st().items.at(-1)
+  returnInvoice = st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: returnedItem.id, qty: 100, unitPriceMinor: 1000 }], expenses: [{ nameAr: 'شحن', amountMinor: 10000, method: 'value', paidBy: 'supplier' }], paidMinor: 50000, treasury: '1101', notes: '' })
+  const ret = st().postPurchaseReturn({ purchaseId: returnInvoice.id, qtyByItem: new Map([[returnedItem.id, 20]]), refund: 'debt', reason: 'تالف جزئياً', approvedBy: 'المشرف كمال' })
   assert.equal(ret.totalMinor, 22000)
   assert.equal(ret.supplierValueMinor, 20000)
-  assert.equal(ret.inputVatShareMinor, 2800)
-  ok('P6: مرتجع 20كجم — دفتري 220، مستحق مورد 200 (G4: الشحن لا يُسترد)، عكس ضريبة 28 (N2)')
+  assert.equal(ret.inputVatShareMinor, 0)
   assert.equal(ret.approvedBy, 'المشرف كمال')
-  ok('P3: موافقة المشرف مسجلة على مستند مرتجع الشراء (قاعدة المالك المعممة)')
-  // القيد: 2101 مدين 228 / 1103 دائن 220 / 5111 مدين 20 / 2102 دائن 28
+  ok('P6: المرتجع الآمن يسجل البضاعة وموافقة المشرف دون استرداد الشحن')
   const entry = st().journal.find((e) => e.id === ret.journalEntryId)
-  const get5111 = entry.lines.find((l) => l.accountCode === '5111')
-  assert.equal(get5111.debit, 2000)
-  ok('P6: نصيب الشحن غير المسترد 20 خسارة محققة 5111 (نمط QuickBooks/Odoo)')
-  // لا إرجاع فوق المتبقي
-  assert.throws(
-    () => st().postPurchaseReturn({ purchaseId: inv1.id, qtyByItem: new Map([[rice.id, 81]]), refund: 'cash', reason: 'x' }),
-    /المتبقي القابل للإرجاع/,
-  )
-  ok('P6: الإرجاع فوق المتبقي القابل للإرجاع (80) مرفوض تراكمياً')
-  // سقف دين الفاتورة للمرتجع debt
-  assert.throws(
-    () => st().postPurchaseReturn({ purchaseId: inv1.id, qtyByItem: new Map([[rice.id, 80], [sugar.id, 50]]), refund: 'debt', reason: 'x' }),
-    /دين الفاتورة المتبقي/,
-  )
-  ok('P6: مرتجع debt أكبر من دين الفاتورة المتبقي مرفوض — «اختر الاسترداد النقدي»')
+  assert.equal(entry.lines.find((l) => l.accountCode === '5111').debit, 2000)
+  ok('P6: نصيب الشحن غير المسترد خسارة محققة 5111')
+  assert.throws(() => st().postPurchaseReturn({ purchaseId: returnInvoice.id, qtyByItem: new Map([[returnedItem.id, 81]]), refund: 'cash', reason: 'x' }), /المتبقي القابل للإرجاع/)
+  ok('P6: الإرجاع فوق المتبقي القابل للإرجاع مرفوض')
+  assert.throws(() => st().postPurchaseReturn({ purchaseId: returnInvoice.id, qtyByItem: new Map([[returnedItem.id, 80]]), refund: 'debt', reason: 'x' }), /دين الفاتورة المتبقي/)
+  ok('P6: المرتجع الأكبر من الدين المتبقي مرفوض')
+  const taxed = st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: returnedItem.id, qty: 2, unitPriceMinor: 1000 }], expenses: [], inputVatMinor: 280, paidMinor: 0, notes: '' })
+  const taxedReturn = st().postPurchaseReturn({ purchaseId: taxed.id, qtyByItem: new Map([[returnedItem.id, 1]]), refund: 'debt', reason: 'رد بضاعة' })
+  assert.equal(taxedReturn.inputVatShareMinor, 140)
+  const taxedEntry = st().journal.find(e => e.id === taxedReturn.journalEntryId)
+  assert.equal(taxedEntry.lines.find(l => l.accountCode === '2102').credit, 140)
+  assert.equal(taxedEntry.lines.find(l => l.accountCode === '2101').debit, 1140)
+  ok('P6: حصة ضريبة البضاعة من فاتورة بلا مصاريف تنعكس في القيد وذمة المورد')
 }
 
 /* ═══ P7) المصروف اللاحق: توزيع 1103/5101 ═══ */
@@ -171,7 +175,7 @@ let inv1
 {
   // فاتورة عليها مرتجع لا تُعدل
   assert.throws(
-    () => st().editPurchase({ purchaseId: inv1.id, lines: [{ itemId: rice.id, qty: 100, unitPriceMinor: 1000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'تصحيح', einvoiceActive: false }),
+    () => st().editPurchase({ purchaseId: returnInvoice.id, lines: [{ itemId: rice.id, qty: 100, unitPriceMinor: 1000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'تصحيح', einvoiceActive: false }),
     /مرتجعات شراء/,
   )
   ok('P8: فاتورة عليها مرتجعات لا تُعدَّل — «صحّح بمرتجع إضافي»')

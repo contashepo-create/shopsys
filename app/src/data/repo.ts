@@ -40,7 +40,7 @@ import {
 } from '../core/auth.ts'
 import { validateConsumption, buildConsumptionEntry, consumptionTotalMinor, INTERNAL_USE_ACCOUNT } from '../core/consumption.ts'
 import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, type WalletServiceInput, type WalletServiceType, type WalletProvider, type WalletServiceTotals } from '../core/walletServices.ts'
-import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, buildPurchaseReturnLinesPerLine, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, purchaseExpenseTaxParts, type PurchaseReturnLine, type PurchaseReturnLineSpec, type ExpensePaymentCredit } from '../core/purchases.ts'
+import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, buildPurchaseReturnLinesPerLine, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, purchaseExpenseTaxParts, purchaseReturnTaxReviewReason, type PurchaseReturnLine, type PurchaseReturnLineSpec, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult, type ShortageReason } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder, type ProductionExpense } from '../core/recipes.ts'
 import { validateProcessing, validateProcessingOutputExpiry, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
@@ -10756,6 +10756,8 @@ export const useRawDataStore = create<DataState>()(
         const purchase = matches[0]
         // بضاعة المشروع محمّلة على التكلفة لا على المخزون، فلا يُنشأ لها هذا النوع من المرتجع.
         if (purchase.projectId != null) throw new Error('فاتورة مشروع مقاولات — لا مرتجع مخزنياً لها؛ يلزم مراجعة تسوية المورد وتكلفة المشروع والضريبة قبل تسجيل أي معالجة')
+        const taxReviewReason = purchaseReturnTaxReviewReason(purchase)
+        if (taxReviewReason) throw new Error(taxReviewReason)
         const now = assertReturnPostingContext(state, purchase.date, state.purchaseReturns.filter(row => row.purchaseId === purchase.id).map(row => row.date))
         if (args.refund !== 'cash' && args.refund !== 'debt') throw new Error('نوع استرداد مرتجع الشراء غير صالح')
         // بوابة اعتماد المستندات (خطة ③): مرتجع شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد

@@ -22,3 +22,13 @@ it('يفتح تصحيح الفاتورة الأصلية مباشرة من الق
  expect(S().purchases).toHaveLength(1); expect(S().purchaseReturns).toHaveLength(0)
  expect(S().journal).toHaveLength(entries); expect(S().items[0].stockQty).toBe(stock)
 })
+
+it('يوضح حدود المرتجع ويمنع الترحيل عندما تختلط ضريبة المدخلات بالمصاريف المحملة', async () => {
+ const invoice = S().postPurchase({ supplierId: 7, date: '2026-01-01', lines: [{ itemId: 1, qty: 2, unitPriceMinor: 3000 }], expenses: [{ nameAr: 'شحن', amountMinor: 1000, method: 'value', paidBy: 'supplier', costTreatment: 'inventory', taxTreatment: 'exclusive', taxPercent: 14 }], paidMinor: 0, inputVatMinor: 0, purchaseExpenseTaxRecoverable: true, notes: '' })
+ render(<MemoryRouter initialEntries={[`/purchases/returns?purchase=${invoice.id}`]}><Routes><Route path="/purchases/returns" element={<PurchaseReturnsPage />} /></Routes></MemoryRouter>)
+ await waitFor(() => expect(screen.getByRole('dialog').textContent).toContain(invoice.invoiceNumber))
+ expect(screen.getByRole('note').textContent).toContain('المصاريف لا تُسترد أو تُلغى تلقائياً')
+ expect(screen.getByRole('alert').textContent).toContain('لا يمكن فصل ضريبة البضاعة')
+ expect((screen.getByRole('button', { name: /تنفيذ المرتجع/ }) as HTMLButtonElement).disabled).toBe(true)
+ expect(S().purchaseReturns).toHaveLength(0)
+})

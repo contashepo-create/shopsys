@@ -10,6 +10,7 @@
  *
  * التشغيل: node --experimental-strip-types scripts/verify_document_contracts.mjs
  */
+import assert from 'node:assert/strict'
 import { freshCase, addSimpleItem, reporter } from './auditKit.mjs'
 import { computeTotals } from '../src/core/pos.ts'
 
@@ -87,10 +88,13 @@ eq('الصافي + الخصم = الإجمالي قبل الخصم', saleReturn.
 if (saleReturn.totals.cogsMinor <= 0) throw new Error('مرتجع بمخزون بلا تكلفة — عقد التكلفة مكسور')
 
 r.section('🧾 مرتجع شراء: قيمة السطور = Σ (كمية × تكلفة محمَّلة) وΣ (كمية × سعر)')
-const purchaseReturn = st().postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 2, warehouseId: wh }], refund: 'cash', reason: 'عقد' })
+assert.throws(() => st().postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 2, warehouseId: wh }], refund: 'cash', reason: 'عقد' }), /ضريبة.*المصاريف/)
+r.ok('حارس ضريبة المدخلات مع المصاريف المحملة يمنع قيداً غير مثبت')
+const returnPurchase = st().postPurchase({ supplierId: supplier.id, date: '2026-11-17', lines: [{ itemId: a.id, qty: 4, unitPriceMinor: 1000, warehouseId: wh }], expenses: [{ nameAr: 'نقل', amountMinor: 400, method: 'value', paidBy: 'supplier' }], paidMinor: 0, treasury: '1101', notes: '' })
+const purchaseReturn = st().postPurchaseReturn({ purchaseId: returnPurchase.id, lineSpecs: [{ lineIndex: 0, qty: 2, warehouseId: wh }], refund: 'cash', reason: 'عقد' })
 eq('قيمة المستند = Σ (كمية × تكلفة محمَّلة)', purchaseReturn.totalMinor, sum(purchaseReturn.lines, (line) => Math.round(line.qty * line.landedUnitCostMinor)))
 eq('قيمة البضاعة للمورد = Σ (كمية × سعر الشراء)', purchaseReturn.supplierValueMinor, sum(purchaseReturn.lines, (line) => Math.round(line.qty * line.unitPriceMinor)))
-eq('الخارج من المخزون = قيمة المستند + فرق التقييم', purchaseReturn.inventoryOutMinor, purchaseReturn.totalMinor + purchaseReturn.inventoryVarianceMinor)
+eq('الخارج من المخزون = قيمة المستند − فرق التقييم', purchaseReturn.inventoryOutMinor, purchaseReturn.totalMinor - purchaseReturn.inventoryVarianceMinor)
 eq('الكمية المرتجعة = مجموع كميات السطور', round3(sum(purchaseReturn.lines, (line) => line.qty)), 2)
 
 r.section('📦 إتلاف واستهلاك: التكلفة المعلنة = مجموع تكاليف السطور')

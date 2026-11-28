@@ -615,11 +615,7 @@ export function PurchasesPage() {
                       <button onClick={() => openEdit(p)} title={editPolicy.reasonAr} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all duration-200 hover:scale-110">
                         <Pencil size={15} />
                       </button>
-                    ) : (
-                      <button onClick={() => navigate('/purchases/returns')} title="إشعار مدين على المورد — الفاتورة الإلكترونية مفعلة فلا تعديل؛ التصحيح بمرتجع شراء رسمي" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110">
-                        <Receipt size={15} />
-                      </button>
-                    )}
+                    ) : null}
                     <button type="button" onClick={() => navigate(`/purchases/returns?purchase=${p.id}`)} aria-label={`تصحيح فاتورة الشراء ${p.invoiceNumber} بمرتجع`} title="تصحيح الفاتورة بمرتجع شراء — يبقى المستند الأصلي وسجله" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110"><Receipt size={15} /></button>
                     <button onClick={() => setViewing(p)} title="عرض الفاتورة وقيدها" className="p-2 rounded-lg text-slate-400 hover:text-cyan-600 hover:bg-cyan-500/10 transition-all duration-200 hover:scale-110">
                       <Eye size={15} />

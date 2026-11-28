@@ -14,7 +14,7 @@ import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { remainingPurchaseByLine } from '../../core/purchases.ts'
+import { purchaseReturnTaxReviewReason, remainingPurchaseByLine } from '../../core/purchases.ts'
 import { normalizeSerial } from '../../core/serials.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
@@ -69,6 +69,9 @@ export function PurchaseReturnsPage() {
   const buildPurchaseReturnModel = (r: PurchaseReturn) => {
     const orig = purchases.find((pv) => pv.id === r.purchaseId)
     const documentSettings = resolveDocumentPrintSettings(orig ?? r)
+    const baseMinor = r.supplierValueMinor ?? r.totalMinor
+    const taxMinor = r.inputVatShareMinor ?? 0
+    const refundMinor = baseMinor + taxMinor
     return buildSimpleDocModel({
       docTitle: 'مرتجع مشتريات (إشعار مدين)',
       invoiceNumber: r.returnNumber,
@@ -82,8 +85,9 @@ export function PurchaseReturnsPage() {
         unitPriceMinor: l.unitPriceMinor ?? l.landedUnitCostMinor,
         totalMinor: Math.round((l.unitPriceMinor ?? l.landedUnitCostMinor) * l.qty),
       })),
-      totalMinor: r.supplierValueMinor ?? r.totalMinor,
-      paidMinor: r.refund === 'cash' ? (r.supplierValueMinor ?? r.totalMinor) : 0,
+      totalMinor: refundMinor,
+      paidMinor: r.refund === 'cash' ? refundMinor : 0,
+      ...(taxMinor > 0 ? { tax: { label: 'ضريبة المدخلات المعكوسة', minor: taxMinor, baseMinor } } : {}),
       operatorName: printOperatorName,
       settings: documentSettings.receipt,
       extraFooter: r.reason ? `السبب: ${r.reason}` : undefined,
@@ -225,6 +229,9 @@ export function PurchaseReturnsPage() {
     })
   }
 
+  const reviewReason = purchase ? (purchase.projectId != null
+    ? 'فاتورة مشروع مقاولات لا تُرد كمخزون؛ يلزم مراجعة تسوية المورد وتكلفة المشروع والضريبة.'
+    : purchaseReturnTaxReviewReason(purchase)) : null
   const anyQty = Object.values(qtys).some((v) => Number(v) > 0)
   const itemName = (id: number) => { const item = items.find((it) => it.id === id); return `${item?.sku || item?.barcodes?.[0] || id} — ${item?.nameAr ?? `#${id}`}` }
 
@@ -250,7 +257,7 @@ export function PurchaseReturnsPage() {
                 <th className="px-4 py-3 font-bold">عن الفاتورة</th>
                 <th className="px-4 py-3 font-bold">المورد</th>
                 <th className="px-4 py-3 font-bold">الاسترداد</th>
-                <th className="px-4 py-3 font-bold">القيمة</th>
+                <th className="px-4 py-3 font-bold">التكلفة المحملة</th>
                 <th className="px-4 py-3 font-bold">القيد</th>
                 <th className="px-4 py-3 font-bold"></th>
               </tr>
@@ -332,6 +339,8 @@ export function PurchaseReturnsPage() {
       <Modal open={!!purchase} onClose={closePurchase} title={purchase ? `مرتجع عن فاتورة الشراء ${purchase.invoiceNumber}` : ''} wide>
         {purchase && (
           <div className="space-y-4">
+            <div role="note" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">المرتجع يُبقي الفاتورة الأصلية وسجلها. المصاريف لا تُسترد أو تُلغى تلقائياً؛ نصيب المصاريف المحمّلة للبضاعة المرتجعة يُسجّل كخسارة، وتبقى مصاريف الفترة واستحقاقاتها للمراجعة.</div>
+            {reviewReason && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{reviewReason}</div>}
             {purchase.supplierId > 0 && suppliers.find((row) => row.id === purchase.supplierId) && (() => { const supplier = suppliers.find((row) => row.id === purchase.supplierId)!; return <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50/60 px-3 py-2 text-xs dark:border-sky-900/60 dark:bg-sky-950/20"><div className="flex flex-wrap items-center gap-2"><b>{supplier.nameAr}</b><span className="font-mono text-slate-500" dir="ltr">{partyCode('SUP', supplier.id)}</span><span>الرصيد: {fmt(Math.abs(getSupplierBalance(supplier.id)))} {cur.symbol}</span>{supplier.address && <span className="text-slate-500">{supplier.address}</span>}</div><button type="button" title="تعديل بيانات المورد" onClick={() => setPartyEditorOpen(true)} className="rounded-lg border border-sky-300 p-1.5 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300">تعديل المورد</button></div> })()}
             <table className="invoice-lines-table w-full text-[13px]">
               <thead>
@@ -408,7 +417,7 @@ export function PurchaseReturnsPage() {
 
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={closePurchase}>تراجع عن المرتجع</Btn>
-              <Btn onClick={submit} shortcut="F9" disabled={!anyQty || !batchesReady || isPosting}>{isPosting ? 'جارٍ الترحيل…' : '📤 تنفيذ المرتجع'}</Btn>
+              <Btn onClick={submit} shortcut="F9" disabled={!anyQty || !batchesReady || isPosting || !!reviewReason}>{isPosting ? 'جارٍ الترحيل…' : '📤 تنفيذ المرتجع'}</Btn>
             </div>
           </div>
         )}
@@ -443,6 +452,7 @@ export function PurchaseReturnsPage() {
                 ))}
               </tbody>
             </table>
+            {viewing.supplierValueMinor != null && <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm dark:bg-slate-900/40">قيمة بضاعة المورد: {fmt(viewing.supplierValueMinor)} · الضريبة المعكوسة: {fmt(viewing.inputVatShareMinor ?? 0)} · إجمالي {viewing.refund === 'cash' ? 'الاسترداد' : 'تخفيض الدين'}: {fmt(viewing.supplierValueMinor + (viewing.inputVatShareMinor ?? 0))}</div>}
             {viewing.reason && <div className="text-[12px] text-slate-500">السبب: {viewing.reason}</div>}
             {entry && (
               <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] overflow-hidden">

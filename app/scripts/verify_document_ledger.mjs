@@ -10,6 +10,7 @@
  *
  * التشغيل: node --experimental-strip-types scripts/verify_document_ledger.mjs
  */
+import assert from 'node:assert/strict'
 import { freshCase, addSimpleItem, balanceOf, assertInvariants, reporter } from './auditKit.mjs'
 import { computeTotals } from '../src/core/pos.ts'
 
@@ -111,12 +112,15 @@ eq('دائن تكلفة المبيعات = تكلفة المرتجع', returnEnt
 eq('مدين المخزون + الهالك = تكلفة المرتجع', returnEntry.debit('1103') + returnEntry.debit('5111'), saleReturn.totals.cogsMinor)
 
 r.section('🧾 مرتجع شراء: المستند يعلن ما دفعه المورد وما خرج من المخزون')
-const purchaseReturn = st().postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: wh }], refund: 'cash', reason: 'فحص' })
+assert.throws(() => st().postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: wh }], refund: 'cash', reason: 'فحص' }), /ضريبة.*المصاريف/)
+r.ok('حارس ضريبة المدخلات مع المصاريف المحملة يمنع قيداً غير مثبت')
+const returnPurchase = st().postPurchase({ supplierId: supplier.id, date: '2026-11-17', lines: [{ itemId: item.id, qty: 4, unitPriceMinor: 1000, warehouseId: wh }], expenses: [{ nameAr: 'نقل', amountMinor: 400, method: 'value', paidBy: 'supplier' }], paidMinor: 0, treasury: '1101', notes: '' })
+const purchaseReturn = st().postPurchaseReturn({ purchaseId: returnPurchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: wh }], refund: 'cash', reason: 'فحص' })
 const purchaseReturnRaw = entryOf(st, 'purchase_return', purchaseReturn.id)
 const purchaseReturnEntry = acc(purchaseReturnRaw)
 eq('قيمة المستند = الكمية × التكلفة المحمَّلة للسطر', purchaseReturn.totalMinor, Math.round(purchaseReturn.lines[0].qty * purchaseReturn.lines[0].landedUnitCostMinor))
 eq('دائن المخزون = القيمة الخارجة الفعلية (بالقرش)', purchaseReturnEntry.credit('1103'), purchaseReturn.inventoryOutMinor)
-eq('فرق تقييم السطر ينزل في تكلفة المبيعات لا يضيع', purchaseReturnEntry.credit('5101'), purchaseReturn.inventoryVarianceMinor)
+eq('فرق تقييم السطر ينزل في تكلفة المبيعات لا يضيع', purchaseReturnEntry.credit('5101') - purchaseReturnEntry.debit('5101'), purchaseReturn.inventoryVarianceMinor)
 eq('المردود للمورد نقداً = قيمة البضاعة + ضريبتها', purchaseReturnEntry.debit('1101'), purchaseReturn.supplierValueMinor + purchaseReturn.inputVatShareMinor)
 eq('ضريبة المرتجع تعكس حصة المدخلات', purchaseReturnEntry.credit('2102'), purchaseReturn.inputVatShareMinor)
 eq('فرق التكلفة يُحمَّل على الهالك لا يُخفى', purchaseReturnEntry.debit('5111'), purchaseReturn.totalMinor - purchaseReturn.supplierValueMinor)
