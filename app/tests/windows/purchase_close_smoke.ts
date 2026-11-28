@@ -2,10 +2,10 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { initSatelliteWindows } from '../../desktop/satelliteWindows.ts'
 
-const [port, preload, icon, evidence] = process.argv.slice(2)
-const url = `http://127.0.0.1:${port}/tests/windows/purchase_close_fixture.html`
+const [fixture, preload, icon, evidence] = process.argv.slice(2)
 if (process.env.RUNNER_TEMP) writeFileSync(join(process.env.RUNNER_TEMP, 'purchase-smoke-startup.json'), JSON.stringify({ argv: process.argv, pid: process.pid }))
 console.log('Purchase smoke main started:', JSON.stringify(process.argv))
 let stage = 'startup'
@@ -35,7 +35,7 @@ let holdInvoiceWrite = false, writingInvoice = false, releaseWrite: (() => void)
 let lockOwner: number | null = null
 
 async function run(): Promise<void> {
-  check(port && preload && icon && evidence, 'Missing test arguments')
+  check(fixture && preload && icon && evidence, 'Missing test arguments')
   app.setPath('userData', join(dirname(evidence), 'purchase-close-smoke-profile'))
   console.log('Purchase smoke waiting for Electron readiness')
   await app.whenReady()
@@ -57,11 +57,10 @@ async function run(): Promise<void> {
   ipcMain.on('invoice-commit:release', (event, token) => { if (token === 'smoke-lock' && event.sender.id === lockOwner) lockOwner = null })
 
   const main = new BrowserWindow({ show: false, webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true } })
-  const origin = new URL(url).origin
-  initSatelliteWindows({ getMainWindow: () => main, isDev: true, devStartUrl: url, indexFilePath: '', appIndexFileUrl: '', devOrigin: origin, preloadPath: preload, iconPath: icon, log: (tag, message) => logs.push(`${tag}: ${message}`) })
+  initSatelliteWindows({ getMainWindow: () => main, isDev: false, devStartUrl: null, indexFilePath: fixture, appIndexFileUrl: pathToFileURL(fixture).href, devOrigin: null, preloadPath: preload, iconPath: icon, log: (tag, message) => logs.push(`${tag}: ${message}`) })
   main.webContents.on('console-message', (_event, _level, message) => { logs.push(`main renderer: ${message}`) })
-  mark('load fixture URL')
-  await bounded(main.loadURL(url), 'main fixture load', 120_000)
+  mark('load built fixture')
+  await bounded(main.loadFile(fixture), 'main fixture load', 120_000)
   mark('seed real application stores')
   await until(async () => {
     const status = await execute<{ ready: boolean; error?: string }>(main, '({ready: !!window.__smokeReady, error: window.__smokeError})')

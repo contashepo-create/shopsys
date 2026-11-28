@@ -124,24 +124,19 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $server = $null
           try {
             $main = Join-Path $env:RUNNER_TEMP 'purchase-close-main.cjs'
             $preload = Join-Path $env:RUNNER_TEMP 'satellite-close-preload.cjs'
             $evidence = Join-Path $env:RUNNER_TEMP 'purchase-close-evidence.json'
+            $env:PURCHASE_SMOKE_OUT = Join-Path $env:RUNNER_TEMP 'purchase-ui-build'
+            npx vite build --config tests/windows/vite.purchase.config.ts
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot build purchase UI fixture' }
             npx esbuild tests/windows/purchase_close_smoke.ts --bundle --platform=node --format=cjs --external:electron --outfile=$main
             if ($LASTEXITCODE -ne 0) { throw 'Cannot bundle purchase UI test' }
             $electron = (Resolve-Path 'node_modules/electron/dist/electron.exe').Path
             $icon = (Resolve-Path 'public/app-icon.png').Path
-            $url = 'http://127.0.0.1:5189/tests/windows/purchase_close_fixture.html'
-            $server = Start-Process -FilePath 'npm.cmd' -ArgumentList @('run','dev','--','--host','127.0.0.1','--port','5189','--strictPort') -PassThru -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP 'purchase-vite.log') -RedirectStandardError (Join-Path $env:RUNNER_TEMP 'purchase-vite-error.log')
-            $deadline = (Get-Date).AddSeconds(60)
-            $ready = $false
-            while ((Get-Date) -lt $deadline) {
-              try { if ((Invoke-WebRequest -Uri $url -UseBasicParsing).StatusCode -eq 200) { $ready = $true; break } } catch { Start-Sleep -Milliseconds 500 }
-            }
-            if (-not $ready) { throw 'Vite fixture server did not start' }
-            $args = @("`"$main`"", '5189', "`"$preload`"", "`"$icon`"", "`"$evidence`"")
+            $fixture = (Resolve-Path (Join-Path $env:PURCHASE_SMOKE_OUT 'tests/windows/purchase_close_fixture.html')).Path
+            $args = @("`"$main`"", "`"$fixture`"", "`"$preload`"", "`"$icon`"", "`"$evidence`"")
             $stdout = Join-Path $env:RUNNER_TEMP 'purchase-electron-out.log'
             $stderr = Join-Path $env:RUNNER_TEMP 'purchase-electron-err.log'
             $process = Start-Process -FilePath $electron -ArgumentList $args -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
@@ -159,17 +154,12 @@ jobs:
               throw "Purchase UI smoke produced no evidence (exit $($process.ExitCode)): $startup $(Get-Content $stdout -Raw) $(Get-Content $stderr -Raw)"
             }
             $result = Get-Content $evidence -Raw | ConvertFrom-Json
-            if ($process.ExitCode -ne 0 -or -not $result.ok) {
-              $viteError = Get-Content (Join-Path $env:RUNNER_TEMP 'purchase-vite-error.log') -Raw
-              throw "Purchase UI smoke failed ($($result.stage)): $($result.error) — $($result.logs -join ' | ') — Vite: $viteError"
-            }
+            if ($process.ExitCode -ne 0 -or -not $result.ok) { throw "Purchase UI smoke failed ($($result.stage)): $($result.error) — $($result.logs -join ' | ')" }
             Get-Content $evidence
           } catch {
             $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Output "::error title=Windows purchase UI smoke::$detail"
             throw
-          } finally {
-            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
           }
 
   windows-installer-smoke:
