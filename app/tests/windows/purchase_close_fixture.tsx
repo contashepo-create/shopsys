@@ -12,6 +12,7 @@ type SmokeWindow = Window & { __smokeReady?: boolean; __smokeError?: string; __s
 const smoke = window as SmokeWindow
 
 async function start() {
+  console.log('Purchase smoke fixture imports complete')
   smoke.__smokeStage = 'rehydrating stores'
   await Promise.all([useRawDataStore.persist.rehydrate(), useAppStore.persist.rehydrate()])
   smoke.__smokeStage = 'hydrated'

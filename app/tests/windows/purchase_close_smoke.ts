@@ -40,7 +40,7 @@ async function run(): Promise<void> {
   console.log('Purchase smoke waiting for Electron readiness')
   await app.whenReady()
   console.log('Purchase smoke Electron ready')
-  ipcMain.handle('database:getSnapshot', (_event, name: string) => snapshots.get(name) ?? { storeName: name, revision: 0, payloadJson: null, updatedAt: null })
+  ipcMain.handle('database:getSnapshot', (_event, name: string) => { logs.push(`getSnapshot ${name}`); return snapshots.get(name) ?? { storeName: name, revision: 0, payloadJson: null, updatedAt: null } })
   ipcMain.handle('database:saveSnapshot', async (_event, input: Save) => {
     const current = snapshots.get(input.storeName) ?? { storeName: input.storeName, revision: 0, payloadJson: null, updatedAt: null }
     if (input.expectedRevision !== current.revision) throw new Error('revision conflict')
