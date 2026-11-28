@@ -149,7 +149,11 @@ jobs:
               Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
               throw 'Purchase UI smoke test timed out'
             }
-            if (-not (Test-Path $evidence)) { throw "Purchase UI smoke produced no evidence (exit $($process.ExitCode)): $(Get-Content $stdout -Raw) $(Get-Content $stderr -Raw)" }
+            if (-not (Test-Path $evidence)) {
+              $startupPath = Join-Path $env:RUNNER_TEMP 'purchase-smoke-startup.json'
+              $startup = if (Test-Path $startupPath) { Get-Content $startupPath -Raw } else { 'main script did not start' }
+              throw "Purchase UI smoke produced no evidence (exit $($process.ExitCode)): $startup $(Get-Content $stdout -Raw) $(Get-Content $stderr -Raw)"
+            }
             $result = Get-Content $evidence -Raw | ConvertFrom-Json
             if ($process.ExitCode -ne 0 -or -not $result.ok) { throw "Purchase UI smoke failed ($($result.stage)): $($result.error) — $($result.logs -join ' | ')" }
             Get-Content $evidence

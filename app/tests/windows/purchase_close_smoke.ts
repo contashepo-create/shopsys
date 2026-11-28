@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { initSatelliteWindows } from '../../desktop/satelliteWindows.ts'
 
 const [url, preload, icon, evidence] = process.argv.slice(2)
+if (process.env.RUNNER_TEMP) writeFileSync(join(process.env.RUNNER_TEMP, 'purchase-smoke-startup.json'), JSON.stringify({ argv: process.argv, pid: process.pid }))
 console.log('Purchase smoke main started:', JSON.stringify(process.argv))
 let stage = 'startup'
 const logs: string[] = []
