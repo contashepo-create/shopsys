@@ -13,6 +13,12 @@ function finish(ok: boolean, error?: string) {
 }
 void app.whenReady().then(() => {
   app.setPath('userData', join(dirname(evidence), 'purchase-diagnostic-profile'))
+  // The actual preload exposes a synchronous identity request. An unhandled
+  // sendSync blocks the renderer forever, before any snapshot request occurs.
+  ipcMain.on('device:identity', event => {
+    events.push('device identity request')
+    event.returnValue = { deviceId: 'WIN-DIAGNOSTIC', firstTrialAt: '2026-01-01T00:00:00.000Z' }
+  })
   ipcMain.handle('database:getSnapshot', (_event, storeName: string) => {
     events.push(`snapshot request: ${storeName}`)
     return { storeName, revision: 0, payloadJson: null, updatedAt: null }
