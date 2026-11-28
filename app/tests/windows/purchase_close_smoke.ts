@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { initSatelliteWindows } from '../../desktop/satelliteWindows.ts'
 
 const [url, preload, icon, evidence] = process.argv.slice(2)
+console.log('Purchase smoke main started:', JSON.stringify(process.argv))
 let stage = 'startup'
 const logs: string[] = []
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
@@ -25,7 +26,9 @@ let lockOwner: number | null = null
 async function run(): Promise<void> {
   check(url && preload && icon && evidence, 'Missing test arguments')
   app.setPath('userData', join(dirname(evidence), 'purchase-close-smoke-profile'))
+  console.log('Purchase smoke waiting for Electron readiness')
   await app.whenReady()
+  console.log('Purchase smoke Electron ready')
   ipcMain.handle('database:getSnapshot', (_event, name: string) => snapshots.get(name) ?? { storeName: name, revision: 0, payloadJson: null, updatedAt: null })
   ipcMain.handle('database:saveSnapshot', async (_event, input: Save) => {
     const current = snapshots.get(input.storeName) ?? { storeName: input.storeName, revision: 0, payloadJson: null, updatedAt: null }
