@@ -12331,6 +12331,9 @@ export const useRawDataStore = create<DataState>()(
       reverseEntry: (entryId, reason) => {
         if (get().payrollSlips.some(slip => slip.paidEntryId === entryId || slip.payments?.some(payment => payment.entryId === entryId))) throw new Error('عكس قيد يسدد قسيمة يتطلب تسوية القسيمة ومراجعة تخصيص الدفعات — لا يعكس آلياً')
         const state = get()
+        // سداد المصروف يحدّث دفتر الاستحقاق ومركز المركبة أيضاً؛ عكس القيد
+        // وحده يترك الاستحقاق مسدداً رغم إعادة النقود إلى الخزينة.
+        if (state.purchaseExpensePayables.some(row => row.settlementEntryIds?.includes(entryId)) || state.vouchers.some(row => row.journalEntryId === entryId && row.purchaseExpensePayableId != null)) throw new Error('سند سداد مصروف شراء مرتبط باستحقاق — لا يُعكس منفرداً؛ يلزم تصحيح منسق للاستحقاق والمركبة')
         const original = state.journal.find((e) => e.id === entryId)
         if (!reason.trim()) throw new Error('سبب العكس إلزامي — اكتب سبباً واضحاً للمراجعة')
         if (!original) throw new Error('القيد غير موجود')
@@ -12517,6 +12520,8 @@ export const useRawDataStore = create<DataState>()(
       reverseVoucher: (voucherId, reason) => {
         const voucher = get().vouchers.find((item) => item.id === voucherId)
         if (!voucher) throw new Error('السند غير موجود')
+        // يتحقق هذا المسار قبل فرع التحويل البيني الذي يعكس قيديه مباشرة.
+        if (voucher.purchaseExpensePayableId != null || get().purchaseExpensePayables.some(row => row.settlementEntryIds?.includes(voucher.journalEntryId) || (voucher.branchTransfer && row.settlementEntryIds?.includes(voucher.branchTransfer.destinationJournalEntryId)))) throw new Error('سند سداد مصروف شراء مرتبط باستحقاق — لا يُعكس منفرداً؛ يلزم تصحيح منسق للاستحقاق والمركبة')
         if (voucher.reversalEntryId) throw new Error('السند معكوس بالفعل — لا يُعكس مرتين')
         if (voucher.kind === 'receipt') {
           const entries = get().journal.filter(entry => entry.id === voucher.journalEntryId)

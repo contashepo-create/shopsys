@@ -89,6 +89,26 @@ describe('ترحيل ضريبة مصروف الشراء في المستودع', 
     expect(entry.lines.reduce((sum, line) => sum + line.debit - line.credit, 0)).toBe(0)
   })
 
+  it('يمنع عكس سداد الاستحقاق منفرداً من السند أو القيد حتى إن فقد أحد الرابطين', () => {
+    const purchase = postDirectExpense('payable')
+    const payable = useDataStore.getState().purchaseExpensePayables.find(row => row.purchaseId === purchase.id)!
+    useDataStore.getState().settlePurchaseExpensePayable({ payableId: payable.id, amountMinor: 500, treasury: '1101', date: '2026-09-25' })
+    const state = useDataStore.getState()
+    const voucher = state.vouchers.find(row => row.purchaseExpensePayableId === payable.id)!
+    const before = { journal: state.journal, vouchers: state.vouchers, purchaseExpensePayables: state.purchaseExpensePayables, vehicleCostEntries: state.vehicleCostEntries }
+    expect(() => state.reverseVoucher(voucher.id, 'تصحيح')).toThrow(/مصروف شراء مرتبط باستحقاق/)
+    expect(() => state.reverseEntry(voucher.journalEntryId, 'تصحيح')).toThrow(/مصروف شراء مرتبط باستحقاق/)
+    expect(useDataStore.getState()).toMatchObject(before)
+    // حتى لو ضاع رابط السند، يظل سجل الاستحقاق دليلاً مستقلاً يمنع العكس.
+    useDataStore.setState({ vouchers: state.vouchers.map(row => row.id === voucher.id ? { ...row, purchaseExpensePayableId: null } : row) })
+    expect(() => useDataStore.getState().reverseVoucher(voucher.id, 'تصحيح')).toThrow(/مصروف شراء مرتبط باستحقاق/)
+    expect(() => useDataStore.getState().reverseEntry(voucher.journalEntryId, 'تصحيح')).toThrow(/مصروف شراء مرتبط باستحقاق/)
+    // والعكس: يحمي رابط السند حتى إن فُقدت قائمة قيود السداد.
+    useDataStore.setState({ vouchers: state.vouchers, purchaseExpensePayables: state.purchaseExpensePayables.map(row => row.id === payable.id ? { ...row, settlementEntryIds: [] } : row) })
+    expect(() => useDataStore.getState().reverseVoucher(voucher.id, 'تصحيح')).toThrow(/مصروف شراء مرتبط باستحقاق/)
+    expect(() => useDataStore.getState().reverseEntry(voucher.journalEntryId, 'تصحيح')).toThrow(/مصروف شراء مرتبط باستحقاق/)
+  })
+
   it('لا يكرر ضريبة مصروف الفترة: تظهر مرة في قيد المصروف ومرة واحدة في المدين', () => {
     const purchase = useDataStore.getState().postPurchase({
       supplierId: 801, date: '2026-09-24',
