@@ -4,7 +4,8 @@ on:
   push:
     paths:
       - 'app/tests/windows/purchase_diagnostic*'
-      - 'app/tests/windows/vite.purchase-diagnostic.config.ts'
+      - 'app/tests/windows/purchase_close_*'
+      - 'app/tests/windows/vite.purchase*.config.ts'
       - '.github/workflows/windows-purchase-diagnostic.yml'
 
 permissions:
@@ -55,5 +56,43 @@ jobs:
           if ($process.ExitCode -ne 0 -or -not $result.ok) {
             $detail = ($result.error + ' — ' + ($result.events -join ' | ')).Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Output "::error title=Windows renderer diagnostic::$detail"
+            exit 1
+          }
+      - name: Build purchase UI and SQLite fixture
+        shell: pwsh
+        run: |
+          $env:PURCHASE_SMOKE_OUT = Join-Path $env:RUNNER_TEMP 'purchase-ui-build'
+          npx vite build --config tests/windows/vite.purchase.config.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx electron-rebuild -f -w better-sqlite3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx esbuild tests/windows/purchase_close_smoke.ts --bundle --platform=node --format=cjs --external:electron --external:better-sqlite3 --outfile="node_modules/.purchase-close-main.cjs"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Purchase UI save and close with SQLite
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = (Resolve-Path 'node_modules/electron/dist/electron.exe').Path
+          $fixture = Join-Path $env:RUNNER_TEMP 'purchase-ui-build/tests/windows/purchase_close_fixture.html'
+          $main = (Resolve-Path 'node_modules/.purchase-close-main.cjs').Path
+          $preload = Join-Path $env:RUNNER_TEMP 'purchase-diagnostic-preload.cjs'
+          $icon = (Resolve-Path 'public/app-icon.png').Path
+          $evidence = Join-Path $env:RUNNER_TEMP 'purchase-close-evidence.json'
+          $stdout = Join-Path $env:RUNNER_TEMP 'purchase-electron-out.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'purchase-electron-err.log'
+          $process = Start-Process -FilePath $exe -ArgumentList @("`"$main`"", "`"$fixture`"", "`"$preload`"", "`"$icon`"", "`"$evidence`"") -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if (-not $process.WaitForExit(240000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            $stage = Join-Path $env:RUNNER_TEMP 'purchase-smoke-stage.json'
+            $detail = if (Test-Path $stage) { Get-Content $stage -Raw } else { 'no stage' }
+            throw "Purchase smoke timed out: $detail"
+          }
+          if (-not (Test-Path $evidence)) { throw "No purchase smoke evidence (exit $($process.ExitCode)): $(Get-Content $stdout -Raw) $(Get-Content $stderr -Raw)" }
+          $raw = Get-Content $evidence -Raw
+          Write-Output $raw
+          $result = $raw | ConvertFrom-Json
+          if ($process.ExitCode -ne 0 -or -not $result.ok) {
+            $detail = ($result.stage + ': ' + $result.error + ' — ' + ($result.logs -join ' | ')).Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Windows purchase UI smoke::$detail"
             exit 1
           }
